@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import importlib
 import logging
 import sys
 from pathlib import Path
@@ -25,6 +26,38 @@ import torch.nn.functional as F  # noqa: N812
 from torch import nn
 
 logger = logging.getLogger(__name__)
+_DA3_REFERENCE_LOG_PATCHED = False
+
+
+def patch_da3_reference_view_logger_once() -> None:
+    global _DA3_REFERENCE_LOG_PATCHED
+    if _DA3_REFERENCE_LOG_PATCHED:
+        return
+
+    try:
+        vision_transformer = importlib.import_module("depth_anything_3.model.dinov2.vision_transformer")
+    except ImportError:
+        return
+
+    vt_logger = getattr(vision_transformer, "logger", None)
+    if vt_logger is None or not hasattr(vt_logger, "info"):
+        return
+
+    original_info = vt_logger.info
+    seen_reference_log = False
+
+    def info_once(*args, **kwargs):
+        nonlocal seen_reference_log
+        if args:
+            first_arg = str(args[0])
+            if first_arg.startswith("Selecting reference view using strategy:"):
+                if seen_reference_log:
+                    return
+                seen_reference_log = True
+        return original_info(*args, **kwargs)
+
+    vt_logger.info = info_once
+    _DA3_REFERENCE_LOG_PATCHED = True
 
 
 DA3_BACKBONE_DEFAULTS = {
@@ -100,6 +133,7 @@ class DA3BackboneTeacher(nn.Module):
     ):
         super().__init__()
         DepthAnything3 = resolve_da3_import(code_root)
+        patch_da3_reference_view_logger_once()
 
         wrapper = DepthAnything3.from_pretrained(model_path_or_name)
         self.backbone = wrapper.model.backbone
