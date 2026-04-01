@@ -24,6 +24,38 @@ import torch.nn.functional as F  # noqa: N812
 from torch import nn
 
 
+DA3_BACKBONE_DEFAULTS = {
+    "large": {
+        "teacher_layers": (11, 15, 19, 23),
+        "query_dim": 2048,
+    },
+    "giant": {
+        "teacher_layers": (19, 27, 33, 39),
+        "query_dim": 3072,
+    },
+}
+
+
+def infer_da3_backbone_profile(model_path_or_name: str) -> str:
+    lowered = str(model_path_or_name).lower()
+    if "giant" in lowered or "vitg" in lowered:
+        return "giant"
+    if "large" in lowered or "vitl" in lowered:
+        return "large"
+    return "giant"
+
+
+def resolve_da3_backbone_defaults(model_path_or_name: str, variant: str = "auto") -> dict[str, int | tuple[int, ...]]:
+    normalized_variant = variant.lower()
+    if normalized_variant == "auto":
+        normalized_variant = infer_da3_backbone_profile(model_path_or_name)
+    if normalized_variant not in DA3_BACKBONE_DEFAULTS:
+        raise ValueError(
+            f"Unsupported DA3 variant {variant!r}. Expected one of: auto, large, giant."
+        )
+    return DA3_BACKBONE_DEFAULTS[normalized_variant]
+
+
 def resolve_da3_import(code_root: str | None) -> type:
     try:
         from depth_anything_3.api import DepthAnything3
@@ -69,6 +101,8 @@ class DA3BackboneTeacher(nn.Module):
         self.wrapper = DepthAnything3.from_pretrained(model_path_or_name)
         self.model = self.wrapper.model
         self.out_layers = tuple(int(layer_idx) for layer_idx in self.wrapper.config.net.out_layers)
+        self.feature_dim = int(self.wrapper.config.head.dim_in)
+        self.variant = infer_da3_backbone_profile(getattr(self.wrapper.config.net, "name", model_path_or_name))
         self.teacher_layers = self.out_layers if teacher_layers is None else tuple(int(layer_idx) for layer_idx in teacher_layers)
         missing_layers = [layer_idx for layer_idx in self.teacher_layers if layer_idx not in self.out_layers]
         if missing_layers:

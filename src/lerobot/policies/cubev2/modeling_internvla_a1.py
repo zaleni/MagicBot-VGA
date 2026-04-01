@@ -559,6 +559,11 @@ class QwenA1(nn.Module):
                 dtype=teacher_dtype,
                 teacher_layers=self.da3_teacher_layers,
             )
+            if self.da3_teacher.feature_dim != config.da3_query_dim:
+                raise ValueError(
+                    f"DA3 query dim ({config.da3_query_dim}) does not match the loaded teacher feature dim "
+                    f"({self.da3_teacher.feature_dim}). Check policy.da3_variant / policy.da3_model_path_or_name."
+                )
         else:
             self.da3_teacher = None
 

@@ -21,6 +21,7 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
+from lerobot.policies.cubev2.da3_teacher import resolve_da3_backbone_defaults
 from lerobot.policies.cubev2.transform_internvla_a1 import (
     Qwen3_VLProcessorTransformFn,
     UnifyCubeV2InputsTransformFn,
@@ -142,8 +143,9 @@ class CubeV2Config(PreTrainedConfig):
     enable_3d_queries: bool = False
     num_3d_query_tokens: int = 1296  # compressed future-3D bottleneck queries
     query_layer_indices: tuple[int, ...] = (13, 19, 23, 27)
-    da3_teacher_layers: tuple[int, ...] = (19, 27, 33, 39)
-    da3_query_dim: int = 3072
+    da3_variant: str = "auto"
+    da3_teacher_layers: tuple[int, ...] | None = None
+    da3_query_dim: int | None = None
     da3_tokens_per_view: int = 1296
     da3_num_views: int = 3
     lambda_3d: float = 0.05
@@ -170,6 +172,15 @@ class CubeV2Config(PreTrainedConfig):
 
         if self.da3_model_name is not None:
             self.da3_model_path_or_name = self.da3_model_name
+
+        da3_defaults = resolve_da3_backbone_defaults(
+            self.da3_model_path_or_name,
+            self.da3_variant,
+        )
+        if self.da3_teacher_layers is None:
+            self.da3_teacher_layers = tuple(int(layer_idx) for layer_idx in da3_defaults["teacher_layers"])
+        if self.da3_query_dim is None:
+            self.da3_query_dim = int(da3_defaults["query_dim"])
 
         if len(self.query_layer_indices) != len(self.da3_teacher_layers):
             raise ValueError("query_layer_indices and da3_teacher_layers must have the same length")
