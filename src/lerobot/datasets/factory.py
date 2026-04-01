@@ -113,6 +113,28 @@ def load_info_for_repos(
     return frames_map, episodes_map
 
 
+def resolve_repo_ids(cfg: TrainPipelineConfig) -> list[str]:
+    repo_id_file = getattr(cfg.dataset, "repo_id_file", None)
+    if repo_id_file:
+        path = Path(repo_id_file)
+        if not path.is_file():
+            raise FileNotFoundError(f"dataset.repo_id_file does not exist: {path}")
+
+        repo_ids = []
+        with path.open("r", encoding="utf-8") as f:
+            for line in f:
+                repo_id = line.rstrip("\n")
+                if repo_id.strip():
+                    repo_ids.append(repo_id)
+
+        if not repo_ids:
+            raise ValueError(f"dataset.repo_id_file is empty: {path}")
+
+        return repo_ids
+
+    return [rid for rid in cfg.dataset.repo_id.split(" ") if rid]
+
+
 def compute_balanced_repo_assignment(
     repo_ids: list[str],
     frames_map: dict[str, int],
@@ -382,6 +404,9 @@ def _build_single_dataset(
     if cfg.dataset.use_external_stats:
         if cfg.dataset.external_stats_path is not None:
             stat_path = Path(cfg.dataset.external_stats_path)
+        elif getattr(cfg.dataset, "external_stats_root", None) is not None:
+            action_mode = cfg.dataset.action_mode
+            stat_path = Path(cfg.dataset.external_stats_root) / robot_type / action_mode / "stats.json"
         else:
             action_mode = cfg.dataset.action_mode
             stat_path = HF_LEROBOT_HOME / f"stats/{robot_type}/{action_mode}/stats.json"
@@ -418,7 +443,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
     )
 
     all_data_stats = {}
-    all_repo_ids = cfg.dataset.repo_id.split(' ')
+    all_repo_ids = resolve_repo_ids(cfg)
     logging.info(
         f"[make_dataset] all_repo_ids={all_repo_ids}"
     )

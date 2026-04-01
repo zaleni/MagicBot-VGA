@@ -1,4 +1,6 @@
-# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#!/usr/bin/env python
+
+# Copyright 2025 Physical Intelligence and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,16 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .InternVLA_A1_3B.configuration_internvla_a1 import QwenA1Config as QwenA1Config
-from .InternVLA_A1_2B.configuration_internvla_a1 import InternA1Config as InternA1Config
-from .cubev2.configuration_internvla_a1 import CubeV2Config as CubeV2Config
-from .pi0.configuration_pi0 import PI0Config as PI0Config
-from .pi05.configuration_pi05 import PI05Config as PI05Config
+from .configuration_internvla_a1 import CubeV2Config, CubeV2DatasetConfig
+from .da3_teacher import DA3BackboneTeacher
+from .modeling_internvla_a1 import CubeV2Policy
 
-__all__ = [
-    "QwenA1Config", 
-    "InternA1Config", 
-    "CubeV2Config",
-    "PI0Config",
-    "PI05Config",
-]
+__all__ = ["CubeV2Config", "CubeV2DatasetConfig", "CubeV2Policy", "DA3BackboneTeacher"]

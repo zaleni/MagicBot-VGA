@@ -31,6 +31,7 @@ class DatasetConfig(draccus.ChoiceRegistry, abc.ABC):
     # "dataset_index" into the returned item. The index mapping is made according to the order in which the
     # datasets are provided.
     repo_id: str
+    repo_id_file: str | None = None
     # Root directory where the dataset will be stored (e.g. 'dataset/path').
     root: str | None = None
     episodes: list[int] | None = None
@@ -39,6 +40,7 @@ class DatasetConfig(draccus.ChoiceRegistry, abc.ABC):
     use_imagenet_stats: bool = True
     use_external_stats: bool = False
     external_stats_path: str | None = None
+    external_stats_root: str | None = None
     weight_rules_path: str | None = None
     video_backend: str = field(default_factory=get_safe_default_codec)
     streaming: bool = False
