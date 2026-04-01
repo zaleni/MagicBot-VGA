@@ -21,7 +21,7 @@ export MASTER_ADDR=${MASTER_ADDR:-"127.0.0.1"}
 export MASTER_PORT=${MASTER_PORT:-6379}
 echo "MASTER_ADDR=${MASTER_ADDR}, MASTER_PORT=${MASTER_PORT}"
 
-PROC_PER_NODE="${PROC_PER_NODE:-8}"
+PROC_PER_NODE="${PROC_PER_NODE:-2}"
 NODE_COUNT="${NODE_COUNT:-1}"
 NODE_RANK="${NODE_RANK:-0}"
 NUM_PROCESSES=$((NODE_COUNT * PROC_PER_NODE))
@@ -46,18 +46,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJ_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 echo "SCRIPT_DIR = ${SCRIPT_DIR}"
 echo "PROJ_ROOT  = ${PROJ_ROOT}"
+export PYTHONPATH="${PROJ_ROOT}/src:${PYTHONPATH:-}"
 
 cd ${PROJ_ROOT}
 
 POLICY="cubev2"
-PRETRAINED_PATH="InternRobotics/InternVLA-A1-3B"
-QWEN3_VL_PRETRAINED_PATH="${QWEN3_VL_PRETRAINED_PATH:-Qwen/Qwen3-VL-2B-Instruct}"
-DA3_MODEL_PATH_OR_NAME="${DA3_MODEL_PATH_OR_NAME:-depth-anything/DA3-GIANT-1.1}"
+PRETRAINED_PATH="/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/model/InternVLA-A1-3B"
+QWEN3_VL_PRETRAINED_PATH="${QWEN3_VL_PRETRAINED_PATH:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/model/Qwen3-VL-2B-Instruct}"
+COSMOS_TOKENIZER_PATH_OR_NAME="${COSMOS_TOKENIZER_PATH_OR_NAME:-nvidia/Cosmos-Tokenizer-CI8x8}"
+DA3_MODEL_PATH_OR_NAME="${DA3_MODEL_PATH_OR_NAME:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/model/DA3-GIANT-1-1}"
 DA3_CODE_ROOT="${DA3_CODE_ROOT:-}"
 ROBOTWIN_ROOT="${ROBOTWIN_ROOT:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/RoboTwin-LeRobot-v30}"
 ACTION_TYPE=delta
 USE_EXTERNAL_STATS="${USE_EXTERNAL_STATS:-true}"
-DATASET_EXTERNAL_STATS_PATH="${DATASET_EXTERNAL_STATS_PATH:-}"
+DATASET_EXTERNAL_STATS_PATH="/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/Foundation-Moodel/norm_stats/aloha/delta/stats.json"
 DATASET_EXTERNAL_STATS_ROOT="${DATASET_EXTERNAL_STATS_ROOT:-}"
 
 discover_dataset_dirs() {
@@ -89,8 +91,8 @@ if [[ "${USE_EXTERNAL_STATS}" == "true" && -z "${DATASET_EXTERNAL_STATS_PATH}" &
 fi
 
 BASE_OUTPUT_DIR="outputs/${POLICY}"
-PRETRAINED_DETAIL="a1_agibotworld_700k"
-JOB_NAME="$(date +'%Y_%m_%d_%H_%M_%S')-${POLICY}-robotwin-${ACTION_TYPE}-${PRETRAINED_DETAIL}-finetune"
+PRETRAINED_DETAIL="a1_700k"
+JOB_NAME="${POLICY}-robotwin-3d-${ACTION_TYPE}-${PRETRAINED_DETAIL}-finetune-$(date +'%Y_%m_%d_%H_%M_%S')"
 OUTPUT_DIR="${BASE_OUTPUT_DIR}/${JOB_NAME}"
 REPO_ID_FILE_DIR="${BASE_OUTPUT_DIR}/_repo_id_files"
 mkdir -p "${REPO_ID_FILE_DIR}"
@@ -111,9 +113,10 @@ ARGS=(
     --job_name="${JOB_NAME}"
 
     --policy.type=${POLICY}
-    --policy.repo_id=lerobot_lab/${POLICY}
+    --policy.repo_id=zaleni/${POLICY}
     --policy.pretrained_path=${PRETRAINED_PATH}
     --policy.qwen3_vl_pretrained_path="${QWEN3_VL_PRETRAINED_PATH}"
+    --policy.cosmos_tokenizer_path_or_name="${COSMOS_TOKENIZER_PATH_OR_NAME}"
     --policy.push_to_hub=false
     --policy.gradient_checkpointing=false
     --policy.dtype=bfloat16
@@ -145,7 +148,7 @@ ARGS=(
     --log_freq=200
 
     --wandb.enable=true
-    --wandb.project=lerobot_lab_${POLICY}
+    --wandb.project=CUBEv2
     --wandb.mode=offline
 )
 

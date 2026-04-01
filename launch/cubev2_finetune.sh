@@ -52,6 +52,7 @@ cd ${PROJ_ROOT}
 POLICY="cubev2"
 PRETRAINED_PATH="InternRobotics/InternVLA-A1-3B"
 QWEN3_VL_PRETRAINED_PATH="${QWEN3_VL_PRETRAINED_PATH:-Qwen/Qwen3-VL-2B-Instruct}"
+COSMOS_TOKENIZER_PATH_OR_NAME="${COSMOS_TOKENIZER_PATH_OR_NAME:-nvidia/Cosmos-Tokenizer-CI8x8}"
 DA3_MODEL_PATH_OR_NAME="${DA3_MODEL_PATH_OR_NAME:-depth-anything/DA3-GIANT-1.1}"
 DA3_CODE_ROOT="${DA3_CODE_ROOT:-}"
 DATASET_EXTERNAL_STATS_PATH="${DATASET_EXTERNAL_STATS_PATH:-}"
@@ -88,6 +89,7 @@ ARGS=(
     --policy.repo_id=lerobot_lab/${POLICY}
     --policy.pretrained_path=${PRETRAINED_PATH}
     --policy.qwen3_vl_pretrained_path="${QWEN3_VL_PRETRAINED_PATH}"
+    --policy.cosmos_tokenizer_path_or_name="${COSMOS_TOKENIZER_PATH_OR_NAME}"
     --policy.push_to_hub=false
     --policy.gradient_checkpointing=false
     --policy.dtype=bfloat16

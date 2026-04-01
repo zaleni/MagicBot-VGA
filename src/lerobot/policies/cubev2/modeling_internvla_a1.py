@@ -459,6 +459,30 @@ class Qwen3VLWithExpertModel(
 
 class QwenA1(nn.Module):
 
+    @staticmethod
+    def _resolve_cosmos_tokenizer_dir(path_or_name: str) -> str:
+        candidate_dir = os.path.expanduser(path_or_name)
+        if os.path.isdir(candidate_dir):
+            enc_path = os.path.join(candidate_dir, "encoder.jit")
+            dec_path = os.path.join(candidate_dir, "decoder.jit")
+            if not os.path.exists(enc_path) or not os.path.exists(dec_path):
+                raise FileNotFoundError(
+                    f"Cosmos tokenizer directory '{candidate_dir}' must contain encoder.jit and decoder.jit."
+                )
+            return candidate_dir
+
+        from huggingface_hub import snapshot_download
+
+        logging.warning("Cosmos tokenizer '%s' not found as a local directory, resolving via Hugging Face Hub.", path_or_name)
+        downloaded_dir = snapshot_download(repo_id=path_or_name)
+        enc_path = os.path.join(downloaded_dir, "encoder.jit")
+        dec_path = os.path.join(downloaded_dir, "decoder.jit")
+        if not os.path.exists(enc_path) or not os.path.exists(dec_path):
+            raise FileNotFoundError(
+                f"Resolved cosmos tokenizer '{path_or_name}' to '{downloaded_dir}', but encoder.jit/decoder.jit were not found."
+            )
+        return downloaded_dir
+
     def __init__(self, config: CubeV2Config):
         super().__init__()
         self.config = config
@@ -473,14 +497,11 @@ class QwenA1(nn.Module):
             precision=config.dtype,
         )
 
-        if not os.path.exists(f"{HF_HOME}/hub/Cosmos-Tokenizer-CI8x8/encoder.jit"):
-            logging.warning(f"Cosmos-Tokenizer-CI8x8 not found, downloading...")
-            from huggingface_hub import snapshot_download
-            snapshot_download(repo_id="nvidia/Cosmos-Tokenizer-CI8x8", local_dir=f"{HF_HOME}/hub/Cosmos-Tokenizer-CI8x8")
+        cosmos_tokenizer_dir = self._resolve_cosmos_tokenizer_dir(config.cosmos_tokenizer_path_or_name)
 
         self.cosmos = ImageTokenizer(
-            checkpoint_enc=f"{HF_HOME}/hub/Cosmos-Tokenizer-CI8x8/encoder.jit", 
-            checkpoint_dec=f"{HF_HOME}/hub/Cosmos-Tokenizer-CI8x8/decoder.jit", 
+            checkpoint_enc=os.path.join(cosmos_tokenizer_dir, "encoder.jit"), 
+            checkpoint_dec=os.path.join(cosmos_tokenizer_dir, "decoder.jit"), 
         )
 
         vae_dim = 16

@@ -137,6 +137,7 @@ class CubeV2Config(PreTrainedConfig):
 
     scale_factor: int = 8
     lambda_gen: float = 0.01
+    cosmos_tokenizer_path_or_name: str = "nvidia/Cosmos-Tokenizer-CI8x8"
 
     enable_3d_queries: bool = False
     num_3d_query_tokens: int = 1296  # compressed future-3D bottleneck queries
