@@ -51,6 +51,7 @@ cd ${PROJ_ROOT}
 
 POLICY="cubev2"
 QWEN3_VL_PRETRAINED_PATH="${QWEN3_VL_PRETRAINED_PATH:-Qwen/Qwen3-VL-2B-Instruct}"
+QWEN3_VL_PROCESSOR_PATH="${QWEN3_VL_PROCESSOR_PATH:-${QWEN3_VL_PRETRAINED_PATH}}"
 COSMOS_TOKENIZER_PATH_OR_NAME="${COSMOS_TOKENIZER_PATH_OR_NAME:-nvidia/Cosmos-Tokenizer-CI8x8}"
 DA3_MODEL_PATH_OR_NAME="${DA3_MODEL_PATH_OR_NAME:-depth-anything/DA3-GIANT-1.1}"
 DA3_CODE_ROOT="${DA3_CODE_ROOT:-}"
@@ -106,7 +107,7 @@ ARGS=(
 
     --dataset.type=${POLICY}
     --dataset.repo_id="${DATASET_REPO_ID}"
-    --dataset.qwen3_vl_processor_path="${QWEN3_VL_PRETRAINED_PATH}"
+    --dataset.qwen3_vl_processor_path="${QWEN3_VL_PROCESSOR_PATH}"
     --dataset.action_mode="${ACTION_TYPE}"
     --dataset.use_external_stats=${USE_EXTERNAL_STATS}
     --seed=42
