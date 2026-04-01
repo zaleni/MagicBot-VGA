@@ -36,6 +36,7 @@ class CubeV2DatasetConfig(DatasetConfig):
     width: int = 224
     max_state_dim: int = 32
     max_action_dim: int = 32
+    qwen3_vl_processor_path: str = "Qwen/Qwen3-VL-2B-Instruct"
 
     data_transforms: TransformGroup = field(
         default_factory=lambda: TransformGroup(
@@ -62,6 +63,12 @@ class CubeV2DatasetConfig(DatasetConfig):
     def __post_init__(self):
         super().__post_init__()
         inputs = list(self.data_transforms.inputs)
+        for idx, transform in enumerate(inputs):
+            if isinstance(transform, Qwen3_VLProcessorTransformFn):
+                inputs[idx] = replace(
+                    transform,
+                    pretrained_model_name_or_path=self.qwen3_vl_processor_path,
+                )
         has_delta = any(isinstance(t, DeltaActionTransformFn) for t in inputs)
         if self.action_mode == "delta":
             if not has_delta:
@@ -78,6 +85,7 @@ class CubeV2DatasetConfig(DatasetConfig):
 class CubeV2Config(PreTrainedConfig):
     qwen3_vl_variant: str = "qwen3_vl_2b"
     action_expert_variant: str = "qwen3_600m"
+    qwen3_vl_pretrained_path: str = "Qwen/Qwen3-VL-2B-Instruct"
     dtype: str = "bfloat16"
 
     n_obs_steps: int = 1
@@ -138,7 +146,8 @@ class CubeV2Config(PreTrainedConfig):
     da3_tokens_per_view: int = 1296
     da3_num_views: int = 3
     lambda_3d: float = 0.05
-    da3_model_name: str = "depth-anything/DA3-GIANT-1.1"
+    da3_model_path_or_name: str = "depth-anything/DA3-GIANT-1.1"
+    da3_model_name: str | None = None
     da3_code_root: str | None = None
     da3_teacher_process_res: int = 504
     da3_layer_weights: tuple[float, ...] = (1.0, 1.2, 1.4, 1.6)
@@ -157,6 +166,9 @@ class CubeV2Config(PreTrainedConfig):
 
         if self.enable_3d_queries and self.num_3d_query_tokens <= 0:
             raise ValueError("num_3d_query_tokens must be positive when 3D queries are enabled")
+
+        if self.da3_model_name is not None:
+            self.da3_model_path_or_name = self.da3_model_name
 
         if len(self.query_layer_indices) != len(self.da3_teacher_layers):
             raise ValueError("query_layer_indices and da3_teacher_layers must have the same length")

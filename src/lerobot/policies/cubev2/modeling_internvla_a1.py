@@ -248,6 +248,7 @@ class Qwen3VLWithExpertModel(
         self,
         vlm_config,
         action_expert_config,
+        qwen3_vl_pretrained_path: str,
         precision: Literal["bfloat16", "float32"] = "bfloat16",
     ):
         super().__init__()
@@ -275,7 +276,7 @@ class Qwen3VLWithExpertModel(
         
         # self.und_expert = Qwen3VLForConditionalGeneration(config=vlm_config_hf)
         self.und_expert = Qwen3VLForConditionalGeneration.from_pretrained(
-            "Qwen/Qwen3-VL-2B-Instruct", 
+            qwen3_vl_pretrained_path,
             config=vlm_config_hf, 
             ignore_mismatched_sizes=True
         )
@@ -467,6 +468,7 @@ class QwenA1(nn.Module):
         self.qwen3_vl_with_expert = Qwen3VLWithExpertModel(
             vlm_config,
             action_expert_config,
+            qwen3_vl_pretrained_path=config.qwen3_vl_pretrained_path,
             precision=config.dtype,
         )
 
@@ -529,7 +531,7 @@ class QwenA1(nn.Module):
         if config.lambda_3d > 0 and config.enable_3d_queries:
             teacher_dtype = torch.bfloat16 if config.dtype == "bfloat16" else torch.float32
             self.da3_teacher = DA3BackboneTeacher(
-                model_name=config.da3_model_name,
+                model_path_or_name=config.da3_model_path_or_name,
                 code_root=config.da3_code_root,
                 process_res=config.da3_teacher_process_res,
                 dtype=teacher_dtype,

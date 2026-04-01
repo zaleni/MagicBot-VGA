@@ -50,6 +50,8 @@ echo "PROJ_ROOT  = ${PROJ_ROOT}"
 cd ${PROJ_ROOT}
 
 POLICY="cubev2"
+QWEN3_VL_PRETRAINED_PATH="${QWEN3_VL_PRETRAINED_PATH:-Qwen/Qwen3-VL-2B-Instruct}"
+DA3_MODEL_PATH_OR_NAME="${DA3_MODEL_PATH_OR_NAME:-depth-anything/DA3-GIANT-1.1}"
 DA3_CODE_ROOT="${DA3_CODE_ROOT:-}"
 DATASET_EXTERNAL_STATS_PATH="${DATASET_EXTERNAL_STATS_PATH:-}"
 DATASET_EXTERNAL_STATS_ROOT="${DATASET_EXTERNAL_STATS_ROOT:-}"
@@ -82,6 +84,7 @@ ARGS=(
 
     --policy.type=${POLICY}
     --policy.repo_id=lerobot_lab/${POLICY}
+    --policy.qwen3_vl_pretrained_path="${QWEN3_VL_PRETRAINED_PATH}"
     --policy.push_to_hub=false
     --policy.gradient_checkpointing=false
     --policy.dtype=bfloat16
@@ -97,9 +100,11 @@ ARGS=(
     --policy.enable_3d_queries=true
     --policy.num_3d_query_tokens=1296
     --policy.lambda_3d=0.05
+    --policy.da3_model_path_or_name="${DA3_MODEL_PATH_OR_NAME}"
 
     --dataset.type=${POLICY}
     --dataset.repo_id="${DATASET_REPO_ID}"
+    --dataset.qwen3_vl_processor_path="${QWEN3_VL_PRETRAINED_PATH}"
     --dataset.action_mode="${ACTION_TYPE}"
     --dataset.use_external_stats=${USE_EXTERNAL_STATS}
     --seed=42

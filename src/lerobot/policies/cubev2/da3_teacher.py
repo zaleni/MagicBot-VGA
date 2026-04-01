@@ -57,7 +57,7 @@ def resolve_da3_import(code_root: str | None) -> type:
 class DA3BackboneTeacher(nn.Module):
     def __init__(
         self,
-        model_name: str,
+        model_path_or_name: str,
         process_res: int = 504,
         dtype: torch.dtype = torch.bfloat16,
         teacher_layers: tuple[int, ...] | None = None,
@@ -66,7 +66,7 @@ class DA3BackboneTeacher(nn.Module):
         super().__init__()
         DepthAnything3 = resolve_da3_import(code_root)
 
-        self.wrapper = DepthAnything3.from_pretrained(model_name)
+        self.wrapper = DepthAnything3.from_pretrained(model_path_or_name)
         self.model = self.wrapper.model
         self.out_layers = tuple(int(layer_idx) for layer_idx in self.wrapper.config.net.out_layers)
         self.teacher_layers = self.out_layers if teacher_layers is None else tuple(int(layer_idx) for layer_idx in teacher_layers)

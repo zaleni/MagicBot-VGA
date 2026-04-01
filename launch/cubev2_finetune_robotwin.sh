@@ -4,16 +4,16 @@ set -euo pipefail
 ###############################################################################
 ################################# ENV config ##################################
 
-export HF_HOME="${HF_HOME:-${HOME}/.cache/huggingface}"
+# export HF_HOME="${HF_HOME:-${HOME}/.cache/huggingface}"
 
-WANDB_TOKEN=${WANDB_TOKEN}
-CONDA_ROOT=${_CONDA_ROOT}
-CONDA_ENV=internvla_a1
+# WANDB_TOKEN=${WANDB_TOKEN}
+# CONDA_ROOT=${_CONDA_ROOT}
+# CONDA_ENV=internvla_a1
 
-source ${CONDA_ROOT}/etc/profile.d/conda.sh
-conda activate ${CONDA_ENV}
+# source ${CONDA_ROOT}/etc/profile.d/conda.sh
+# conda activate ${CONDA_ENV}
 
-wandb login ${WANDB_TOKEN}
+# wandb login ${WANDB_TOKEN}
 
 ###############################################################################
 
@@ -21,14 +21,14 @@ export MASTER_ADDR=${MASTER_ADDR:-"127.0.0.1"}
 export MASTER_PORT=${MASTER_PORT:-6379}
 echo "MASTER_ADDR=${MASTER_ADDR}, MASTER_PORT=${MASTER_PORT}"
 
-PROC_PER_NODE="${PROC_PER_NODE:-2}"
+PROC_PER_NODE="${PROC_PER_NODE:-8}"
 NODE_COUNT="${NODE_COUNT:-1}"
 NODE_RANK="${NODE_RANK:-0}"
 NUM_PROCESSES=$((NODE_COUNT * PROC_PER_NODE))
 
-export CUDA_HOME="/usr/local/cuda-12.8"
-export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
-export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH
+# export CUDA_HOME="/usr/local/cuda-12.8"
+# export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
+# export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH
 
 export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=1
@@ -51,6 +51,8 @@ cd ${PROJ_ROOT}
 
 POLICY="cubev2"
 PRETRAINED_PATH="InternRobotics/InternVLA-A1-3B"
+QWEN3_VL_PRETRAINED_PATH="${QWEN3_VL_PRETRAINED_PATH:-Qwen/Qwen3-VL-2B-Instruct}"
+DA3_MODEL_PATH_OR_NAME="${DA3_MODEL_PATH_OR_NAME:-depth-anything/DA3-GIANT-1.1}"
 DA3_CODE_ROOT="${DA3_CODE_ROOT:-}"
 ROBOTWIN_ROOT="${ROBOTWIN_ROOT:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/RoboTwin-LeRobot-v30}"
 ACTION_TYPE=delta
@@ -111,6 +113,7 @@ ARGS=(
     --policy.type=${POLICY}
     --policy.repo_id=lerobot_lab/${POLICY}
     --policy.pretrained_path=${PRETRAINED_PATH}
+    --policy.qwen3_vl_pretrained_path="${QWEN3_VL_PRETRAINED_PATH}"
     --policy.push_to_hub=false
     --policy.gradient_checkpointing=false
     --policy.dtype=bfloat16
@@ -126,10 +129,12 @@ ARGS=(
     --policy.enable_3d_queries=true
     --policy.num_3d_query_tokens=1296
     --policy.lambda_3d=0.05
+    --policy.da3_model_path_or_name="${DA3_MODEL_PATH_OR_NAME}"
 
     --dataset.type=${POLICY}
     --dataset.repo_id="multidata_from_file"
     --dataset.repo_id_file="${REPO_ID_FILE}"
+    --dataset.qwen3_vl_processor_path="${QWEN3_VL_PRETRAINED_PATH}"
     --dataset.action_mode="${ACTION_TYPE}"
     --dataset.use_external_stats=${USE_EXTERNAL_STATS}
 

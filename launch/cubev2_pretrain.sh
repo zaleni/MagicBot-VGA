@@ -50,6 +50,8 @@ echo "PROJ_ROOT  = ${PROJ_ROOT}"
 cd ${PROJ_ROOT}
 
 POLICY="cubev2"
+QWEN3_VL_PRETRAINED_PATH="${QWEN3_VL_PRETRAINED_PATH:-Qwen/Qwen3-VL-2B-Instruct}"
+DA3_MODEL_PATH_OR_NAME="${DA3_MODEL_PATH_OR_NAME:-depth-anything/DA3-GIANT-1.1}"
 DA3_CODE_ROOT="${DA3_CODE_ROOT:-}"
 INTERNDATA_ROOT="${INTERNDATA_ROOT:-/inspire/qb-ilm/project/embodied-basic-model/zhangjianing-253108140206/DATASET/InternData-A1-v30}"
 ROBOTWIN_ROOT="${ROBOTWIN_ROOT:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/RoboTwin-LeRobot-v30}"
@@ -125,6 +127,7 @@ ARGS=(
 
     --policy.type=${POLICY}
     --policy.repo_id=lerobot_lab/${POLICY}
+    --policy.qwen3_vl_pretrained_path="${QWEN3_VL_PRETRAINED_PATH}"
     --policy.push_to_hub=false
     --policy.gradient_checkpointing=false
     --policy.dtype=bfloat16
@@ -140,10 +143,12 @@ ARGS=(
     --policy.enable_3d_queries=true
     --policy.num_3d_query_tokens=1296
     --policy.lambda_3d=0.05
+    --policy.da3_model_path_or_name="${DA3_MODEL_PATH_OR_NAME}"
 
     --dataset.type=${POLICY}
     --dataset.repo_id="multidata_from_file"
     --dataset.repo_id_file="${REPO_ID_FILE}"
+    --dataset.qwen3_vl_processor_path="${QWEN3_VL_PRETRAINED_PATH}"
     --dataset.action_mode="${ACTION_TYPE}"
     --dataset.use_external_stats=${USE_EXTERNAL_STATS}
     --dataset.dist_loading=true
