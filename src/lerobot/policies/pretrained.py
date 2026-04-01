@@ -143,6 +143,22 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
         # Load the model with appropriate kwargs
         missing_keys, unexpected_keys = load_model_as_safetensor(model, model_file, **kwargs)
+        expected_missing_keys = []
+        if has_method(model, "classify_model_loading_keys"):
+            missing_keys, unexpected_keys, expected_missing_keys = model.classify_model_loading_keys(
+                missing_keys, unexpected_keys
+            )
+        elif has_method(model, "filter_model_loading_keys"):
+            missing_keys, unexpected_keys = model.filter_model_loading_keys(missing_keys, unexpected_keys)
+        if expected_missing_keys:
+            preview = expected_missing_keys[:8]
+            preview_str = ", ".join(preview)
+            remaining = len(expected_missing_keys) - len(preview)
+            suffix = f", ... (+{remaining} more)" if remaining > 0 else ""
+            logging.info(
+                "Expected missing key(s) when loading model (new modules initialized separately): "
+                f"{preview_str}{suffix}"
+            )
         log_model_loading_keys(missing_keys, unexpected_keys)
 
         # For older versions, manually move to device if needed

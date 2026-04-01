@@ -1295,8 +1295,8 @@ class CubeV2Policy(PreTrainedPolicy):
         lines.append("")
 
         # ---- parameter counts ----
-        num_total_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
-        num_trainable_params = sum(p.numel() for p in self.parameters())
+        num_total_params = sum(p.numel() for p in self.parameters())
+        num_trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
 
         num_und = sum(p.numel() for p in self.model.qwen3_vl_with_expert.und_expert.parameters())
         num_gen = sum(p.numel() for p in self.model.qwen3_vl_with_expert.gen_expert.parameters())
@@ -1311,6 +1311,9 @@ class CubeV2Policy(PreTrainedPolicy):
 
         if self.model.da3_teacher is not None:
             num_da3 = sum(p.numel() for p in self.model.da3_teacher.model.parameters())
+            num_da3_trainable = sum(
+                p.numel() for p in self.model.da3_teacher.model.parameters() if p.requires_grad
+            )
             lines.append("")
             lines.append("DA3 teacher:")
             lines.append(f"  - Source              : {self.config.da3_model_path_or_name}")
@@ -1318,6 +1321,9 @@ class CubeV2Policy(PreTrainedPolicy):
             lines.append(f"  - Teacher layers      : {self.model.da3_teacher.teacher_layers}")
             lines.append(f"  - Feature dim         : {self.model.da3_teacher.feature_dim}")
             lines.append(f"  - Params              : {num_da3} ({format_big_number(num_da3)})")
+            lines.append(
+                f"  - Trainable params    : {num_da3_trainable} ({format_big_number(num_da3_trainable)})"
+            )
         elif self.config.enable_3d_queries and self.config.lambda_3d > 0:
             lines.append("")
             lines.append("DA3 teacher:")
@@ -1339,6 +1345,26 @@ class CubeV2Policy(PreTrainedPolicy):
 
     def get_optim_params(self) -> dict:
         return self.parameters()
+
+    def classify_model_loading_keys(
+        self, missing_keys: list[str], unexpected_keys: list[str]
+    ) -> tuple[list[str], list[str], list[str]]:
+        ignored_missing_prefixes = (
+            "model.da3_teacher.",
+            "model.da3_query_projectors.",
+        )
+        ignored_missing_exact = {
+            "model.future_3d_queries",
+        }
+
+        expected_missing = [
+            key
+            for key in missing_keys
+            if key in ignored_missing_exact
+            or any(key.startswith(prefix) for prefix in ignored_missing_prefixes)
+        ]
+        filtered_missing = [key for key in missing_keys if key not in expected_missing]
+        return filtered_missing, unexpected_keys, expected_missing
 
     def reset(self):
         """Reset internal state - called when environment resets."""
