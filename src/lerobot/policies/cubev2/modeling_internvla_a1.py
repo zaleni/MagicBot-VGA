@@ -1309,6 +1309,24 @@ class CubeV2Policy(PreTrainedPolicy):
         lines.append(f"  - Gen params          : {num_gen} ({format_big_number(num_gen)})")
         lines.append(f"  - Act params          : {num_act} ({format_big_number(num_act)})")
 
+        if self.model.da3_teacher is not None:
+            num_da3 = sum(p.numel() for p in self.model.da3_teacher.model.parameters())
+            lines.append("")
+            lines.append("DA3 teacher:")
+            lines.append(f"  - Source              : {self.config.da3_model_path_or_name}")
+            lines.append(f"  - Variant             : {self.model.da3_teacher.variant}")
+            lines.append(f"  - Teacher layers      : {self.model.da3_teacher.teacher_layers}")
+            lines.append(f"  - Feature dim         : {self.model.da3_teacher.feature_dim}")
+            lines.append(f"  - Params              : {num_da3} ({format_big_number(num_da3)})")
+        elif self.config.enable_3d_queries and self.config.lambda_3d > 0:
+            lines.append("")
+            lines.append("DA3 teacher:")
+            lines.append("  - Status              : requested but not initialized")
+        else:
+            lines.append("")
+            lines.append("DA3 teacher:")
+            lines.append("  - Status              : disabled")
+
         lines.append("=" * 60)
 
         return "\n".join(lines)
