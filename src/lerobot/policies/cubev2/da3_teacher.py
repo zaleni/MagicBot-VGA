@@ -16,12 +16,15 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import nn
+
+logger = logging.getLogger(__name__)
 
 
 DA3_BACKBONE_DEFAULTS = {
@@ -112,6 +115,7 @@ class DA3BackboneTeacher(nn.Module):
             )
         self.process_res = process_res
         self._dtype = dtype
+        self._logged_sdpa_backend = False
 
         self.model.to(dtype=dtype)
         self.model.eval()
@@ -127,6 +131,41 @@ class DA3BackboneTeacher(nn.Module):
             torch.tensor([0.229, 0.224, 0.225], dtype=dtype).view(1, 1, 3, 1, 1),
             persistent=False,
         )
+
+    def _log_attention_backend_once(self, x: torch.Tensor) -> None:
+        if self._logged_sdpa_backend:
+            return
+
+        attention_modules = [module for module in self.model.modules() if hasattr(module, "fused_attn")]
+        fused_attn_count = sum(bool(getattr(module, "fused_attn", False)) for module in attention_modules)
+        total_attn_count = len(attention_modules)
+
+        flash_enabled = None
+        mem_efficient_enabled = None
+        math_enabled = None
+        if x.device.type == "cuda" and hasattr(torch.backends, "cuda"):
+            flash_enabled = getattr(torch.backends.cuda, "flash_sdp_enabled", lambda: None)()
+            mem_efficient_enabled = getattr(torch.backends.cuda, "mem_efficient_sdp_enabled", lambda: None)()
+            math_enabled = getattr(torch.backends.cuda, "math_sdp_enabled", lambda: None)()
+
+        flash_eligible = (
+            x.device.type == "cuda"
+            and x.dtype in {torch.float16, torch.bfloat16}
+            and total_attn_count > 0
+            and fused_attn_count == total_attn_count
+            and flash_enabled is True
+        )
+
+        logger.info(
+            "DA3 teacher attention backend (best-effort): impl=sdpa, "
+            f"device={x.device}, dtype={x.dtype}, "
+            f"fused_attn_modules={fused_attn_count}/{total_attn_count}, "
+            f"flash_enabled={flash_enabled}, "
+            f"mem_efficient_enabled={mem_efficient_enabled}, "
+            f"math_enabled={math_enabled}, "
+            f"flash_eligible={flash_eligible}"
+        )
+        self._logged_sdpa_backend = True
 
     @torch.no_grad()
     def forward(self, images: torch.Tensor) -> list[torch.Tensor]:
@@ -146,6 +185,7 @@ class DA3BackboneTeacher(nn.Module):
         )
         x = x.view(bsize, num_views, channels, self.process_res, self.process_res)
 
+        self._log_attention_backend_once(x)
         features_tuple, _ = self.model.backbone(x)
         layer_outputs = {layer_idx: layer_out for layer_idx, layer_out in zip(self.out_layers, features_tuple, strict=False)}
         teacher_features = []
