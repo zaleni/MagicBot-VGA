@@ -21,7 +21,7 @@ export MASTER_ADDR=${MASTER_ADDR:-"127.0.0.1"}
 export MASTER_PORT=${MASTER_PORT:-6379}
 echo "MASTER_ADDR=${MASTER_ADDR}, MASTER_PORT=${MASTER_PORT}"
 
-PROC_PER_NODE="${PROC_PER_NODE:-2}"
+PROC_PER_NODE="${PROC_PER_NODE:-8}"
 NODE_COUNT="${NODE_COUNT:-1}"
 NODE_RANK="${NODE_RANK:-0}"
 NUM_PROCESSES=$((NODE_COUNT * PROC_PER_NODE))
@@ -35,8 +35,8 @@ export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 
 export WANDB_MODE=offline
-export HF_HUB_OFFLINE=0
-export TRANSFORMERS_OFFLINE=0
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
 export TOKENIZERS_PARALLELISM=false
 
 ###############################################################################
@@ -131,7 +131,7 @@ ARGS=(
     --policy.qwen3_vl_variant=qwen3_vl_28l
     --policy.action_expert_variant=qwen3_28l
     --policy.enable_3d_queries=true
-    --policy.num_3d_query_tokens=1296
+    --policy.num_3d_query_tokens=648
     --policy.lambda_3d=0.05
     --policy.da3_model_path_or_name="${DA3_MODEL_PATH_OR_NAME}"
     --policy.da3_variant="${DA3_VARIANT}"
@@ -147,7 +147,7 @@ ARGS=(
     --batch_size=8
     --steps=200000
     --save_freq=20000
-    --log_freq=200
+    --log_freq=20
 
     --wandb.enable=true
     --wandb.project=CUBEv2
