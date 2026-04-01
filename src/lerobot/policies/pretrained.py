@@ -33,6 +33,7 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.policies.utils import log_model_loading_keys
 from lerobot.utils.hub import HubMixin
+from lerobot.utils.utils import has_method
 
 T = TypeVar("T", bound="PreTrainedPolicy")
 
