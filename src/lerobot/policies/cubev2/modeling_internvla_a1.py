@@ -763,8 +763,8 @@ class QwenA1(nn.Module):
             teacher_layers = self.da3_teacher(future_images)
         if teacher_device.type == "cuda":
             torch.cuda.synchronize(teacher_device)
-        teacher_forward_ms = torch.tensor(
-            (time.perf_counter() - teacher_forward_start) * 1000.0,
+        teacher_forward_s = torch.tensor(
+            time.perf_counter() - teacher_forward_start,
             device=future_images.device,
             dtype=torch.float32,
         )
@@ -779,7 +779,7 @@ class QwenA1(nn.Module):
 
         total_loss = future_images.new_zeros((), dtype=torch.float32)
         loss_logs = {
-            "time_3d_teacher_forward_ms": teacher_forward_ms.detach(),
+            "time_3d_teacher_forward_s": teacher_forward_s.detach(),
         }
         for idx, (pred, target, weight, teacher_layer_idx, query_layer_idx) in enumerate(
             zip(
