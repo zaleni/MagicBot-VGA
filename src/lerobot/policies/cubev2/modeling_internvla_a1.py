@@ -46,6 +46,59 @@ from lerobot.utils.constants import (
 )
 
 
+class LayerNorm2d(nn.Module):
+    """LayerNorm over channels for tensors shaped as [B, C, H, W]."""
+
+    def __init__(self, num_channels: int, eps: float = 1e-6):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(num_channels))
+        self.bias = nn.Parameter(torch.zeros(num_channels))
+        self.eps = eps
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        mean = x.mean(dim=1, keepdim=True)
+        var = (x - mean).pow(2).mean(dim=1, keepdim=True)
+        x = (x - mean) / torch.sqrt(var + self.eps)
+        return self.weight[:, None, None] * x + self.bias[:, None, None]
+
+
+class Future3DRefineBlock(nn.Module):
+    """A lightweight shared spatial refiner used after per-view 2D upsampling."""
+
+    def __init__(self, dim: int):
+        super().__init__()
+        self.depthwise = nn.Conv2d(dim, dim, kernel_size=3, padding=1, groups=dim)
+        self.depthwise_norm = LayerNorm2d(dim)
+        self.pointwise = nn.Conv2d(dim, dim, kernel_size=1)
+        self.pointwise_norm = LayerNorm2d(dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        residual = x
+        x = self.depthwise(x)
+        x = self.depthwise_norm(x)
+        x = F.silu(x)
+        x = self.pointwise(x)
+        x = self.pointwise_norm(x)
+        x = F.silu(x)
+        return x + residual
+
+
+def infer_token_grid(num_tokens: int) -> tuple[int, int]:
+    """Factorizes token count into a near-square 2D grid."""
+
+    if num_tokens <= 0:
+        raise ValueError(f"num_tokens must be positive, got {num_tokens}")
+
+    best_h, best_w = 1, num_tokens
+    for height in range(1, math.isqrt(num_tokens) + 1):
+        if num_tokens % height != 0:
+            continue
+        width = num_tokens // height
+        if abs(width - height) < abs(best_w - best_h):
+            best_h, best_w = height, width
+    return best_h, best_w
+
+
 def get_safe_dtype(target_dtype, device_type):
     """Get a safe dtype for the given device type."""
     if device_type == "mps" and target_dtype == torch.float64:
@@ -531,12 +584,19 @@ class QwenA1(nn.Module):
         self.middle_visual_token_count = 0
         self.middle_query_token_count = 0
         self.middle_total_token_count = 0
+        self.future_3d_tokens_per_view = config.num_3d_query_tokens // config.da3_num_views
+        self.future_3d_query_grid = infer_token_grid(self.future_3d_tokens_per_view)
+        self.da3_target_grid = infer_token_grid(config.da3_tokens_per_view)
 
         if config.enable_3d_queries:
             self.future_3d_queries = nn.Parameter(
                 torch.randn(1, config.num_3d_query_tokens, action_expert_config.hidden_size)
                 * config.future_query_init_std
             )
+            self.future_3d_layer_input_norms = nn.ModuleList(
+                [nn.LayerNorm(action_expert_config.hidden_size) for _ in self.query_layer_indices]
+            )
+            self.future_3d_shared_refine_trunk = Future3DRefineBlock(action_expert_config.hidden_size)
             self.da3_query_projectors = nn.ModuleList(
                 [
                     nn.Sequential(
@@ -548,6 +608,8 @@ class QwenA1(nn.Module):
             )
         else:
             self.register_parameter("future_3d_queries", None)
+            self.future_3d_layer_input_norms = nn.ModuleList()
+            self.future_3d_shared_refine_trunk = None
             self.da3_query_projectors = nn.ModuleList()
 
         if config.lambda_3d > 0 and config.enable_3d_queries:
@@ -744,12 +806,41 @@ class QwenA1(nn.Module):
         query_tokens = middle_tokens[:, self.middle_visual_token_count :]
         return visual_tokens, query_tokens
 
-    def resize_query_sequence(self, query_tokens: torch.Tensor, target_len: int) -> torch.Tensor:
-        if query_tokens.shape[1] == target_len:
-            return query_tokens
-        query_tokens = query_tokens.transpose(1, 2)
-        query_tokens = F.interpolate(query_tokens, size=target_len, mode="linear", align_corners=False)
-        return query_tokens.transpose(1, 2)
+    def reshape_future_queries_to_view_grid(self, query_tokens: torch.Tensor) -> torch.Tensor:
+        expected_tokens = self.config.da3_num_views * self.future_3d_tokens_per_view
+        if query_tokens.shape[1] != expected_tokens:
+            raise ValueError(
+                f"Expected {expected_tokens} future 3D query tokens, got {query_tokens.shape[1]}"
+            )
+        grid_h, grid_w = self.future_3d_query_grid
+        return rearrange(
+            query_tokens,
+            "b (v h w) c -> b v h w c",
+            v=self.config.da3_num_views,
+            h=grid_h,
+            w=grid_w,
+        )
+
+    def refine_projected_query_grid(self, query_tokens: torch.Tensor, layer_idx: int) -> torch.Tensor:
+        if self.future_3d_shared_refine_trunk is None:
+            raise RuntimeError("Future 3D refine trunk is unavailable when 3D queries are disabled")
+
+        query_tokens = self.future_3d_layer_input_norms[layer_idx](query_tokens.to(dtype=torch.float32))
+        query_grid = self.reshape_future_queries_to_view_grid(query_tokens)
+        query_grid = rearrange(query_grid, "b v h w c -> (b v) c h w")
+        query_grid = F.interpolate(
+            query_grid,
+            size=self.da3_target_grid,
+            mode="bilinear",
+            align_corners=False,
+        )
+        query_grid = self.future_3d_shared_refine_trunk(query_grid)
+        return rearrange(
+            query_grid,
+            "(b v) c h w -> b (v h w) c",
+            b=query_tokens.shape[0],
+            v=self.config.da3_num_views,
+        )
 
     def get_3d_token_mask(self, img_masks: torch.Tensor, target_len: int) -> torch.Tensor:
         token_mask = img_masks.unsqueeze(-1).expand(-1, -1, self.config.da3_tokens_per_view).reshape(img_masks.shape[0], -1)
@@ -762,13 +853,20 @@ class QwenA1(nn.Module):
     def project_query_layers(self, middle_layer_outputs: tuple[torch.Tensor, ...]) -> list[torch.Tensor]:
         projected_queries = []
         target_len = self.config.da3_num_views * self.config.da3_tokens_per_view
-        for projector, middle_layer in zip(self.da3_query_projectors, middle_layer_outputs, strict=False):
+        for layer_idx, (projector, middle_layer) in enumerate(
+            zip(self.da3_query_projectors, middle_layer_outputs, strict=False)
+        ):
             _, query_tokens = self.split_middle_tokens(middle_layer)
             if query_tokens is None:
                 raise RuntimeError("3D query tokens are disabled but DA3 projection was requested")
-            query_tokens = projector(query_tokens.to(dtype=torch.float32))
-            query_tokens = self.resize_query_sequence(query_tokens, target_len)
-            projected_queries.append(query_tokens)
+            refined_queries = self.refine_projected_query_grid(query_tokens, layer_idx)
+            projected_queries.append(projector(refined_queries))
+
+        for projected_query in projected_queries:
+            if projected_query.shape[1] != target_len:
+                raise ValueError(
+                    f"Projected query length ({projected_query.shape[1]}) does not match target length ({target_len})"
+                )
         return projected_queries
 
     def compute_3d_query_loss(self, middle_layer_outputs, future_images, img_masks):
@@ -1333,6 +1431,16 @@ class CubeV2Policy(PreTrainedPolicy):
             lines.append("DA3 teacher:")
             lines.append("  - Status              : disabled")
 
+        if self.config.enable_3d_queries:
+            query_grid_h, query_grid_w = self.model.future_3d_query_grid
+            target_grid_h, target_grid_w = self.model.da3_target_grid
+            lines.append("")
+            lines.append("Future 3D alignment:")
+            lines.append(f"  - Query tokens        : {self.config.num_3d_query_tokens}")
+            lines.append(f"  - Views               : {self.config.da3_num_views}")
+            lines.append(f"  - Query grid / view   : {query_grid_h} x {query_grid_w}")
+            lines.append(f"  - Target grid / view  : {target_grid_h} x {target_grid_w}")
+
         lines.append("=" * 60)
 
         return "\n".join(lines)
@@ -1352,6 +1460,8 @@ class CubeV2Policy(PreTrainedPolicy):
         ignored_missing_prefixes = (
             "model.da3_teacher.",
             "model.da3_query_projectors.",
+            "model.future_3d_layer_input_norms.",
+            "model.future_3d_shared_refine_trunk.",
         )
         ignored_missing_exact = {
             "model.future_3d_queries",

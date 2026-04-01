@@ -170,6 +170,11 @@ class CubeV2Config(PreTrainedConfig):
         if self.enable_3d_queries and self.num_3d_query_tokens <= 0:
             raise ValueError("num_3d_query_tokens must be positive when 3D queries are enabled")
 
+        if self.enable_3d_queries and self.num_3d_query_tokens % self.da3_num_views != 0:
+            raise ValueError(
+                "num_3d_query_tokens must be divisible by da3_num_views for view-aware 3D alignment"
+            )
+
         if self.da3_model_name is not None:
             self.da3_model_path_or_name = self.da3_model_name
 
