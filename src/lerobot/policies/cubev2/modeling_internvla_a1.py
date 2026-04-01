@@ -1310,9 +1310,9 @@ class CubeV2Policy(PreTrainedPolicy):
         lines.append(f"  - Act params          : {num_act} ({format_big_number(num_act)})")
 
         if self.model.da3_teacher is not None:
-            num_da3 = sum(p.numel() for p in self.model.da3_teacher.model.parameters())
+            num_da3 = sum(p.numel() for p in self.model.da3_teacher.backbone.parameters())
             num_da3_trainable = sum(
-                p.numel() for p in self.model.da3_teacher.model.parameters() if p.requires_grad
+                p.numel() for p in self.model.da3_teacher.backbone.parameters() if p.requires_grad
             )
             lines.append("")
             lines.append("DA3 teacher:")

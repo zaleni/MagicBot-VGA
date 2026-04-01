@@ -101,11 +101,11 @@ class DA3BackboneTeacher(nn.Module):
         super().__init__()
         DepthAnything3 = resolve_da3_import(code_root)
 
-        self.wrapper = DepthAnything3.from_pretrained(model_path_or_name)
-        self.model = self.wrapper.model
-        self.out_layers = tuple(int(layer_idx) for layer_idx in self.wrapper.config.net.out_layers)
-        self.feature_dim = int(self.wrapper.config.head.dim_in)
-        self.variant = infer_da3_backbone_profile(getattr(self.wrapper.config.net, "name", model_path_or_name))
+        wrapper = DepthAnything3.from_pretrained(model_path_or_name)
+        self.backbone = wrapper.model.backbone
+        self.out_layers = tuple(int(layer_idx) for layer_idx in wrapper.config.net.out_layers)
+        self.feature_dim = int(wrapper.config.head.dim_in)
+        self.variant = infer_da3_backbone_profile(getattr(wrapper.config.net, "name", model_path_or_name))
         self.teacher_layers = self.out_layers if teacher_layers is None else tuple(int(layer_idx) for layer_idx in teacher_layers)
         missing_layers = [layer_idx for layer_idx in self.teacher_layers if layer_idx not in self.out_layers]
         if missing_layers:
@@ -117,9 +117,10 @@ class DA3BackboneTeacher(nn.Module):
         self._dtype = dtype
         self._logged_sdpa_backend = False
 
-        self.model.to(dtype=dtype)
-        self.model.eval()
-        self.model.requires_grad_(False)
+        self.backbone.to(dtype=dtype)
+        self.backbone.eval()
+        self.backbone.requires_grad_(False)
+        del wrapper
 
         self.register_buffer(
             "mean",
@@ -136,7 +137,7 @@ class DA3BackboneTeacher(nn.Module):
         if self._logged_sdpa_backend:
             return
 
-        attention_modules = [module for module in self.model.modules() if hasattr(module, "fused_attn")]
+        attention_modules = [module for module in self.backbone.modules() if hasattr(module, "fused_attn")]
         fused_attn_count = sum(bool(getattr(module, "fused_attn", False)) for module in attention_modules)
         total_attn_count = len(attention_modules)
 
@@ -169,7 +170,7 @@ class DA3BackboneTeacher(nn.Module):
 
     @torch.no_grad()
     def forward(self, images: torch.Tensor) -> list[torch.Tensor]:
-        model_param = next(self.model.parameters())
+        model_param = next(self.backbone.parameters())
         x = images.to(device=model_param.device, dtype=model_param.dtype)
         if x.max() > 1.0:
             x = x / 255.0
@@ -186,7 +187,7 @@ class DA3BackboneTeacher(nn.Module):
         x = x.view(bsize, num_views, channels, self.process_res, self.process_res)
 
         self._log_attention_backend_once(x)
-        features_tuple, _ = self.model.backbone(x)
+        features_tuple, _ = self.backbone(x)
         layer_outputs = {layer_idx: layer_out for layer_idx, layer_out in zip(self.out_layers, features_tuple, strict=False)}
         teacher_features = []
         for layer_idx in self.teacher_layers:
