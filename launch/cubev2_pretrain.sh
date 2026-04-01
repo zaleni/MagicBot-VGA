@@ -94,9 +94,16 @@ if [[ ${#DATASET_REPO_IDS[@]} -eq 0 ]]; then
   exit 1
 fi
 
-if [[ "${USE_EXTERNAL_STATS}" == "true" && -z "${DATASET_EXTERNAL_STATS_PATH}" && -z "${DATASET_EXTERNAL_STATS_ROOT}" ]]; then
-  echo "USE_EXTERNAL_STATS=true but neither DATASET_EXTERNAL_STATS_PATH nor DATASET_EXTERNAL_STATS_ROOT is set."
-  exit 1
+if [[ "${USE_EXTERNAL_STATS}" == "true" ]]; then
+  if [[ -n "${DATASET_EXTERNAL_STATS_PATH}" ]]; then
+    echo "cubev2_pretrain.sh is a multi-dataset script and does not accept DATASET_EXTERNAL_STATS_PATH."
+    echo "Please set DATASET_EXTERNAL_STATS_ROOT instead."
+    exit 1
+  fi
+  if [[ -z "${DATASET_EXTERNAL_STATS_ROOT}" ]]; then
+    echo "USE_EXTERNAL_STATS=true but DATASET_EXTERNAL_STATS_ROOT is not set."
+    exit 1
+  fi
 fi
 
 BASE_OUTPUT_DIR="outputs/${POLICY}"
@@ -166,10 +173,6 @@ ARGS=(
 
 if [[ -n "${DA3_CODE_ROOT}" ]]; then
     ARGS+=(--policy.da3_code_root="${DA3_CODE_ROOT}")
-fi
-
-if [[ -n "${DATASET_EXTERNAL_STATS_PATH}" ]]; then
-    ARGS+=(--dataset.external_stats_path="${DATASET_EXTERNAL_STATS_PATH}")
 fi
 
 if [[ -n "${DATASET_EXTERNAL_STATS_ROOT}" ]]; then

@@ -17,6 +17,7 @@
 import logging
 import math
 import os
+import time
 from collections import deque
 from typing import Literal
 
@@ -754,8 +755,19 @@ class QwenA1(nn.Module):
                 f"Expected {len(self.query_layer_indices)} query-token layers, got {len(middle_layer_outputs)}"
             )
 
+        teacher_device = next(self.da3_teacher.parameters()).device
+        if teacher_device.type == "cuda":
+            torch.cuda.synchronize(teacher_device)
+        teacher_forward_start = time.perf_counter()
         with torch.no_grad():
             teacher_layers = self.da3_teacher(future_images)
+        if teacher_device.type == "cuda":
+            torch.cuda.synchronize(teacher_device)
+        teacher_forward_ms = torch.tensor(
+            (time.perf_counter() - teacher_forward_start) * 1000.0,
+            device=future_images.device,
+            dtype=torch.float32,
+        )
 
         if len(teacher_layers) != len(self.da3_teacher_layers):
             raise ValueError(
@@ -766,7 +778,9 @@ class QwenA1(nn.Module):
         token_mask = self.get_3d_token_mask(img_masks, teacher_layers[0].shape[1])
 
         total_loss = future_images.new_zeros((), dtype=torch.float32)
-        loss_logs = {}
+        loss_logs = {
+            "time_3d_teacher_forward_ms": teacher_forward_ms.detach(),
+        }
         for idx, (pred, target, weight, teacher_layer_idx, query_layer_idx) in enumerate(
             zip(
                 predicted_queries,

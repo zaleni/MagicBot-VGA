@@ -138,7 +138,7 @@ class CubeV2Config(PreTrainedConfig):
     scale_factor: int = 8
     lambda_gen: float = 0.01
 
-    enable_3d_queries: bool = True
+    enable_3d_queries: bool = False
     num_3d_query_tokens: int = 1296  # compressed future-3D bottleneck queries
     query_layer_indices: tuple[int, ...] = (13, 19, 23, 27)
     da3_teacher_layers: tuple[int, ...] = (19, 27, 33, 39)
