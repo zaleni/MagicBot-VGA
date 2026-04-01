@@ -117,10 +117,9 @@ def update_policy(
         accelerator.unwrap_model(policy, keep_fp32_wrapper=True).update()
 
     train_metrics.loss = loss.item()
-    if "loss_action" in output_dict:
-        train_metrics.loss_action = output_dict["loss_action"]
-    if "loss_gen" in output_dict:
-        train_metrics.loss_gen = output_dict["loss_gen"]
+    for metric_name in ("loss_action", "loss_gen", "loss_3d", "time_3d_teacher_forward_s"):
+        if metric_name in output_dict and metric_name in train_metrics.metrics:
+            setattr(train_metrics, metric_name, output_dict[metric_name])
     train_metrics.grad_norm = grad_norm.item()
     train_metrics.lr = optimizer.param_groups[0]["lr"]
     train_metrics.update_s = time.perf_counter() - start_time
@@ -291,7 +290,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
     policy.train()
 
-    if cfg.policy.type in ["a1", "qwena1"]:
+    if cfg.policy.type in ["a1", "qwena1", "cubev2"]:
         train_metrics = {
             "loss": AverageMeter("loss", ":.3f"),
             "loss_action": AverageMeter("loss_action", ":.3f"),
@@ -301,6 +300,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             "update_s": AverageMeter("updt_s", ":.3f"),
             "dataloading_s": AverageMeter("data_s", ":.3f"),
         }
+        if cfg.policy.type == "cubev2":
+            train_metrics["loss_3d"] = AverageMeter("loss_3d", ":.3f")
+            train_metrics["time_3d_teacher_forward_s"] = AverageMeter("da3_s", ":.3f")
     else:
         train_metrics = {
             "loss": AverageMeter("loss", ":.3f"),
