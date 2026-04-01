@@ -126,6 +126,69 @@ def update_policy(
     return train_metrics, output_dict
 
 
+def _meter_avg_or_val(meter: AverageMeter) -> float:
+    return meter.avg if meter.count > 0 else meter.val
+
+
+def _format_train_status_line(
+    train_tracker: MetricsTracker,
+    cfg: TrainPipelineConfig,
+    *,
+    elapsed_str: str,
+    remaining_str: str,
+    steps_per_second: float,
+) -> str:
+    progress_parts = [
+        f"step:{format_big_number(train_tracker.steps, precision=1)}",
+        f"sample:{format_big_number(train_tracker.samples)}",
+        f"episode:{format_big_number(train_tracker.episodes)}",
+        f"epoch:{train_tracker.epochs:.2f}",
+    ]
+
+    loss_parts = []
+    if "loss" in train_tracker.metrics:
+        loss_parts.append(f"total:{_meter_avg_or_val(train_tracker.loss):.3f}")
+    if "loss_action" in train_tracker.metrics:
+        loss_parts.append(f"action:{_meter_avg_or_val(train_tracker.loss_action):.3f}")
+    if "loss_gen" in train_tracker.metrics:
+        loss_gen = _meter_avg_or_val(train_tracker.loss_gen)
+        lambda_gen = float(getattr(cfg.policy, "lambda_gen", 1.0))
+        loss_parts.append(f"gen:{loss_gen:.3f}")
+        loss_parts.append(f"gen_w:{lambda_gen * loss_gen:.3f}")
+    if "loss_3d" in train_tracker.metrics:
+        loss_3d = _meter_avg_or_val(train_tracker.loss_3d)
+        lambda_3d = float(getattr(cfg.policy, "lambda_3d", 1.0))
+        loss_parts.append(f"3d:{loss_3d:.3f}")
+        loss_parts.append(f"3d_w:{lambda_3d * loss_3d:.3f}")
+
+    optim_parts = []
+    if "grad_norm" in train_tracker.metrics:
+        optim_parts.append(f"grdn:{_meter_avg_or_val(train_tracker.grad_norm):.3f}")
+    if "lr" in train_tracker.metrics:
+        optim_parts.append(f"lr:{_meter_avg_or_val(train_tracker.lr):.1e}")
+
+    time_parts = []
+    if "update_s" in train_tracker.metrics:
+        time_parts.append(f"update:{_meter_avg_or_val(train_tracker.update_s):.3f}s")
+    if "dataloading_s" in train_tracker.metrics:
+        time_parts.append(f"data:{_meter_avg_or_val(train_tracker.dataloading_s):.3f}s")
+    if "time_3d_teacher_forward_s" in train_tracker.metrics:
+        time_parts.append(f"da3:{_meter_avg_or_val(train_tracker.time_3d_teacher_forward_s):.3f}s")
+
+    sections = [
+        f"\033[92m\033[1m{elapsed_str} << {remaining_str}\033[0m",
+        f"\033[96m\033[1m{steps_per_second:.2f} iters/s\033[0m",
+        f"progress[{' | '.join(progress_parts)}]",
+    ]
+    if loss_parts:
+        sections.append(f"loss[{' | '.join(loss_parts)}]")
+    if optim_parts:
+        sections.append(f"optim[{' | '.join(optim_parts)}]")
+    if time_parts:
+        sections.append(f"time[{' | '.join(time_parts)}]")
+    return " | ".join(sections)
+
+
 @parser.wrap()
 def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     """
@@ -363,7 +426,15 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             elapsed_str = format_time(elapsed_time)
             remaining_str = format_time(estimated_remaining_time)
 
-            logging.info(f" \033[92m\033[1m{elapsed_str} << {remaining_str}\033[0m | \033[96m\033[1m{steps_per_second:.2f} iters/s\033[0m | {train_tracker}")
+            logging.info(
+                _format_train_status_line(
+                    train_tracker,
+                    cfg,
+                    elapsed_str=elapsed_str,
+                    remaining_str=remaining_str,
+                    steps_per_second=steps_per_second,
+                )
+            )
             if wandb_logger:
                 wandb_log_dict = train_tracker.to_dict()
                 if output_dict:
