@@ -69,7 +69,9 @@ class Future3DRefineBlock(nn.Module):
         super().__init__()
         self.depthwise = nn.Conv2d(dim, dim, kernel_size=3, padding=1, groups=dim)
         self.depthwise_norm = LayerNorm2d(dim)
-        self.pointwise = nn.Conv2d(dim, dim, kernel_size=1)
+        # A per-location linear projection is equivalent to a 1x1 conv here, but
+        # keeps DDP gradient buckets in a standard contiguous layout more reliably.
+        self.pointwise = nn.Linear(dim, dim)
         self.pointwise_norm = LayerNorm2d(dim)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -77,7 +79,9 @@ class Future3DRefineBlock(nn.Module):
         x = self.depthwise(x)
         x = self.depthwise_norm(x)
         x = F.silu(x)
+        x = rearrange(x, "b c h w -> b h w c")
         x = self.pointwise(x)
+        x = rearrange(x, "b h w c -> b c h w").contiguous()
         x = self.pointwise_norm(x)
         x = F.silu(x)
         return x + residual

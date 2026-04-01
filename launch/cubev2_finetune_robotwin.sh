@@ -54,7 +54,7 @@ POLICY="cubev2"
 PRETRAINED_PATH="/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/model/InternVLA-A1-3B"
 QWEN3_VL_PRETRAINED_PATH="${QWEN3_VL_PRETRAINED_PATH:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/model/Qwen3-VL-2B-Instruct}"
 COSMOS_TOKENIZER_PATH_OR_NAME="${COSMOS_TOKENIZER_PATH_OR_NAME:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/model/Cosmos-Tokenizer-CI8x8}"
-DA3_MODEL_PATH_OR_NAME="${DA3_MODEL_PATH_OR_NAME:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/model/DA3-GIANT-1-1}"
+DA3_MODEL_PATH_OR_NAME="${DA3_MODEL_PATH_OR_NAME:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/model/DA3-LARGE-1-1}"
 DA3_VARIANT="${DA3_VARIANT:-auto}"
 DA3_CODE_ROOT="${DA3_CODE_ROOT:-}"
 ROBOTWIN_ROOT="${ROBOTWIN_ROOT:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/RoboTwin-LeRobot-v30}"
@@ -132,7 +132,7 @@ ARGS=(
     --policy.action_expert_variant=qwen3_28l
     --policy.enable_3d_queries=true
     --policy.num_3d_query_tokens=432  # 3 views x 12 x 12 query grid
-    --policy.lambda_3d=0.05
+    --policy.lambda_3d=0.01
     --policy.da3_model_path_or_name="${DA3_MODEL_PATH_OR_NAME}"
     --policy.da3_variant="${DA3_VARIANT}"
 
@@ -144,10 +144,10 @@ ARGS=(
     --dataset.use_external_stats=${USE_EXTERNAL_STATS}
 
     --seed=42
-    --batch_size=8
+    --batch_size=16
     --steps=200000
     --save_freq=20000
-    --log_freq=20
+    --log_freq=25
 
     --wandb.enable=true
     --wandb.project=CUBEv2
