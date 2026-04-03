@@ -43,9 +43,15 @@ echo "PROJ_ROOT  = ${PROJ_ROOT}"
 
 cd "${PROJ_ROOT}"
 SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
-DEFAULT_RUN_NAME="internvla-a1-3b-robotwin-$(date +%Y_%m_%d_%H_%M_%S)"
-RUN_NAME="${RUN_NAME:-${DEFAULT_RUN_NAME}}"
 PRETRAINED_CKPT="/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/model/InternVLA-A1-3B-RoboTwin"
+
+POLICY_TYPE="${POLICY_TYPE:-}"
+QWEN3_VL_PRETRAINED_PATH="${QWEN3_VL_PRETRAINED_PATH:-}"
+QWEN3_VL_PROCESSOR_PATH="${QWEN3_VL_PROCESSOR_PATH:-}"
+COSMOS_TOKENIZER_PATH_OR_NAME="${COSMOS_TOKENIZER_PATH_OR_NAME:-}"
+DA3_MODEL_PATH_OR_NAME="${DA3_MODEL_PATH_OR_NAME:-}"
+DA3_CODE_ROOT="${DA3_CODE_ROOT:-}"
+DISABLE_DA3_TEACHER_FOR_EVAL="${DISABLE_DA3_TEACHER_FOR_EVAL:-true}"
 
 BASE_OUTPUT_PATH="${BASE_OUTPUT_PATH:-${PROJ_ROOT}/evaluation/RoboTwin/output_randomized_50}"
 RUN_OUTPUT_PATH="${BASE_OUTPUT_PATH}/${RUN_NAME}"
@@ -63,10 +69,6 @@ ACTION_MODE="${ACTION_MODE:-delta}"
 TEST_NUM="${TEST_NUM:-100}"
 STATS_KEY="${STATS_KEY:-aloha}"
 DTYPE="${DTYPE:-bfloat16}"
-VLM_PREFIX_CAUSAL_ATTENTION="${VLM_PREFIX_CAUSAL_ATTENTION:-false}"
-TOKENIZER_MAX_LENGTH="${TOKENIZER_MAX_LENGTH:-48}"
-USE_ACTION_ONLY_SYSTEM_PROMPT_PREFIX="${USE_ACTION_ONLY_SYSTEM_PROMPT_PREFIX:-false}"
-ACTION_TASK_PREFIX="${ACTION_TASK_PREFIX:-Task:}"
 IMAGE_HISTORY_INTERVAL="${IMAGE_HISTORY_INTERVAL:-15}"
 INFER_HORIZON="${INFER_HORIZON:-30}"
 ACTION_HORIZON_SIZE="${ACTION_HORIZON_SIZE:-50}"
@@ -93,6 +95,10 @@ if [[ -z "${PRETRAINED_CKPT}" ]]; then
     echo "  bash evaluation/RoboTwin/${SCRIPT_NAME} /path/to/pretrained_model"
     exit 1
 fi
+
+CKPT_TAG="$(basename "${PRETRAINED_CKPT}")"
+DEFAULT_RUN_NAME="${CKPT_TAG}-robotwin-$(date +%Y_%m_%d_%H_%M_%S)"
+RUN_NAME="${RUN_NAME:-${DEFAULT_RUN_NAME}}"
 
 if [[ -e "${PRETRAINED_CKPT}" && ! -d "${PRETRAINED_CKPT}" ]]; then
     echo "PRETRAINED_CKPT exists but is not a directory: ${PRETRAINED_CKPT}"
@@ -188,8 +194,14 @@ done
     echo "resize_size: ${RESIZE_SIZE}"
     echo "stats_key: ${STATS_KEY}"
     echo "dtype: ${DTYPE}"
-    echo "tokenizer_max_length: ${TOKENIZER_MAX_LENGTH}"
     echo "instruction_type: ${INSTRUCTION_TYPE}"
+    echo "policy_type: ${POLICY_TYPE:-auto_from_checkpoint}"
+    echo "qwen3_vl_pretrained_path: ${QWEN3_VL_PRETRAINED_PATH:-<checkpoint_config>}"
+    echo "qwen3_vl_processor_path: ${QWEN3_VL_PROCESSOR_PATH:-<checkpoint_config>}"
+    echo "cosmos_tokenizer_path_or_name: ${COSMOS_TOKENIZER_PATH_OR_NAME:-<checkpoint_config>}"
+    echo "da3_model_path_or_name: ${DA3_MODEL_PATH_OR_NAME:-<checkpoint_config>}"
+    echo "da3_code_root: ${DA3_CODE_ROOT:-<checkpoint_config>}"
+    echo "disable_da3_teacher_for_eval: ${DISABLE_DA3_TEACHER_FOR_EVAL}"
     echo "poll_interval_seconds: ${POLL_INTERVAL_SECONDS}"
 } > "${RUN_OUTPUT_PATH}/launch_info.txt"
 
@@ -205,7 +217,13 @@ done
     printf 'ACTION_MODE=%q ' "${ACTION_MODE}"
     printf 'TEST_NUM=%q ' "${TEST_NUM}"
     printf 'RESIZE_SIZE=%q ' "${RESIZE_SIZE}"
-    printf 'TOKENIZER_MAX_LENGTH=%q ' "${TOKENIZER_MAX_LENGTH}"
+    printf 'POLICY_TYPE=%q ' "${POLICY_TYPE}"
+    printf 'QWEN3_VL_PRETRAINED_PATH=%q ' "${QWEN3_VL_PRETRAINED_PATH}"
+    printf 'QWEN3_VL_PROCESSOR_PATH=%q ' "${QWEN3_VL_PROCESSOR_PATH}"
+    printf 'COSMOS_TOKENIZER_PATH_OR_NAME=%q ' "${COSMOS_TOKENIZER_PATH_OR_NAME}"
+    printf 'DA3_MODEL_PATH_OR_NAME=%q ' "${DA3_MODEL_PATH_OR_NAME}"
+    printf 'DA3_CODE_ROOT=%q ' "${DA3_CODE_ROOT}"
+    printf 'DISABLE_DA3_TEACHER_FOR_EVAL=%q ' "${DISABLE_DA3_TEACHER_FOR_EVAL}"
     printf 'bash %q\n' "${SCRIPT_DIR}/${SCRIPT_NAME}"
 } > "${RUN_OUTPUT_PATH}/launch_command.txt"
 
@@ -237,8 +255,6 @@ write_task_command_file() {
         --args.test_num "${TEST_NUM}"
         --args.stats_key "${STATS_KEY}"
         --args.dtype "${DTYPE}"
-        --args.tokenizer_max_length "${TOKENIZER_MAX_LENGTH}"
-        --args.action_task_prefix "${ACTION_TASK_PREFIX}"
         --args.image_history_interval "${IMAGE_HISTORY_INTERVAL}"
         --args.infer_horizon "${INFER_HORIZON}"
         --args.action_horizon_size "${ACTION_HORIZON_SIZE}"
@@ -246,16 +262,36 @@ write_task_command_file() {
         --args.log_level "${LOG_LEVEL}"
     )
 
-    if [[ "${VLM_PREFIX_CAUSAL_ATTENTION}" == "true" ]]; then
-        cmd+=(--args.vlm_prefix_causal_attention)
-    fi
-
-    if [[ "${USE_ACTION_ONLY_SYSTEM_PROMPT_PREFIX}" == "true" ]]; then
-        cmd+=(--args.use_action_only_system_prompt_prefix)
-    fi
-
     if [[ "${DECODE_IMAGE_FLAG}" == "true" ]]; then
         cmd+=(--args.decode_image_flag)
+    fi
+
+    if [[ -n "${POLICY_TYPE}" ]]; then
+        cmd+=(--args.policy_type "${POLICY_TYPE}")
+    fi
+
+    if [[ -n "${QWEN3_VL_PRETRAINED_PATH}" ]]; then
+        cmd+=(--args.qwen3_vl_pretrained_path "${QWEN3_VL_PRETRAINED_PATH}")
+    fi
+
+    if [[ -n "${QWEN3_VL_PROCESSOR_PATH}" ]]; then
+        cmd+=(--args.qwen3_vl_processor_path "${QWEN3_VL_PROCESSOR_PATH}")
+    fi
+
+    if [[ -n "${COSMOS_TOKENIZER_PATH_OR_NAME}" ]]; then
+        cmd+=(--args.cosmos_tokenizer_path_or_name "${COSMOS_TOKENIZER_PATH_OR_NAME}")
+    fi
+
+    if [[ -n "${DA3_MODEL_PATH_OR_NAME}" ]]; then
+        cmd+=(--args.da3_model_path_or_name "${DA3_MODEL_PATH_OR_NAME}")
+    fi
+
+    if [[ -n "${DA3_CODE_ROOT}" ]]; then
+        cmd+=(--args.da3_code_root "${DA3_CODE_ROOT}")
+    fi
+
+    if [[ "${DISABLE_DA3_TEACHER_FOR_EVAL}" == "true" ]]; then
+        cmd+=(--args.disable_3d_teacher_for_eval)
     fi
 
     {
@@ -290,8 +326,6 @@ launch_task() {
             --args.test_num "${TEST_NUM}"
             --args.stats_key "${STATS_KEY}"
             --args.dtype "${DTYPE}"
-            --args.tokenizer_max_length "${TOKENIZER_MAX_LENGTH}"
-            --args.action_task_prefix "${ACTION_TASK_PREFIX}"
             --args.image_history_interval "${IMAGE_HISTORY_INTERVAL}"
             --args.infer_horizon "${INFER_HORIZON}"
             --args.action_horizon_size "${ACTION_HORIZON_SIZE}"
@@ -299,16 +333,36 @@ launch_task() {
             --args.log_level "${LOG_LEVEL}"
         )
 
-        if [[ "${VLM_PREFIX_CAUSAL_ATTENTION}" == "true" ]]; then
-            CMD+=(--args.vlm_prefix_causal_attention)
-        fi
-
-        if [[ "${USE_ACTION_ONLY_SYSTEM_PROMPT_PREFIX}" == "true" ]]; then
-            CMD+=(--args.use_action_only_system_prompt_prefix)
-        fi
-
         if [[ "${DECODE_IMAGE_FLAG}" == "true" ]]; then
             CMD+=(--args.decode_image_flag)
+        fi
+
+        if [[ -n "${POLICY_TYPE}" ]]; then
+            CMD+=(--args.policy_type "${POLICY_TYPE}")
+        fi
+
+        if [[ -n "${QWEN3_VL_PRETRAINED_PATH}" ]]; then
+            CMD+=(--args.qwen3_vl_pretrained_path "${QWEN3_VL_PRETRAINED_PATH}")
+        fi
+
+        if [[ -n "${QWEN3_VL_PROCESSOR_PATH}" ]]; then
+            CMD+=(--args.qwen3_vl_processor_path "${QWEN3_VL_PROCESSOR_PATH}")
+        fi
+
+        if [[ -n "${COSMOS_TOKENIZER_PATH_OR_NAME}" ]]; then
+            CMD+=(--args.cosmos_tokenizer_path_or_name "${COSMOS_TOKENIZER_PATH_OR_NAME}")
+        fi
+
+        if [[ -n "${DA3_MODEL_PATH_OR_NAME}" ]]; then
+            CMD+=(--args.da3_model_path_or_name "${DA3_MODEL_PATH_OR_NAME}")
+        fi
+
+        if [[ -n "${DA3_CODE_ROOT}" ]]; then
+            CMD+=(--args.da3_code_root "${DA3_CODE_ROOT}")
+        fi
+
+        if [[ "${DISABLE_DA3_TEACHER_FOR_EVAL}" == "true" ]]; then
+            CMD+=(--args.disable_3d_teacher_for_eval)
         fi
 
         CUDA_VISIBLE_DEVICES="${gpu_id}" "${CMD[@]}" > "${task_log_path}" 2>&1

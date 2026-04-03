@@ -8,6 +8,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Union
 
+ROOT_PATH = Path(__file__).resolve().parents[2]
+SRC_ROOT = ROOT_PATH / "src"
+for candidate in [str(SRC_ROOT), str(ROOT_PATH)]:
+    if candidate not in sys.path:
+        sys.path.insert(0, candidate)
+
 import imageio
 import numpy as np
 import torch
@@ -17,8 +23,13 @@ from huggingface_hub import snapshot_download
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets.utils import load_json
-from lerobot.policies.InternVLA_A1_3B.modeling_internvla_a1 import QwenA1Config, QwenA1Policy
-from lerobot.policies.InternVLA_A1_3B.transform_internvla_a1 import Qwen3_VLProcessorTransformFn
+from lerobot.policies.factory import get_policy_class
+from lerobot.policies.InternVLA_A1_3B.transform_internvla_a1 import (
+    Qwen3_VLProcessorTransformFn as QwenA1ProcessorTransformFn,
+)
+from lerobot.policies.cubev2.transform_internvla_a1 import (
+    Qwen3_VLProcessorTransformFn as CubeV2ProcessorTransformFn,
+)
 from lerobot.transforms.core import (
     NormalizeTransformFn,
     ResizeImagesWithPadFn,
@@ -28,7 +39,6 @@ from lerobot.transforms.core import (
 )
 from lerobot.utils.constants import OBS_IMAGES
 
-ROOT_PATH = Path(__file__).resolve().parents[2]
 # RoboTwin dependencies
 sys.path.extend(
     [
@@ -60,6 +70,40 @@ def resolve_ckpt_dir(ckpt_path: Union[str, Path]) -> Path:
 
     snapshot_dir = snapshot_download(repo_id=ckpt_str)
     return Path(snapshot_dir)
+
+
+def resolve_policy_components(config: PreTrainedConfig):
+    policy_cls = get_policy_class(config.type)
+    if config.type in {"qwena1", "internvla_a1_3b"}:
+        processor_transform_cls = QwenA1ProcessorTransformFn
+    elif config.type == "cubev2":
+        processor_transform_cls = CubeV2ProcessorTransformFn
+    else:
+        raise ValueError(
+            f"RoboTwin inference currently supports qwena1/internvla_a1_3b/cubev2 checkpoints, got {config.type!r}."
+        )
+    return policy_cls, processor_transform_cls
+
+
+def apply_runtime_config_overrides(config: PreTrainedConfig, args: "InferenceArgs") -> None:
+    if args.policy_type is not None:
+        config.type = args.policy_type
+
+    if args.qwen3_vl_pretrained_path is not None and hasattr(config, "qwen3_vl_pretrained_path"):
+        config.qwen3_vl_pretrained_path = args.qwen3_vl_pretrained_path
+    if args.qwen3_vl_processor_path is not None and hasattr(config, "qwen3_vl_processor_path"):
+        config.qwen3_vl_processor_path = args.qwen3_vl_processor_path
+    if args.cosmos_tokenizer_path_or_name is not None and hasattr(config, "cosmos_tokenizer_path_or_name"):
+        config.cosmos_tokenizer_path_or_name = args.cosmos_tokenizer_path_or_name
+    if args.da3_model_path_or_name is not None and hasattr(config, "da3_model_path_or_name"):
+        config.da3_model_path_or_name = args.da3_model_path_or_name
+    if args.da3_code_root is not None and hasattr(config, "da3_code_root"):
+        config.da3_code_root = args.da3_code_root
+
+    if config.type == "cubev2" and args.disable_3d_teacher_for_eval and hasattr(config, "lambda_3d"):
+        # 3D queries remain enabled so the checkpoint architecture still matches,
+        # but the frozen DA3 teacher is not instantiated for action-only inference.
+        config.lambda_3d = 0.0
 
 
 # Task list matching eval_robotwin.py
@@ -180,17 +224,22 @@ def build_task_args(task_config: str, task_name: str):
     return task_args
 
 
-def build_policy_and_transforms(ckpt_path: Union[str, Path], stats_key: str, resize_size: int, dtype: torch.dtype):
+def build_policy_and_transforms(args: "InferenceArgs", dtype: torch.dtype):
     """Load policy and build input/output transforms."""
-    ckpt_dir = resolve_ckpt_dir(ckpt_path)
+    ckpt_dir = resolve_ckpt_dir(args.ckpt_path)
     config = PreTrainedConfig.from_pretrained(ckpt_dir)
-    if not isinstance(config, QwenA1Config):
-        raise ValueError(f"Expected QwenA1Config, got {type(config)}")
-    
-    policy = QwenA1Policy.from_pretrained(config=config, pretrained_name_or_path=ckpt_dir)
-    policy.cuda().to(dtype).eval()
+    apply_runtime_config_overrides(config, args)
+    config.device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    stats = load_json(ckpt_dir / "stats.json")[stats_key]
+    policy_cls, processor_transform_cls = resolve_policy_components(config)
+    policy = policy_cls.from_pretrained(config=config, pretrained_name_or_path=ckpt_dir)
+    policy.to(device=config.device, dtype=dtype).eval()
+
+    logging.info(f"Resolved policy type: {config.type}")
+    if config.type == "cubev2" and args.disable_3d_teacher_for_eval:
+        logging.info("CubeV2 eval mode: disabled DA3 teacher instantiation (3D query tokens stay enabled).")
+
+    stats = load_json(ckpt_dir / "stats.json")[args.stats_key]
     stat_keys = ["min", "max", "mean", "std"]
 
     state_concat = {k: np.asarray(stats["observation.state"][k]) for k in stat_keys}
@@ -206,12 +255,23 @@ def build_policy_and_transforms(ckpt_path: Union[str, Path], stats_key: str, res
     )
 
     image_keys = [f"{OBS_IMAGES}.image{i}" for i in range(3)]
+    processor_path = (
+        args.qwen3_vl_processor_path
+        or getattr(config, "qwen3_vl_processor_path", None)
+        or getattr(config, "qwen3_vl_pretrained_path", None)
+    )
+    if processor_path is None:
+        raise ValueError("Failed to resolve a Qwen3-VL processor path for RoboTwin inference.")
+    tokenizer_max_length = int(getattr(config, "tokenizer_max_length", 48))
 
     input_transforms = compose(
         [
             ResizeImagesWithPadFn(height=resize_size, width=resize_size),
             RemapImageKeyTransformFn(mapping={k: k for k in image_keys}),
-            Qwen3_VLProcessorTransformFn(),
+            processor_transform_cls(
+                pretrained_model_name_or_path=processor_path,
+                max_length=tokenizer_max_length,
+            ),
             NormalizeTransformFn(selected_keys=["observation.state"], norm_stats=state_stat),
         ]
     )
@@ -242,6 +302,13 @@ class InferenceArgs:
     action_horizon_size: int = 50
     test_num: int = 100
     robot_type: tuple[int, ...] = (6, 1, 6, 1)
+    policy_type: str | None = None
+    qwen3_vl_pretrained_path: str | None = None
+    qwen3_vl_processor_path: str | None = None
+    cosmos_tokenizer_path_or_name: str | None = None
+    da3_model_path_or_name: str | None = None
+    da3_code_root: str | None = None
+    disable_3d_teacher_for_eval: bool = False
 
 
 
@@ -252,9 +319,7 @@ def infer_once(args: InferenceArgs):
     TASK_ENV = class_decorator(task_args["task_name"])
 
     dtype = torch.float32 if args.dtype == "float32" else torch.bfloat16
-    policy, input_transforms, unnormalize_fn = build_policy_and_transforms(
-        args.ckpt_path, args.stats_key, args.resize_size, dtype
-    )
+    policy, input_transforms, unnormalize_fn = build_policy_and_transforms(args, dtype)
 
     logging.info("=" * 80)
     logging.info("Initializing environment...")
