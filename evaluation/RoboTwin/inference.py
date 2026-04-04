@@ -266,7 +266,7 @@ def build_policy_and_transforms(args: "InferenceArgs", dtype: torch.dtype):
 
     input_transforms = compose(
         [
-            ResizeImagesWithPadFn(height=resize_size, width=resize_size),
+            ResizeImagesWithPadFn(height=args.resize_size, width=args.resize_size),
             RemapImageKeyTransformFn(mapping={k: k for k in image_keys}),
             processor_transform_cls(
                 pretrained_model_name_or_path=processor_path,
