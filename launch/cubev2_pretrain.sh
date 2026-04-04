@@ -61,7 +61,8 @@ ROBOTWIN_ROOT="${ROBOTWIN_ROOT:-/inspire/ssd/project/embodied-basic-model/zhangj
 ROBOCHALLENGE_ROOT="${ROBOCHALLENGE_ROOT:-/inspire/qb-ilm/project/embodied-basic-model/zhangjianing-253108140206/DATASET/Robochallengev3.0_eef}"
 AGIBOT_ROOT="${AGIBOT_ROOT:-/inspire/qb-ilm/project/embodied-basic-model/zhangjianing-253108140206/DATASET/Agibotv3.0}"
 EGODEX_LEROBOT_ROOT="${EGODEX_LEROBOT_ROOT:-}"
-WEIGHT_RULES_PATH="${WEIGHT_RULES_PATH:-}"
+WEIGHT_RULES_PATH="${WEIGHT_RULES_PATH:-configs/weight_rules_cubev2_multi.yaml}"
+USE_DIST_LOADING="${USE_DIST_LOADING:-true}"
 
 ACTION_TYPE=delta
 USE_EXTERNAL_STATS="${USE_EXTERNAL_STATS:-true}"
@@ -100,6 +101,11 @@ if [[ ${#DATASET_REPO_IDS[@]} -eq 0 ]]; then
   exit 1
 fi
 
+if [[ -n "${WEIGHT_RULES_PATH}" && ! -f "${WEIGHT_RULES_PATH}" ]]; then
+  echo "WEIGHT_RULES_PATH does not exist: ${WEIGHT_RULES_PATH}"
+  exit 1
+fi
+
 if [[ "${USE_EXTERNAL_STATS}" == "true" ]]; then
   if [[ -n "${DATASET_EXTERNAL_STATS_PATH}" ]]; then
     echo "cubev2_pretrain.sh is a multi-dataset script and does not accept DATASET_EXTERNAL_STATS_PATH."
@@ -111,6 +117,42 @@ if [[ "${USE_EXTERNAL_STATS}" == "true" ]]; then
     exit 1
   fi
 fi
+
+echo "Discovered ${#DATASET_REPO_IDS[@]} datasets:"
+for ds_dir in "${DATASET_REPO_IDS[@]}"; do
+  echo "  - ${ds_dir}"
+done
+
+echo "Validating dataset robot_type registration and stats readiness..."
+for ds_dir in "${DATASET_REPO_IDS[@]}"; do
+  info_path="${ds_dir}/meta/info.json"
+  if [[ ! -f "${info_path}" ]]; then
+    echo "Missing info.json: ${info_path}"
+    exit 1
+  fi
+
+  robot_type="$(
+    python -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["robot_type"])' "${info_path}"
+  )"
+
+  if [[ -z "${robot_type}" || "${robot_type}" == "None" ]]; then
+    echo "Dataset has empty robot_type: ${ds_dir}"
+    exit 1
+  fi
+
+  python -c 'from lerobot.transforms.constants import MASK_MAPPING, FEATURE_MAPPING, IMAGE_MAPPING; import sys; rt=sys.argv[1]; missing=[name for name,m in [("MASK_MAPPING", MASK_MAPPING), ("FEATURE_MAPPING", FEATURE_MAPPING), ("IMAGE_MAPPING", IMAGE_MAPPING)] if rt not in m]; raise SystemExit(0 if not missing else "robot_type=" + rt + " missing in " + ", ".join(missing))' "${robot_type}"
+
+  if [[ "${USE_EXTERNAL_STATS}" == "true" ]]; then
+    stat_path="${DATASET_EXTERNAL_STATS_ROOT}/${robot_type}/${ACTION_TYPE}/stats.json"
+    if [[ ! -f "${stat_path}" ]]; then
+      echo "Missing external stats for ${ds_dir}"
+      echo "Expected: ${stat_path}"
+      exit 1
+    fi
+  fi
+
+  echo "  OK: ${ds_dir} -> robot_type=${robot_type}"
+done
 
 BASE_OUTPUT_DIR="outputs/${POLICY}"
 DATASET_NAME="a1"
@@ -166,7 +208,6 @@ ARGS=(
     --dataset.qwen3_vl_processor_path="${QWEN3_VL_PROCESSOR_PATH}"
     --dataset.action_mode="${ACTION_TYPE}"
     --dataset.use_external_stats=${USE_EXTERNAL_STATS}
-    --dataset.dist_loading=true
 
     --seed=42
     --batch_size=16
@@ -189,6 +230,10 @@ fi
 
 if [[ -n "${WEIGHT_RULES_PATH}" ]]; then
     ARGS+=(--dataset.weight_rules_path="${WEIGHT_RULES_PATH}")
+fi
+
+if [[ "${USE_DIST_LOADING}" == "true" ]]; then
+    ARGS+=(--dataset.dist_loading=true)
 fi
 
 accelerate launch "${ARGS[@]}"

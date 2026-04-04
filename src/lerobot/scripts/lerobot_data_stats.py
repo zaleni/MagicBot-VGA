@@ -77,12 +77,12 @@ def resolve_dataset(cfg) -> tuple[LeRobotDataset, str]:
     return dataset, dataset_name
 
 
-def resolve_output_path(cfg, dataset_name: str) -> Path:
+def resolve_output_path(cfg, dataset_name: str, robot_type: str) -> Path:
     if cfg.output_path:
         return Path(cfg.output_path)
     if cfg.output_dir:
-        return Path(cfg.output_dir) / cfg.action_mode / dataset_name / "stats.json"
-    return HF_LEROBOT_HOME / "stats" / cfg.action_mode / dataset_name / "stats.json"
+        return Path(cfg.output_dir) / robot_type / cfg.action_mode / "stats.json"
+    return HF_LEROBOT_HOME / "stats" / robot_type / cfg.action_mode / "stats.json"
 
 
 class RunningStats:
@@ -208,7 +208,7 @@ def compute_norm_stats(cfg):
             elif isinstance(visual_stats[stat_key], torch.Tensor):
                 visual_stats[stat_key] = visual_stats[stat_key].cpu().numpy().tolist()
         output_dict[key] = visual_stats
-    output_path = resolve_output_path(cfg, dataset_name)
+    output_path = resolve_output_path(cfg, dataset_name, robot_type)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     write_json(output_dict, output_path)
 

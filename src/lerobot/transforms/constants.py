@@ -23,6 +23,11 @@ MASK_MAPPING = {
     "aloha": make_bool_mask(6, -1, 6, -1), 
     "panda": make_bool_mask(7, ), 
     "egodex_v": make_bool_mask(2),
+    # RoboChallenge
+    "ALOHA": make_bool_mask(6, -1, 6, -1),
+    "UR5": make_bool_mask(6, -1),
+    "ARX5": make_bool_mask(6, -1),
+    "FRANKA": make_bool_mask(7, -2),
 }
 
 
@@ -122,7 +127,39 @@ FEATURE_MAPPING = defaultdict(
         ACTION: [
             "action", 
         ], 
-    }
+    },
+    ALOHA={
+        OBS_STATE: [
+            "observation.state",
+        ],
+        ACTION: [
+            "action",
+        ],
+    },
+    UR5={
+        OBS_STATE: [
+            "observation.state",
+        ],
+        ACTION: [
+            "action",
+        ],
+    },
+    ARX5={
+        OBS_STATE: [
+            "observation.state",
+        ],
+        ACTION: [
+            "action",
+        ],
+    },
+    FRANKA={
+        OBS_STATE: [
+            "observation.state",
+        ],
+        ACTION: [
+            "action",
+        ],
+    },
 )
 # a1 new
 FEATURE_MAPPING["Franka"] = {
@@ -262,4 +299,23 @@ IMAGE_MAPPING["ARX AC One"] = {
     "images.rgb.head": f"{OBS_IMAGES}.image0", 
     "images.rgb.hand_left": f"{OBS_IMAGES}.image1", 
     "images.rgb.hand_right": f"{OBS_IMAGES}.image2", 
+}
+IMAGE_MAPPING["ALOHA"] = {
+    "observation.images.head": f"{OBS_IMAGES}.image0",
+    "observation.images.left": f"{OBS_IMAGES}.image1",
+    "observation.images.right": f"{OBS_IMAGES}.image2",
+}
+IMAGE_MAPPING["UR5"] = {
+    "observation.images.head": f"{OBS_IMAGES}.image0",
+    "observation.images.left": f"{OBS_IMAGES}.image1",
+}
+IMAGE_MAPPING["ARX5"] = {
+    "observation.images.head": f"{OBS_IMAGES}.image0",
+    "observation.images.left": f"{OBS_IMAGES}.image1",
+    "observation.images.right": f"{OBS_IMAGES}.image2",
+}
+IMAGE_MAPPING["FRANKA"] = {
+    "observation.images.head": f"{OBS_IMAGES}.image0",
+    "observation.images.left": f"{OBS_IMAGES}.image1",
+    "observation.images.right": f"{OBS_IMAGES}.image2",
 }
