@@ -60,6 +60,8 @@ INTERNDATA_ROOT="${INTERNDATA_ROOT:-/inspire/qb-ilm/project/embodied-basic-model
 ROBOTWIN_ROOT="${ROBOTWIN_ROOT:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/RoboTwin-LeRobot-v30}"
 ROBOCHALLENGE_ROOT="${ROBOCHALLENGE_ROOT:-/inspire/qb-ilm/project/embodied-basic-model/zhangjianing-253108140206/DATASET/Robochallengev3.0_eef}"
 AGIBOT_ROOT="${AGIBOT_ROOT:-/inspire/qb-ilm/project/embodied-basic-model/zhangjianing-253108140206/DATASET/Agibotv3.0}"
+EGODEX_LEROBOT_ROOT="${EGODEX_LEROBOT_ROOT:-}"
+WEIGHT_RULES_PATH="${WEIGHT_RULES_PATH:-}"
 
 ACTION_TYPE=delta
 USE_EXTERNAL_STATS="${USE_EXTERNAL_STATS:-true}"
@@ -88,12 +90,13 @@ mapfile -t DATASET_REPO_IDS < <(
     discover_dataset_dirs "${ROBOTWIN_ROOT}"
     discover_dataset_dirs "${ROBOCHALLENGE_ROOT}"
     discover_dataset_dirs "${AGIBOT_ROOT}"
+    discover_dataset_dirs "${EGODEX_LEROBOT_ROOT}"
   } | sort -u
 )
 
 if [[ ${#DATASET_REPO_IDS[@]} -eq 0 ]]; then
   echo "No valid LeRobot datasets found."
-  echo "Please set one or more of: INTERNDATA_ROOT ROBOTWIN_ROOT ROBOCHALLENGE_ROOT AGIBOT_ROOT"
+  echo "Please set one or more of: INTERNDATA_ROOT ROBOTWIN_ROOT ROBOCHALLENGE_ROOT AGIBOT_ROOT EGODEX_LEROBOT_ROOT"
   exit 1
 fi
 
@@ -182,6 +185,10 @@ fi
 
 if [[ -n "${DATASET_EXTERNAL_STATS_ROOT}" ]]; then
     ARGS+=(--dataset.external_stats_root="${DATASET_EXTERNAL_STATS_ROOT}")
+fi
+
+if [[ -n "${WEIGHT_RULES_PATH}" ]]; then
+    ARGS+=(--dataset.weight_rules_path="${WEIGHT_RULES_PATH}")
 fi
 
 accelerate launch "${ARGS[@]}"

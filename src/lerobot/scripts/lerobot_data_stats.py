@@ -38,7 +38,14 @@ def parse_args():
         "--repo_id",
         type=str,
         required=True,
-        help="LeRobotDataset repo id.",
+        help="LeRobotDataset repo id, or an absolute path to a local dataset directory.",
+    )
+
+    parser.add_argument(
+        "--root",
+        type=str,
+        default=None,
+        help="Optional dataset root used when --repo_id is relative.",
     )
 
     parser.add_argument(
@@ -48,7 +55,34 @@ def parse_args():
         help="Optional output directory. If not set, use default HF_LEROBOT_HOME path.",
     )
 
+    parser.add_argument(
+        "--output_path",
+        type=str,
+        default=None,
+        help="Optional exact output path for stats.json. Overrides --output_dir.",
+    )
+
     return parser.parse_args()
+
+
+def resolve_dataset(cfg) -> tuple[LeRobotDataset, str]:
+    repo_path = Path(cfg.repo_id)
+    if repo_path.is_absolute():
+        dataset = LeRobotDataset(str(repo_path))
+        dataset_name = repo_path.name
+        return dataset, dataset_name
+
+    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
+    dataset_name = Path(dataset.root).name
+    return dataset, dataset_name
+
+
+def resolve_output_path(cfg, dataset_name: str) -> Path:
+    if cfg.output_path:
+        return Path(cfg.output_path)
+    if cfg.output_dir:
+        return Path(cfg.output_dir) / cfg.action_mode / dataset_name / "stats.json"
+    return HF_LEROBOT_HOME / "stats" / cfg.action_mode / dataset_name / "stats.json"
 
 
 class RunningStats:
@@ -118,7 +152,7 @@ def compute_norm_stats(cfg):
     torch.backends.cuda.matmul.allow_tf32 = True
 
     print(f"---------- compute statistics for dataset: {cfg.repo_id} ----------")
-    dataset = LeRobotDataset(cfg.repo_id)
+    dataset, dataset_name = resolve_dataset(cfg)
 
     from_ids = np.asarray(dataset.meta.episodes['dataset_from_index'])
     to_ids = np.asarray(dataset.meta.episodes['dataset_to_index'])
@@ -174,15 +208,12 @@ def compute_norm_stats(cfg):
             elif isinstance(visual_stats[stat_key], torch.Tensor):
                 visual_stats[stat_key] = visual_stats[stat_key].cpu().numpy().tolist()
         output_dict[key] = visual_stats
-    if cfg.output_dir:
-        output_dir = Path(cfg.output_dir)/action_mode/cfg.repo_id
-    else:
-        output_dir = HF_LEROBOT_HOME/'stats'/action_mode/cfg.repo_id
-    if not output_dir.exists():
-        output_dir.mkdir(parents=True)
-    write_json(output_dict, output_dir/"stats.json")
+    output_path = resolve_output_path(cfg, dataset_name)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    write_json(output_dict, output_path)
 
     print(f"total_frame: {total_frame}")
+    print(f"stats_path: {output_path}")
 
 
 if __name__ == "__main__":

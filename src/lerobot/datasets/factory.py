@@ -282,8 +282,6 @@ def compute_repo_weights(
         repo_weights[rid] /= Z
 
     return repo_weights
-
-
 def resolve_delta_timestamps(
     cfg: PreTrainedConfig, ds_meta: LeRobotDatasetMetadata
 ) -> dict[str, list] | None:
@@ -502,7 +500,10 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
         repo_id = repo_ids[0]
 
         transformed_ds, stats_copy, robot_type = _build_single_dataset(
-            cfg, repo_id, image_transforms, rank
+            cfg,
+            repo_id,
+            image_transforms,
+            rank,
         )
         all_data_stats[robot_type] = stats_copy
 
@@ -512,7 +513,10 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
 
     for rid, repo_id in enumerate(repo_ids):
         transformed_ds, stats_copy, robot_type = _build_single_dataset(
-            cfg, repo_id, image_transforms, rank * 128 + rid
+            cfg,
+            repo_id,
+            image_transforms,
+            rank * 128 + rid,
         )
         transformed_datasets.append(transformed_ds)
         all_data_stats[robot_type] = stats_copy  # TODO: If multiple repos share robot_type, last one overwrites.

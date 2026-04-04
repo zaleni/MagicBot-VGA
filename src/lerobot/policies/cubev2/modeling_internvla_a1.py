@@ -39,6 +39,7 @@ from lerobot.utils.utils import format_big_number
 from lerobot.utils.constants import (
     HF_HOME, 
     ACTION,
+    SAMPLE_ACTION_LOSS_MASK,
     OBS_STATE,
     OBS_PREFIX, 
     OBS_IMAGES, 
@@ -1613,7 +1614,26 @@ class CubeV2Policy(PreTrainedPolicy):
         # Truncate losses to actual action dimensions
         original_action_dim = self.config.output_features[ACTION].shape[0]
         losses_action = losses_action[:, :, :original_action_dim]
-        loss_action = losses_action.mean()
+        action_loss_mask = batch.get(SAMPLE_ACTION_LOSS_MASK)
+        if action_loss_mask is None:
+            action_loss_mask = torch.ones(
+                losses_action.shape[0],
+                dtype=torch.bool,
+                device=losses_action.device,
+            )
+        else:
+            action_loss_mask = action_loss_mask.to(losses_action.device)
+            if action_loss_mask.ndim > 1:
+                action_loss_mask = action_loss_mask.squeeze(-1)
+            action_loss_mask = action_loss_mask > 0.5
+
+        if action_loss_mask.any():
+            masked_losses_action = losses_action[action_loss_mask]
+            loss_action = masked_losses_action.mean()
+            loss_action_by_dim = masked_losses_action.mean(dim=[0, 1]).detach().cpu().numpy().tolist()
+        else:
+            loss_action = losses_action.new_zeros(())
+            loss_action_by_dim = [0.0] * original_action_dim
         loss_gen = aux_losses["loss_gen"]
         loss_3d = aux_losses["loss_3d"]
 
@@ -1630,9 +1650,8 @@ class CubeV2Policy(PreTrainedPolicy):
                 continue
             loss_dict[key] = float(value.item())
         
-        losses_action = losses_action.mean(dim=[0, 1]).detach().cpu().numpy().tolist()
         loss_dict.update({
-            f"loss_action_dim{i}": losses_action[i] for i in range(original_action_dim)
+            f"loss_action_dim{i}": loss_action_by_dim[i] for i in range(original_action_dim)
         })
 
         return loss, loss_dict
@@ -1687,4 +1706,3 @@ if __name__ == "__main__":
     loss, loss_dict = model.forward(inputs)
     pp(loss)
     pp(loss_dict)
-    

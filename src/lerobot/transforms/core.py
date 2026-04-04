@@ -80,7 +80,7 @@ def compose(transforms: list[DataTransformFn]) -> DataTransformFn:
 class IdentityTransformFn(DataTransformFn):
     def __call__(self, data: DataDict) -> DataDict: 
         return data
-    
+
 
 @DataTransformFn.register_subclass("pad_state_and_action")
 @dataclass

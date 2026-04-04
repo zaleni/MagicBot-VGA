@@ -8,6 +8,7 @@ import torch
 
 from lerobot.utils.constants import (
     ACTION, 
+    SAMPLE_ACTION_LOSS_MASK,
     OBS_IMAGE, OBS_IMAGES, OBS_STATE, OBS_STR, 
 )
 from lerobot.transforms.core import DataTransformFn, DataDict
@@ -81,10 +82,15 @@ class Qwen3_VLProcessorTransformFn(DataTransformFn):
 @DataTransformFn.register_subclass("unify_cubev2_inputs")
 @dataclass
 class UnifyCubeV2InputsTransformFn(DataTransformFn):
-    def __call__(self, data: DataDict) -> DataDict: 
+    def __call__(self, data: DataDict) -> DataDict:
+        default_action_loss_mask = 0.0 if data.get("robot_type") == "egodex_v" else 1.0
         data = {
             OBS_STATE: data[OBS_STATE], 
             ACTION: data[ACTION], 
+            SAMPLE_ACTION_LOSS_MASK: data.get(
+                SAMPLE_ACTION_LOSS_MASK,
+                torch.tensor([default_action_loss_mask], dtype=torch.float32),
+            ),
             f"{OBS_IMAGES}.image0": data[f"{OBS_IMAGES}.image0"], 
             f"{OBS_IMAGES}.image1": data[f"{OBS_IMAGES}.image1"], 
             f"{OBS_IMAGES}.image2": data[f"{OBS_IMAGES}.image2"], 
