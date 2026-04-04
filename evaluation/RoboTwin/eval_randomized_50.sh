@@ -5,13 +5,16 @@ set -euo pipefail
 ###############################################################################
 ################################# ENV config ##################################
 
-# export HF_HOME=${HF_HOME}
+# export HF_HOME="${HF_HOME:-${HOME}/.cache/huggingface}"
 
-# WANDB_TOKEN=${WANDB_TOKEN}
-# CONDA_ROOT=${_CONDA_ROOT}
-# CONDA_ENV=internvla_a1
-# source ${CONDA_ROOT}/etc/profile.d/conda.sh
-# conda activate ${CONDA_ENV}
+# WANDB_TOKEN="${WANDB_TOKEN:-}"
+# CONDA_ROOT="${_CONDA_ROOT:-${CONDA_ROOT:-}}"
+# CONDA_ENV="${CONDA_ENV:-internvla_a1}"
+
+# if [[ -n "${CONDA_ROOT}" && -f "${CONDA_ROOT}/etc/profile.d/conda.sh" ]]; then
+#     source "${CONDA_ROOT}/etc/profile.d/conda.sh"
+#     conda activate "${CONDA_ENV}"
+# fi
 
 ###############################################################################
 
@@ -43,13 +46,13 @@ echo "PROJ_ROOT  = ${PROJ_ROOT}"
 
 cd "${PROJ_ROOT}"
 SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
-PRETRAINED_CKPT="/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/model/InternVLA-A1-3B-RoboTwin"
+PRETRAINED_CKPT="/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/Foundation-Moodel/outputs/cubev2/cubev2-robotwin-3d-delta-a1_700k-finetune-2026_04_01_19_49_44/checkpoints/200000/pretrained_model"
 
 POLICY_TYPE="${POLICY_TYPE:-}"
-QWEN3_VL_PRETRAINED_PATH="${QWEN3_VL_PRETRAINED_PATH:-}"
-QWEN3_VL_PROCESSOR_PATH="${QWEN3_VL_PROCESSOR_PATH:-}"
-COSMOS_TOKENIZER_PATH_OR_NAME="${COSMOS_TOKENIZER_PATH_OR_NAME:-}"
-DA3_MODEL_PATH_OR_NAME="${DA3_MODEL_PATH_OR_NAME:-}"
+QWEN3_VL_PRETRAINED_PATH="${QWEN3_VL_PRETRAINED_PATH:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/model/Qwen3-VL-2B-Instruct}"
+QWEN3_VL_PROCESSOR_PATH="${QWEN3_VL_PROCESSOR_PATH:-${QWEN3_VL_PRETRAINED_PATH}}"
+COSMOS_TOKENIZER_PATH_OR_NAME="${COSMOS_TOKENIZER_PATH_OR_NAME:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/model/Cosmos-Tokenizer-CI8x8}"
+DA3_MODEL_PATH_OR_NAME="${DA3_MODEL_PATH_OR_NAME:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/model/DA3-LARGE-1-1}"
 DA3_CODE_ROOT="${DA3_CODE_ROOT:-}"
 DISABLE_DA3_TEACHER_FOR_EVAL="${DISABLE_DA3_TEACHER_FOR_EVAL:-true}"
 
