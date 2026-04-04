@@ -22,7 +22,7 @@ MASK_MAPPING = {
     # others
     "aloha": make_bool_mask(6, -1, 6, -1), 
     "panda": make_bool_mask(7, ), 
-    "egodex_v": make_bool_mask(1),
+    "egodex_v": make_bool_mask(2),
 }
 
 
