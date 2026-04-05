@@ -14,8 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import logging
+import os
 import time
 from contextlib import nullcontext
+from datetime import timedelta
 from pprint import pformat
 from typing import Any
 
@@ -214,10 +216,15 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     # We set step_scheduler_with_optimizer=False to prevent accelerate from adjusting the lr_scheduler steps based on the num_processes
     # We set find_unused_parameters=True to handle models with conditional computation
     if accelerator is None:
-        from accelerate.utils import DistributedDataParallelKwargs
+        from accelerate.utils import DistributedDataParallelKwargs, InitProcessGroupKwargs
 
+        ddp_timeout_s = int(os.environ.get("LEROBOT_DDP_TIMEOUT_SEC", os.environ.get("DDP_TIMEOUT_SEC", "1800")))
         ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
-        accelerator = Accelerator(step_scheduler_with_optimizer=False, kwargs_handlers=[ddp_kwargs])
+        init_pg_kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=ddp_timeout_s))
+        accelerator = Accelerator(
+            step_scheduler_with_optimizer=False,
+            kwargs_handlers=[ddp_kwargs, init_pg_kwargs],
+        )
 
     init_logging(accelerator=accelerator)
 
