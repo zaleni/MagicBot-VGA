@@ -1715,7 +1715,7 @@ class CubeV2Policy(PreTrainedPolicy):
             lines.append(f"  - Messenger tokens    : {self.config.num_3d_query_tokens}")
             lines.append(f"  - Views               : {self.config.da3_num_views}")
             lines.append(
-                f"  - Messenger tokens/view : {self.future_3d_tokens_per_view} (~{query_grid_h} x {query_grid_w} layout)"
+                f"  - Messenger tokens/view : {self.model.future_3d_tokens_per_view} (~{query_grid_h} x {query_grid_w} layout)"
             )
             if self.config.da3_alignment_mode == "query_decoder":
                 lines.append(
