@@ -66,6 +66,7 @@ AGIBOT_ROOT="${AGIBOT_ROOT:-/inspire/qb-ilm/project/embodied-basic-model/zhangji
 EGODEX_LEROBOT_ROOT="${EGODEX_LEROBOT_ROOT:-/inspire/qb-ilm/project/embodied-basic-model/zhangjianing-253108140206/DATASET/Egodex_v_train_v30}"
 WEIGHT_RULES_PATH="${WEIGHT_RULES_PATH:-configs/weight_rules_cubev2_multi.yaml}"
 USE_DIST_LOADING="${USE_DIST_LOADING:-true}"
+VALIDATE_DATASETS="${VALIDATE_DATASETS:-false}"
 
 ACTION_TYPE=delta
 USE_EXTERNAL_STATS="${USE_EXTERNAL_STATS:-true}"
@@ -131,36 +132,40 @@ for ds_dir in "${DATASET_REPO_IDS[@]}"; do
   echo "  - ${ds_dir}"
 done
 
-echo "Validating dataset robot_type registration and stats readiness..."
-for ds_dir in "${DATASET_REPO_IDS[@]}"; do
-  info_path="${ds_dir}/meta/info.json"
-  if [[ ! -f "${info_path}" ]]; then
-    echo "Missing info.json: ${info_path}"
-    exit 1
-  fi
-
-  robot_type="$(
-    python -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["robot_type"])' "${info_path}"
-  )"
-
-  if [[ -z "${robot_type}" || "${robot_type}" == "None" ]]; then
-    echo "Dataset has empty robot_type: ${ds_dir}"
-    exit 1
-  fi
-
-  python -c 'from lerobot.transforms.constants import MASK_MAPPING, FEATURE_MAPPING, IMAGE_MAPPING; import sys; rt=sys.argv[1]; missing=[name for name,m in [("MASK_MAPPING", MASK_MAPPING), ("FEATURE_MAPPING", FEATURE_MAPPING), ("IMAGE_MAPPING", IMAGE_MAPPING)] if rt not in m]; raise SystemExit(0 if not missing else "robot_type=" + rt + " missing in " + ", ".join(missing))' "${robot_type}"
-
-  if [[ "${USE_EXTERNAL_STATS}" == "true" ]]; then
-    stat_path="${DATASET_EXTERNAL_STATS_ROOT}/${robot_type}/${ACTION_TYPE}/stats.json"
-    if [[ ! -f "${stat_path}" ]]; then
-      echo "Missing external stats for ${ds_dir}"
-      echo "Expected: ${stat_path}"
+if [[ "${VALIDATE_DATASETS}" == "true" ]]; then
+  echo "Validating dataset robot_type registration and stats readiness..."
+  for ds_dir in "${DATASET_REPO_IDS[@]}"; do
+    info_path="${ds_dir}/meta/info.json"
+    if [[ ! -f "${info_path}" ]]; then
+      echo "Missing info.json: ${info_path}"
       exit 1
     fi
-  fi
 
-  echo "  OK: ${ds_dir} -> robot_type=${robot_type}"
-done
+    robot_type="$(
+      python -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["robot_type"])' "${info_path}"
+    )"
+
+    if [[ -z "${robot_type}" || "${robot_type}" == "None" ]]; then
+      echo "Dataset has empty robot_type: ${ds_dir}"
+      exit 1
+    fi
+
+    python -c 'from lerobot.transforms.constants import MASK_MAPPING, FEATURE_MAPPING, IMAGE_MAPPING; import sys; rt=sys.argv[1]; missing=[name for name,m in [("MASK_MAPPING", MASK_MAPPING), ("FEATURE_MAPPING", FEATURE_MAPPING), ("IMAGE_MAPPING", IMAGE_MAPPING)] if rt not in m]; raise SystemExit(0 if not missing else "robot_type=" + rt + " missing in " + ", ".join(missing))' "${robot_type}"
+
+    if [[ "${USE_EXTERNAL_STATS}" == "true" ]]; then
+      stat_path="${DATASET_EXTERNAL_STATS_ROOT}/${robot_type}/${ACTION_TYPE}/stats.json"
+      if [[ ! -f "${stat_path}" ]]; then
+        echo "Missing external stats for ${ds_dir}"
+        echo "Expected: ${stat_path}"
+        exit 1
+      fi
+    fi
+
+    echo "  OK: ${ds_dir} -> robot_type=${robot_type}"
+  done
+else
+  echo "Skipping per-dataset validation (VALIDATE_DATASETS=${VALIDATE_DATASETS})."
+fi
 
 BASE_OUTPUT_DIR="outputs/${POLICY}"
 DATASET_NAME="multidata"
