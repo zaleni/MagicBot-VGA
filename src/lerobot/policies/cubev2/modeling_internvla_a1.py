@@ -855,6 +855,35 @@ class QwenA1(nn.Module):
         token_mask = F.interpolate(token_mask, size=target_len, mode="nearest")
         return token_mask[:, 0, :].to(dtype=torch.bool)
 
+    def prepare_da3_teacher_inputs(
+        self,
+        future_images: torch.Tensor,
+        img_masks: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Promote single-view samples to three repeated views for DA3 distillation.
+
+        This keeps the main model's masking semantics unchanged while ensuring the
+        teacher still emits the full 3-view token budget expected by the 3D loss.
+        """
+        valid_view_masks = img_masks.to(dtype=torch.bool)
+        single_view_samples = valid_view_masks.sum(dim=1) == 1
+        if not single_view_samples.any():
+            return future_images, valid_view_masks
+
+        num_views = future_images.shape[1]
+        batch_indices = torch.arange(future_images.shape[0], device=future_images.device)
+        primary_view_indices = valid_view_masks.to(dtype=torch.int64).argmax(dim=1)
+        primary_images = future_images[batch_indices, primary_view_indices]
+
+        teacher_images = future_images.clone()
+        teacher_images[single_view_samples] = primary_images[single_view_samples][:, None].expand(
+            -1, num_views, -1, -1, -1
+        )
+
+        teacher_img_masks = valid_view_masks.clone()
+        teacher_img_masks[single_view_samples] = True
+        return teacher_images, teacher_img_masks
+
     def project_query_layers(self, middle_layer_outputs: tuple[torch.Tensor, ...]) -> list[torch.Tensor]:
         projected_queries = []
         target_len = self.config.da3_num_views * self.config.da3_tokens_per_view
@@ -888,13 +917,14 @@ class QwenA1(nn.Module):
         if teacher_device.type == "cuda":
             torch.cuda.synchronize(teacher_device)
         teacher_forward_start = time.perf_counter()
+        teacher_images, teacher_img_masks = self.prepare_da3_teacher_inputs(future_images, img_masks)
         with torch.no_grad():
-            teacher_layers = self.da3_teacher(future_images)
+            teacher_layers = self.da3_teacher(teacher_images)
         if teacher_device.type == "cuda":
             torch.cuda.synchronize(teacher_device)
         teacher_forward_s = torch.tensor(
             time.perf_counter() - teacher_forward_start,
-            device=future_images.device,
+            device=teacher_images.device,
             dtype=torch.float32,
         )
 
@@ -904,9 +934,9 @@ class QwenA1(nn.Module):
             )
 
         predicted_queries = self.project_query_layers(middle_layer_outputs)
-        token_mask = self.get_3d_token_mask(img_masks, teacher_layers[0].shape[1])
+        token_mask = self.get_3d_token_mask(teacher_img_masks, teacher_layers[0].shape[1])
 
-        total_loss = future_images.new_zeros((), dtype=torch.float32)
+        total_loss = teacher_images.new_zeros((), dtype=torch.float32)
         loss_logs = {
             "time_3d_teacher_forward_s": teacher_forward_s.detach(),
         }

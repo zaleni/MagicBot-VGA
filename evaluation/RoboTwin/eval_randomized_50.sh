@@ -100,7 +100,7 @@ fi
 
 CKPT_TAG="cubev2-3d-delta-a1_700k-finetune-200k"
 DEFAULT_RUN_NAME="${CKPT_TAG}-robotwin-$(date +%Y_%m_%d_%H_%M_%S)"
-RUN_NAME="${RUN_NAME:-${DEFAULT_RUN_NAME}}"
+RUN_NAME="cubev2-3d-delta-a1_700k-finetune-200k-robotwin-2026_04_04_19_23_43"
 RUN_OUTPUT_PATH="${BASE_OUTPUT_PATH}/${RUN_NAME}"
 
 if [[ -e "${PRETRAINED_CKPT}" && ! -d "${PRETRAINED_CKPT}" ]]; then
