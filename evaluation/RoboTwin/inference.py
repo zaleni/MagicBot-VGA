@@ -2,6 +2,7 @@
 
 import sys
 import os
+import json
 import logging
 from collections import deque
 from dataclasses import dataclass
@@ -311,6 +312,43 @@ class InferenceArgs:
     disable_3d_teacher_for_eval: bool = False
 
 
+def write_task_summary(args: InferenceArgs, task_name: str, success_count: int, test_num: int) -> None:
+    """Persist a per-task summary for downstream aggregation."""
+    args.video_dir.mkdir(parents=True, exist_ok=True)
+    success_rate = round((success_count / test_num) * 100, 2) if test_num else 0.0
+    summary = {
+        "task_idx": args.task_idx,
+        "task_name": task_name,
+        "task_config": args.task_config,
+        "success_count": int(success_count),
+        "test_num": int(test_num),
+        "success_rate": success_rate,
+        "ckpt_path": str(args.ckpt_path),
+        "instruction_type": args.instruction_type,
+        "action_mode": args.action_mode,
+        "stats_key": args.stats_key,
+    }
+
+    (args.video_dir / "summary.json").write_text(
+        json.dumps(summary, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    (args.video_dir / "summary.txt").write_text(
+        "\n".join(
+            [
+                f"task_idx: {args.task_idx}",
+                f"task_name: {task_name}",
+                f"task_config: {args.task_config}",
+                f"success_count: {success_count}",
+                f"test_num: {test_num}",
+                f"success_rate: {success_rate:.2f}%",
+                f"ckpt_path: {args.ckpt_path}",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
 
 def infer_once(args: InferenceArgs):
     """Run inference on a single task."""
@@ -500,6 +538,9 @@ def infer_once(args: InferenceArgs):
             f"current seed: \033[90m{now_seed}\033[0m\n"
         )
         now_seed += 1
+
+    write_task_summary(args, task_name, TASK_ENV.suc, TASK_ENV.test_num)
+    logging.info("Saved task summary to %s", args.video_dir / "summary.json")
 
 
 def main(args: InferenceArgs):

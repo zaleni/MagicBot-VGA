@@ -480,9 +480,10 @@ task_is_completed() {
 refresh_run_summary() {
     local strict_mode="${1:-progress}"
 
-    python - "${PROJ_ROOT}" "${RUN_OUTPUT_PATH}" "${START_TASK_IDX}" "${TASK_COUNT}" "${strict_mode}" <<'PY'
+    python - "${PROJ_ROOT}" "${RUN_OUTPUT_PATH}" "${START_TASK_IDX}" "${TASK_COUNT}" "${strict_mode}" "${TEST_NUM}" <<'PY'
 import ast
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -491,6 +492,7 @@ run_output_path = Path(sys.argv[2])
 start_task_idx = int(sys.argv[3])
 task_count = int(sys.argv[4])
 strict_mode = sys.argv[5].strip().lower()
+expected_test_num = int(sys.argv[6])
 
 expected_task_indices = list(range(start_task_idx, start_task_idx + task_count))
 
@@ -508,6 +510,48 @@ def load_task_names(project_root: Path) -> list[str]:
                     raise TypeError("TASK_NAMES is not a list")
                 return [str(item) for item in task_names]
     raise RuntimeError(f"Failed to find TASK_NAMES in {inference_path}")
+
+
+def normalize_summary(item: dict, task_idx: int, task_name: str) -> dict:
+    item = dict(item)
+    item["task_idx"] = int(item.get("task_idx", task_idx))
+    item["task_name"] = str(item.get("task_name", task_name))
+    item["success_count"] = int(item.get("success_count", 0))
+    item["test_num"] = int(item.get("test_num", 0))
+    item["success_rate"] = round(
+        (item["success_count"] / item["test_num"]) * 100, 2
+    ) if item["test_num"] else float(item.get("success_rate", 0.0))
+    return item
+
+
+def parse_summary_from_run_log(task_output_dir: Path, task_idx: int, task_name: str) -> dict | None:
+    run_log_path = task_output_dir / "run.log"
+    if not run_log_path.exists():
+        return None
+
+    text = run_log_path.read_text(encoding="utf-8", errors="ignore")
+    clean_text = re.sub(r"\x1b\[[0-9;]*m", "", text)
+    matches = re.findall(
+        r"Success rate:\s*(\d+)\s*/\s*(\d+)\s*=>\s*([0-9]+(?:\.[0-9]+)?)%",
+        clean_text,
+    )
+    if not matches:
+        return None
+
+    success_count_str, test_num_str, _ = matches[-1]
+    test_num = int(test_num_str)
+    if test_num != expected_test_num:
+        return None
+
+    success_count = int(success_count_str)
+    return {
+        "task_idx": task_idx,
+        "task_name": task_name,
+        "success_count": success_count,
+        "test_num": test_num,
+        "success_rate": round((success_count / test_num) * 100, 2) if test_num else 0.0,
+        "source": "run_log_fallback",
+    }
 
 
 task_names = load_task_names(proj_root)
@@ -540,11 +584,26 @@ nonzero_exit_tasks = []
 for task_idx in expected_task_indices:
     task_output_dir = run_output_path / "tasks" / f"task_{task_idx:02d}"
     summary_path = task_output_dir / "summary.json"
+    task_name = task_names[task_idx]
 
     if summary_path.exists():
-        item = json.loads(summary_path.read_text(encoding="utf-8"))
+        item = normalize_summary(
+            json.loads(summary_path.read_text(encoding="utf-8")),
+            task_idx,
+            task_name,
+        )
         task_summaries.append(item)
         summary_by_task_idx[task_idx] = item
+        continue
+
+    fallback_item = parse_summary_from_run_log(task_output_dir, task_idx, task_name)
+    if fallback_item is not None:
+        summary_path.write_text(
+            json.dumps(fallback_item, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        task_summaries.append(fallback_item)
+        summary_by_task_idx[task_idx] = fallback_item
         continue
 
     status = job_status.get(task_idx)
@@ -560,7 +619,7 @@ missing_summary_tasks = sorted(
 pending_tasks = sorted(
     task_idx
     for task_idx in expected_task_indices
-    if task_idx not in finished_task_ids
+    if task_idx not in finished_task_ids and task_idx not in summary_by_task_idx
 )
 
 task_summaries.sort(key=lambda item: (item["task_name"], item["task_idx"]))
