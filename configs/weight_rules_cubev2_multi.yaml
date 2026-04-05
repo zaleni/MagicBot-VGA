@@ -8,23 +8,23 @@
 groups:
   - name: interndata_a1
     match: "(?i)(interndata|(^|/)a1(/|$))"
-    total_weight: 0.42
+    total_weight: 0.47
     inside: frames_pow
     gamma: 0.9
 
   - name: robotwin
     match: "(?i)robotwin"
-    total_weight: 0.09
+    total_weight: 0.07
     inside: uniform
 
   - name: robochallenge
     match: "(?i)robochallenge"
-    total_weight: 0.21
+    total_weight: 0.19
     inside: uniform
 
   - name: agibot
     match: "(?i)(agibot|agibotworld|a2d|r1lite)"
-    total_weight: 0.18
+    total_weight: 0.17
     inside: frames_pow
     gamma: 0.8
 

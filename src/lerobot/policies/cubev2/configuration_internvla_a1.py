@@ -142,6 +142,9 @@ class CubeV2Config(PreTrainedConfig):
 
     enable_3d_queries: bool = False
     num_3d_query_tokens: int = 1296  # compressed future-3D bottleneck queries
+    da3_alignment_mode: str = "query_decoder"
+    da3_query_resampler_layers: int = 1  # kept for config compatibility; fixed to 1
+    da3_query_resampler_ff_mult: int = 1  # kept for config compatibility; fixed to 1
     query_layer_indices: tuple[int, ...] = (13, 19, 23, 27)
     da3_variant: str = "auto"
     da3_teacher_layers: tuple[int, ...] | None = None
@@ -174,6 +177,15 @@ class CubeV2Config(PreTrainedConfig):
             raise ValueError(
                 "num_3d_query_tokens must be divisible by da3_num_views for view-aware 3D alignment"
             )
+
+        if self.da3_alignment_mode not in {"query_decoder", "upsample"}:
+            raise ValueError(
+                "da3_alignment_mode must be one of: 'query_decoder', 'upsample'"
+            )
+        if self.da3_query_resampler_layers != 1:
+            raise ValueError("da3_query_resampler_layers is fixed to 1 in the current CubeV2 query decoder")
+        if self.da3_query_resampler_ff_mult != 1:
+            raise ValueError("da3_query_resampler_ff_mult is fixed to 1 in the current CubeV2 query decoder")
 
         if self.da3_model_name is not None:
             self.da3_model_path_or_name = self.da3_model_name

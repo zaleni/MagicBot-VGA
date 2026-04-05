@@ -88,82 +88,6 @@ class Future3DRefineBlock(nn.Module):
         return x + residual
 
 
-class Future3DPerceiverFeedForward(nn.Module):
-    """LayerNorm-MLP residual branch used inside the DA3 query resampler."""
-
-    def __init__(self, dim: int):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.LayerNorm(dim),
-            nn.Linear(dim, dim, bias=False),
-            nn.SiLU(),
-            nn.Linear(dim, dim, bias=False),
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x)
-
-
-class Future3DPerceiverAttention(nn.Module):
-    """Perceiver-style cross-attention where queries read messenger tokens only."""
-
-    def __init__(self, dim: int, dim_head: int, heads: int):
-        super().__init__()
-        self.dim_head = dim_head
-        self.heads = heads
-        inner_dim = dim_head * heads
-
-        self.memory_norm = nn.LayerNorm(dim)
-        self.query_norm = nn.LayerNorm(dim)
-        self.to_q = nn.Linear(dim, inner_dim, bias=False)
-        self.to_kv = nn.Linear(dim, inner_dim * 2, bias=False)
-        self.to_out = nn.Linear(inner_dim, dim, bias=False)
-
-    def _reshape_heads(self, x: torch.Tensor) -> torch.Tensor:
-        batch_size, seq_len, width = x.shape
-        x = x.view(batch_size, seq_len, self.heads, width // self.heads)
-        return x.transpose(1, 2)
-
-    def forward(self, memory: torch.Tensor, queries: torch.Tensor) -> torch.Tensor:
-        memory = self.memory_norm(memory)
-        queries = self.query_norm(queries)
-
-        q = self.to_q(queries)
-        k, v = self.to_kv(memory).chunk(2, dim=-1)
-
-        q = self._reshape_heads(q)
-        k = self._reshape_heads(k)
-        v = self._reshape_heads(v)
-
-        scale = self.dim_head ** -0.5
-        attn_scores = torch.matmul(q * scale, k.transpose(-2, -1))
-        attn_scores = torch.softmax(attn_scores.float(), dim=-1).to(dtype=q.dtype)
-        attended = torch.matmul(attn_scores, v)
-        attended = attended.transpose(1, 2).reshape(queries.shape[0], queries.shape[1], -1)
-        return self.to_out(attended)
-
-
-class Future3DPerceiverResampler(nn.Module):
-    """Shared Perceiver-style resampler that expands messenger tokens into DA3-aligned query latents."""
-
-    def __init__(self, dim: int, num_heads: int, output_dim: int):
-        super().__init__()
-        if dim % num_heads != 0:
-            raise ValueError(f"dim ({dim}) must be divisible by num_heads ({num_heads})")
-
-        dim_head = dim // num_heads
-        self.attn = Future3DPerceiverAttention(dim=dim, dim_head=dim_head, heads=num_heads)
-        self.ff = Future3DPerceiverFeedForward(dim=dim)
-        self.output_norm = nn.LayerNorm(dim)
-        self.output_proj = nn.Linear(dim, output_dim)
-
-    def forward(self, output_queries: torch.Tensor, messenger_tokens: torch.Tensor) -> torch.Tensor:
-        latents = output_queries
-        latents = latents + self.attn(messenger_tokens, latents)
-        latents = latents + self.ff(latents)
-        return self.output_proj(self.output_norm(latents))
-
-
 def infer_token_grid(num_tokens: int) -> tuple[int, int]:
     """Factorizes token count into a near-square 2D grid."""
 
@@ -663,11 +587,8 @@ class QwenA1(nn.Module):
         self.query_layer_indices = tuple(config.query_layer_indices)
         self.da3_teacher_layers = tuple(config.da3_teacher_layers)
         self.middle_visual_token_count = 0
-        self.middle_visual_tokens_per_view = 0
         self.middle_query_token_count = 0
         self.middle_total_token_count = 0
-        self.future_3d_output_token_count = config.da3_num_views * config.da3_tokens_per_view
-        self.future_3d_output_queries_per_view = config.da3_tokens_per_view
         self.future_3d_tokens_per_view = config.num_3d_query_tokens // config.da3_num_views
         self.future_3d_query_grid = infer_token_grid(self.future_3d_tokens_per_view)
         self.da3_target_grid = infer_token_grid(config.da3_tokens_per_view)
@@ -677,44 +598,21 @@ class QwenA1(nn.Module):
                 torch.randn(1, config.num_3d_query_tokens, action_expert_config.hidden_size)
                 * config.future_query_init_std
             )
-            if config.da3_alignment_mode == "query_decoder":
-                self.future_3d_output_queries = nn.Parameter(
-                    torch.randn(1, self.future_3d_output_queries_per_view, action_expert_config.hidden_size)
-                    * config.future_query_init_std
-                )
-                self.future_3d_messenger_norms = nn.ModuleList(
-                    [nn.LayerNorm(action_expert_config.hidden_size) for _ in self.query_layer_indices]
-                )
-                self.future_3d_output_decoder = Future3DPerceiverResampler(
-                    dim=action_expert_config.hidden_size,
-                    num_heads=action_expert_config.num_attention_heads,
-                    output_dim=config.da3_query_dim,
-                )
-                self.future_3d_layer_input_norms = nn.ModuleList()
-                self.future_3d_shared_refine_trunk = None
-                self.da3_query_projectors = nn.ModuleList()
-            else:
-                self.register_parameter("future_3d_output_queries", None)
-                self.future_3d_messenger_norms = nn.ModuleList()
-                self.future_3d_output_decoder = None
-                self.future_3d_layer_input_norms = nn.ModuleList(
-                    [nn.LayerNorm(action_expert_config.hidden_size) for _ in self.query_layer_indices]
-                )
-                self.future_3d_shared_refine_trunk = Future3DRefineBlock(action_expert_config.hidden_size)
-                self.da3_query_projectors = nn.ModuleList(
-                    [
-                        nn.Sequential(
-                            nn.LayerNorm(action_expert_config.hidden_size),
-                            nn.Linear(action_expert_config.hidden_size, config.da3_query_dim),
-                        )
-                        for _ in self.query_layer_indices
-                    ]
-                )
+            self.future_3d_layer_input_norms = nn.ModuleList(
+                [nn.LayerNorm(action_expert_config.hidden_size) for _ in self.query_layer_indices]
+            )
+            self.future_3d_shared_refine_trunk = Future3DRefineBlock(action_expert_config.hidden_size)
+            self.da3_query_projectors = nn.ModuleList(
+                [
+                    nn.Sequential(
+                        nn.LayerNorm(action_expert_config.hidden_size),
+                        nn.Linear(action_expert_config.hidden_size, config.da3_query_dim),
+                    )
+                    for _ in self.query_layer_indices
+                ]
+            )
         else:
             self.register_parameter("future_3d_queries", None)
-            self.register_parameter("future_3d_output_queries", None)
-            self.future_3d_messenger_norms = nn.ModuleList()
-            self.future_3d_output_decoder = None
             self.future_3d_layer_input_norms = nn.ModuleList()
             self.future_3d_shared_refine_trunk = None
             self.da3_query_projectors = nn.ModuleList()
@@ -906,59 +804,6 @@ class QwenA1(nn.Module):
         att_masks = torch.cat([att_masks, query_att_masks], dim=1)
         return embs, pad_masks, att_masks
 
-    def apply_view_aware_query_attention(
-        self,
-        att_2d_masks: torch.Tensor,
-        prefix_len: int = 0,
-    ) -> torch.Tensor:
-        """Restrict query-to-visual access per view while preserving full query-group communication."""
-        if self.middle_query_token_count == 0:
-            return att_2d_masks
-
-        if self.middle_query_token_count % self.config.da3_num_views != 0:
-            raise ValueError(
-                f"middle_query_token_count ({self.middle_query_token_count}) must be divisible by "
-                f"da3_num_views ({self.config.da3_num_views})"
-            )
-        if self.middle_visual_token_count % self.config.da3_num_views != 0:
-            raise ValueError(
-                f"middle_visual_token_count ({self.middle_visual_token_count}) must be divisible by "
-                f"da3_num_views ({self.config.da3_num_views})"
-            )
-
-        visual_start = prefix_len
-        visual_end = visual_start + self.middle_visual_token_count
-        query_start = visual_end
-        query_end = query_start + self.middle_query_token_count
-
-        original_query_rows = att_2d_masks[:, query_start:query_end, :].clone()
-        att_2d_masks = att_2d_masks.clone()
-        att_2d_masks[:, query_start:query_end, prefix_len:] = False
-
-        if prefix_len > 0:
-            att_2d_masks[:, query_start:query_end, :prefix_len] = original_query_rows[:, :, :prefix_len]
-
-        # Keep the full 3D messenger block bidirectional so view groups can exchange information,
-        # while still constraining each group to read visual evidence only from its matching view.
-        att_2d_masks[:, query_start:query_end, query_start:query_end] = original_query_rows[:, :, query_start:query_end]
-
-        visual_tokens_per_view = self.middle_visual_token_count // self.config.da3_num_views
-        query_tokens_per_view = self.middle_query_token_count // self.config.da3_num_views
-
-        for view_idx in range(self.config.da3_num_views):
-            rel_query_start = view_idx * query_tokens_per_view
-            rel_query_end = rel_query_start + query_tokens_per_view
-            abs_query_start = query_start + rel_query_start
-            abs_query_end = abs_query_start + query_tokens_per_view
-            abs_visual_start = visual_start + view_idx * visual_tokens_per_view
-            abs_visual_end = abs_visual_start + visual_tokens_per_view
-
-            att_2d_masks[:, abs_query_start:abs_query_end, abs_visual_start:abs_visual_end] = original_query_rows[
-                :, rel_query_start:rel_query_end, abs_visual_start:abs_visual_end
-            ]
-
-        return att_2d_masks
-
     def split_middle_tokens(self, middle_tokens: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor | None]:
         visual_tokens = middle_tokens[:, : self.middle_visual_token_count]
         if self.middle_query_token_count == 0:
@@ -983,7 +828,7 @@ class QwenA1(nn.Module):
 
     def refine_projected_query_grid(self, query_tokens: torch.Tensor, layer_idx: int) -> torch.Tensor:
         if self.future_3d_shared_refine_trunk is None:
-            raise RuntimeError("Future 3D refine trunk is unavailable in the current alignment mode")
+            raise RuntimeError("Future 3D refine trunk is unavailable when 3D queries are disabled")
 
         query_tokens = self.future_3d_layer_input_norms[layer_idx](query_tokens.to(dtype=torch.float32))
         query_grid = self.reshape_future_queries_to_view_grid(query_tokens)
@@ -1039,63 +884,17 @@ class QwenA1(nn.Module):
         teacher_img_masks[single_view_samples] = True
         return teacher_images, teacher_img_masks
 
-    def decode_3d_queries_from_messenger_tokens(
-        self,
-        messenger_tokens: torch.Tensor,
-        layer_idx: int,
-    ) -> torch.Tensor:
-        if self.future_3d_output_queries is None or self.future_3d_output_decoder is None:
-            raise RuntimeError("Future 3D output decoder is unavailable when 3D queries are disabled")
-
-        decoder_dtype = next(self.future_3d_output_decoder.parameters()).dtype
-        decoder_device = next(self.future_3d_output_decoder.parameters()).device
-        messenger_tokens = messenger_tokens.to(device=decoder_device, dtype=decoder_dtype)
-        messenger_tokens = self.future_3d_messenger_norms[layer_idx](messenger_tokens)
-        expected_messenger_tokens = self.config.da3_num_views * self.future_3d_tokens_per_view
-        if messenger_tokens.shape[1] != expected_messenger_tokens:
-            raise ValueError(
-                f"Expected {expected_messenger_tokens} messenger tokens, got {messenger_tokens.shape[1]}"
-            )
-
-        output_queries = self.future_3d_output_queries.expand(messenger_tokens.shape[0], -1, -1)
-        output_queries = output_queries.to(device=decoder_device, dtype=decoder_dtype)
-        messenger_tokens = rearrange(
-            messenger_tokens,
-            "b (v q) c -> b v q c",
-            v=self.config.da3_num_views,
-            q=self.future_3d_tokens_per_view,
-        )
-
-        decoded_views = []
-        for view_idx in range(self.config.da3_num_views):
-            decoded_view = self.future_3d_output_decoder(output_queries, messenger_tokens[:, view_idx])
-            decoded_views.append(decoded_view)
-
-        return torch.cat(decoded_views, dim=1)
-
-    def upsample_3d_queries_from_messenger_tokens(
-        self,
-        messenger_tokens: torch.Tensor,
-        layer_idx: int,
-    ) -> torch.Tensor:
-        if not self.da3_query_projectors:
-            raise RuntimeError("DA3 upsample projector stack is unavailable in the current alignment mode")
-
-        refined_queries = self.refine_projected_query_grid(messenger_tokens, layer_idx)
-        return self.da3_query_projectors[layer_idx](refined_queries)
-
     def project_query_layers(self, middle_layer_outputs: tuple[torch.Tensor, ...]) -> list[torch.Tensor]:
         projected_queries = []
-        target_len = self.future_3d_output_token_count
-        for layer_idx, middle_layer in enumerate(middle_layer_outputs):
+        target_len = self.config.da3_num_views * self.config.da3_tokens_per_view
+        for layer_idx, (projector, middle_layer) in enumerate(
+            zip(self.da3_query_projectors, middle_layer_outputs, strict=False)
+        ):
             _, query_tokens = self.split_middle_tokens(middle_layer)
             if query_tokens is None:
                 raise RuntimeError("3D query tokens are disabled but DA3 projection was requested")
-            if self.config.da3_alignment_mode == "query_decoder":
-                projected_query = self.decode_3d_queries_from_messenger_tokens(query_tokens, layer_idx)
-            else:
-                projected_query = self.upsample_3d_queries_from_messenger_tokens(query_tokens, layer_idx)
-            projected_queries.append(projected_query)
+            refined_queries = self.refine_projected_query_grid(query_tokens, layer_idx)
+            projected_queries.append(projector(refined_queries))
 
         for projected_query in projected_queries:
             if projected_query.shape[1] != target_len:
@@ -1230,7 +1029,6 @@ class QwenA1(nn.Module):
         pad_masks = torch.cat([prefix_pad_masks, middle_pad_masks, suffix_pad_masks], dim=1)
         att_masks = torch.cat([prefix_att_masks, middle_att_masks, suffix_att_masks], dim=1)
         att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
-        att_2d_masks = self.apply_view_aware_query_attention(att_2d_masks, prefix_len=prefix_pad_masks.shape[1])
         position_ids, rope_deltas = self.get_position_ids(lang_tokens, image_grid_thw, pad_masks)
         del rope_deltas
 
@@ -1269,7 +1067,6 @@ class QwenA1(nn.Module):
         B, N_view, T, _, H, W = features.shape
         embs = rearrange(features, 'b n t c h w -> b (n t h w) c', b=B, n=N_view, t=T)
         self.middle_visual_token_count = embs.shape[1]
-        self.middle_visual_tokens_per_view = T * H * W
         # pad_masks = torch.ones((B, embs.shape[1]), dtype=torch.bool, device=device)
         pad_masks = torch.zeros((B, N_view, T, H, W), dtype=torch.bool, device=device)
         pad_masks[img_masks] = True
@@ -1407,7 +1204,6 @@ class QwenA1(nn.Module):
         att_masks = torch.cat([prefix_att_masks, middle_att_masks, suffix_att_masks], dim=1)
 
         att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
-        att_2d_masks = self.apply_view_aware_query_attention(att_2d_masks, prefix_len=prefix_pad_masks.shape[1])
         position_ids, rope_deltas = self.get_position_ids(lang_tokens, image_grid_thw, pad_masks)
 
         att_2d_masks_4d = self._prepare_attention_masks_4d(att_2d_masks)
@@ -1508,7 +1304,6 @@ class QwenA1(nn.Module):
         prefix_len = prefix_pad_masks.shape[1]
         prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(batch_size, middle_len, prefix_len)
         middle_att_2d_masks = make_att_2d_masks(middle_pad_masks, middle_att_masks)
-        middle_att_2d_masks = self.apply_view_aware_query_attention(middle_att_2d_masks, prefix_len=0)
         full_att_2d_masks = torch.cat([prefix_pad_2d_masks, middle_att_2d_masks], dim=2)
 
         middle_position_ids = torch.arange(1, middle_len + 1).repeat(3, 1, 1).to(max_prefix_position_ids) + max_prefix_position_ids
@@ -1676,17 +1471,10 @@ class CubeV2Policy(PreTrainedPolicy):
             target_grid_h, target_grid_w = self.model.da3_target_grid
             lines.append("")
             lines.append("Future 3D alignment:")
-            lines.append(f"  - Alignment mode      : {self.config.da3_alignment_mode}")
-            lines.append(f"  - Messenger tokens    : {self.config.num_3d_query_tokens}")
+            lines.append(f"  - Query tokens        : {self.config.num_3d_query_tokens}")
             lines.append(f"  - Views               : {self.config.da3_num_views}")
-            lines.append(f"  - Messenger grid/view : {query_grid_h} x {query_grid_w}")
-            if self.config.da3_alignment_mode == "query_decoder":
-                lines.append(f"  - Shared queries/view : {self.model.future_3d_output_queries_per_view}")
-                lines.append(f"  - Total decoded tokens: {self.model.future_3d_output_token_count}")
-                lines.append("  - Resampler block     : cross-attn + SiLU FFN (fixed)")
-                lines.append(f"  - Target grid / view  : {target_grid_h} x {target_grid_w}")
-            else:
-                lines.append(f"  - Target grid / view  : {target_grid_h} x {target_grid_w}")
+            lines.append(f"  - Query grid / view   : {query_grid_h} x {query_grid_w}")
+            lines.append(f"  - Target grid / view  : {target_grid_h} x {target_grid_w}")
 
         lines.append("=" * 60)
 
@@ -1709,15 +1497,10 @@ class CubeV2Policy(PreTrainedPolicy):
             "model.da3_query_projectors.",
             "model.future_3d_layer_input_norms.",
             "model.future_3d_shared_refine_trunk.",
-            "model.future_3d_messenger_norms.",
-            "model.future_3d_output_decoder.",
         )
         ignored_missing_exact = {
             "model.future_3d_queries",
-            "model.future_3d_output_queries",
         }
-        ignored_unexpected_prefixes = ignored_missing_prefixes
-        ignored_unexpected_exact = ignored_missing_exact
 
         expected_missing = [
             key
@@ -1726,13 +1509,7 @@ class CubeV2Policy(PreTrainedPolicy):
             or any(key.startswith(prefix) for prefix in ignored_missing_prefixes)
         ]
         filtered_missing = [key for key in missing_keys if key not in expected_missing]
-        filtered_unexpected = [
-            key
-            for key in unexpected_keys
-            if key not in ignored_unexpected_exact
-            and not any(key.startswith(prefix) for prefix in ignored_unexpected_prefixes)
-        ]
-        return filtered_missing, filtered_unexpected, expected_missing
+        return filtered_missing, unexpected_keys, expected_missing
 
     def reset(self):
         """Reset internal state - called when environment resets."""
