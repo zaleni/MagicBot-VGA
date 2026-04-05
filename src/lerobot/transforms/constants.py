@@ -228,6 +228,14 @@ FEATURE_MAPPING["ARX AC One"] = {
         "actions.right_gripper.position", 
     ], 
 }
+FEATURE_MAPPING["egodex_v"] = {
+    OBS_STATE: [
+        "observation.state",
+    ],
+    ACTION: [
+        "action",
+    ],
+}
 
 
 IMAGE_MAPPING = defaultdict(
@@ -318,4 +326,7 @@ IMAGE_MAPPING["FRANKA"] = {
     "observation.images.head": f"{OBS_IMAGES}.image0",
     "observation.images.left": f"{OBS_IMAGES}.image1",
     "observation.images.right": f"{OBS_IMAGES}.image2",
+}
+IMAGE_MAPPING["egodex_v"] = {
+    "observation.image": f"{OBS_IMAGES}.image0",
 }
