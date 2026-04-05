@@ -158,6 +158,7 @@ class CubeV2Config(PreTrainedConfig):
     da3_teacher_process_res: int = 504
     da3_layer_weights: tuple[float, ...] = (1.0, 1.2, 1.4, 1.6)
     future_query_init_std: float = 0.02
+    log_da3_teacher_timing: bool = False
 
     def __post_init__(self):
         super().__post_init__()

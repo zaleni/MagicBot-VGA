@@ -106,11 +106,12 @@ ARGS=(
     --policy.qwen3_vl_variant=qwen3_vl_28l
     --policy.action_expert_variant=qwen3_28l
     --policy.enable_3d_queries=true
-    --policy.num_3d_query_tokens=1296
-    --policy.lambda_3d=0.05
+    --policy.num_3d_query_tokens=432  # 3 views x 12 x 12 query grid
+    --policy.lambda_3d=0.01
     --policy.da3_model_path_or_name="${DA3_MODEL_PATH_OR_NAME}"
     --policy.da3_variant="${DA3_VARIANT}"
     --policy.da3_alignment_mode="${DA3_ALIGNMENT_MODE}"
+    --policy.log_da3_teacher_timing=true
 
     --dataset.type=${POLICY}
     --dataset.repo_id="${DATASET_REPO_ID}"

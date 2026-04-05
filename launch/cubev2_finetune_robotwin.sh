@@ -137,6 +137,7 @@ ARGS=(
     --policy.da3_model_path_or_name="${DA3_MODEL_PATH_OR_NAME}"
     --policy.da3_variant="${DA3_VARIANT}"
     --policy.da3_alignment_mode="${DA3_ALIGNMENT_MODE}"
+    --policy.log_da3_teacher_timing=true
 
     --dataset.type=${POLICY}
     --dataset.repo_id="multidata_from_file"

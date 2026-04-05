@@ -365,7 +365,8 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         }
         if cfg.policy.type == "cubev2":
             train_metrics["loss_3d"] = AverageMeter("loss_3d", ":.3f")
-            train_metrics["time_3d_teacher_forward_s"] = AverageMeter("da3_s", ":.3f")
+            if getattr(cfg.policy, "log_da3_teacher_timing", False):
+                train_metrics["time_3d_teacher_forward_s"] = AverageMeter("da3_s", ":.3f")
     else:
         train_metrics = {
             "loss": AverageMeter("loss", ":.3f"),

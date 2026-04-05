@@ -135,10 +135,14 @@ class Future3DPerceiverAttention(nn.Module):
         k = self._reshape_heads(k)
         v = self._reshape_heads(v)
 
-        scale = self.dim_head ** -0.5
-        attn_scores = torch.matmul(q * scale, k.transpose(-2, -1))
-        attn_scores = torch.softmax(attn_scores.float(), dim=-1).to(dtype=q.dtype)
-        attended = torch.matmul(attn_scores, v)
+        attended = F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            attn_mask=None,
+            dropout_p=0.0,
+            is_causal=False,
+        )
         attended = attended.transpose(1, 2).reshape(queries.shape[0], queries.shape[1], -1)
         return self.to_out(attended)
 
@@ -1120,19 +1124,41 @@ class QwenA1(nn.Module):
             )
 
         teacher_device = next(self.da3_teacher.parameters()).device
-        if teacher_device.type == "cuda":
-            torch.cuda.synchronize(teacher_device)
-        teacher_forward_start = time.perf_counter()
+        teacher_forward_s = future_images.new_zeros((), dtype=torch.float32)
+        start_event = None
+        end_event = None
+        teacher_forward_start = None
+        should_log_teacher_timing = self.config.log_da3_teacher_timing
+        if should_log_teacher_timing and torch.distributed.is_available() and torch.distributed.is_initialized():
+            should_log_teacher_timing = torch.distributed.get_rank() == 0
+
+        if should_log_teacher_timing:
+            if teacher_device.type == "cuda":
+                start_event = torch.cuda.Event(enable_timing=True)
+                end_event = torch.cuda.Event(enable_timing=True)
+                start_event.record()
+            else:
+                teacher_forward_start = time.perf_counter()
         teacher_images, teacher_img_masks = self.prepare_da3_teacher_inputs(future_images, img_masks)
         with torch.no_grad():
             teacher_layers = self.da3_teacher(teacher_images)
-        if teacher_device.type == "cuda":
-            torch.cuda.synchronize(teacher_device)
-        teacher_forward_s = torch.tensor(
-            time.perf_counter() - teacher_forward_start,
-            device=teacher_images.device,
-            dtype=torch.float32,
-        )
+        if should_log_teacher_timing:
+            if teacher_device.type == "cuda":
+                assert start_event is not None and end_event is not None
+                end_event.record()
+                end_event.synchronize()
+                teacher_forward_s = torch.tensor(
+                    start_event.elapsed_time(end_event) / 1000.0,
+                    device=teacher_images.device,
+                    dtype=torch.float32,
+                )
+            else:
+                assert teacher_forward_start is not None
+                teacher_forward_s = torch.tensor(
+                    time.perf_counter() - teacher_forward_start,
+                    device=teacher_images.device,
+                    dtype=torch.float32,
+                )
 
         if len(teacher_layers) != len(self.da3_teacher_layers):
             raise ValueError(
@@ -1143,9 +1169,9 @@ class QwenA1(nn.Module):
         token_mask = self.get_3d_token_mask(teacher_img_masks, teacher_layers[0].shape[1])
 
         total_loss = teacher_images.new_zeros((), dtype=torch.float32)
-        loss_logs = {
-            "time_3d_teacher_forward_s": teacher_forward_s.detach(),
-        }
+        loss_logs = {}
+        if should_log_teacher_timing:
+            loss_logs["time_3d_teacher_forward_s"] = teacher_forward_s.detach()
         for idx, (pred, target, weight, teacher_layer_idx, query_layer_idx) in enumerate(
             zip(
                 predicted_queries,
