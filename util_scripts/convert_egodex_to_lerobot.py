@@ -15,6 +15,7 @@ symlink, or copy.
 from __future__ import annotations
 
 import argparse
+import copy
 import logging
 import os
 import re
@@ -84,6 +85,17 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=None,
         help="Logical dataset name stored in LeRobot metadata. Defaults to output directory name.",
+    )
+    parser.add_argument(
+        "--repo-layout",
+        type=str,
+        choices=["single", "task_dir"],
+        default="single",
+        help=(
+            "How to organize converted LeRobot repos. "
+            "'single' writes one dataset under output-dir; "
+            "'task_dir' writes one dataset per relative EgoDex task directory under output-dir/task_rel."
+        ),
     )
     parser.add_argument(
         "--robot-type",
@@ -219,6 +231,13 @@ def discover_episode_pairs(
             break
 
     return pairs
+
+
+def task_rel_to_repo_id(task_rel: str) -> str:
+    safe = task_rel.replace("\\", "/").strip("/")
+    safe = safe.replace("/", "__")
+    safe = re.sub(r"[^0-9A-Za-z._-]+", "_", safe)
+    return safe
 
 
 def get_video_shape(mp4_path: Path) -> tuple[int, int]:
@@ -698,6 +717,50 @@ def validate_args(args: argparse.Namespace) -> None:
         raise FileNotFoundError(f"Input root does not exist: {args.input_root}")
 
 
+def convert_grouped_by_task_dir(args: argparse.Namespace, pairs: list[tuple[Path, Path, str]]) -> None:
+    grouped_pairs: dict[str, list[tuple[Path, Path, str]]] = defaultdict(list)
+    for h5_path, mp4_path, task_rel in pairs:
+        grouped_pairs[task_rel].append((h5_path, mp4_path, task_rel))
+
+    args.output_dir.mkdir(parents=True, exist_ok=False)
+
+    logging.info(
+        "Converting EgoDex into %d task-directory repos under %s",
+        len(grouped_pairs),
+        args.output_dir,
+    )
+
+    total_episodes = 0
+    for group_index, task_rel in enumerate(sorted(grouped_pairs.keys()), start=1):
+        group_output_dir = args.output_dir / Path(task_rel)
+        group_repo_id = task_rel_to_repo_id(task_rel)
+        group_args = copy.copy(args)
+        group_args.output_dir = group_output_dir
+        group_pairs = grouped_pairs[task_rel]
+
+        logging.info(
+            "[%d/%d] Converting task repo %s (%d episodes) -> %s",
+            group_index,
+            len(grouped_pairs),
+            task_rel,
+            len(group_pairs),
+            group_output_dir,
+        )
+
+        if args.conversion_mode == "fast":
+            convert_fast(group_args, group_pairs, group_repo_id)
+        else:
+            convert_reencode(group_args, group_pairs, group_repo_id)
+        total_episodes += len(group_pairs)
+
+    logging.info(
+        "Finished grouped conversion: %d repos, %d total episodes -> %s",
+        len(grouped_pairs),
+        total_episodes,
+        args.output_dir,
+    )
+
+
 def main() -> None:
     args = parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -718,6 +781,10 @@ def main() -> None:
         args.input_root,
         args.conversion_mode,
     )
+
+    if args.repo_layout == "task_dir":
+        convert_grouped_by_task_dir(args, pairs)
+        return
 
     if args.conversion_mode == "fast":
         convert_fast(args, pairs, repo_id)
