@@ -678,7 +678,7 @@ class QwenA1(nn.Module):
                 * config.future_query_init_std
             )
             if config.da3_alignment_mode == "query_decoder":
-                self.future_3d_output_queries = nn.Parameter(
+                self.future_3d_shared_output_queries = nn.Parameter(
                     torch.randn(1, self.future_3d_output_queries_per_view, action_expert_config.hidden_size)
                     * config.future_query_init_std
                 )
@@ -694,7 +694,7 @@ class QwenA1(nn.Module):
                 self.future_3d_shared_refine_trunk = None
                 self.da3_query_projectors = nn.ModuleList()
             else:
-                self.register_parameter("future_3d_output_queries", None)
+                self.register_parameter("future_3d_shared_output_queries", None)
                 self.future_3d_messenger_norms = nn.ModuleList()
                 self.future_3d_output_decoder = None
                 self.future_3d_layer_input_norms = nn.ModuleList(
@@ -712,7 +712,7 @@ class QwenA1(nn.Module):
                 )
         else:
             self.register_parameter("future_3d_queries", None)
-            self.register_parameter("future_3d_output_queries", None)
+            self.register_parameter("future_3d_shared_output_queries", None)
             self.future_3d_messenger_norms = nn.ModuleList()
             self.future_3d_output_decoder = None
             self.future_3d_layer_input_norms = nn.ModuleList()
@@ -1018,11 +1018,13 @@ class QwenA1(nn.Module):
         """Promote single-view samples to three repeated views for DA3 distillation.
 
         This keeps the main model's masking semantics unchanged while ensuring the
-        teacher still emits the full 3-view token budget expected by the 3D loss.
+        teacher never sees placeholder views. Single-view samples are promoted to a
+        full 3-view target budget; multi-view samples keep their original loss mask.
         """
         valid_view_masks = img_masks.to(dtype=torch.bool)
-        single_view_samples = valid_view_masks.sum(dim=1) == 1
-        if not single_view_samples.any():
+        valid_view_counts = valid_view_masks.sum(dim=1)
+        incomplete_samples = (valid_view_counts > 0) & (valid_view_counts < future_images.shape[1])
+        if not incomplete_samples.any():
             return future_images, valid_view_masks
 
         num_views = future_images.shape[1]
@@ -1031,11 +1033,14 @@ class QwenA1(nn.Module):
         primary_images = future_images[batch_indices, primary_view_indices]
 
         teacher_images = future_images.clone()
-        teacher_images[single_view_samples] = primary_images[single_view_samples][:, None].expand(
-            -1, num_views, -1, -1, -1
-        )
+        invalid_view_masks = ~valid_view_masks
+        if invalid_view_masks.any():
+            teacher_images[invalid_view_masks] = primary_images.unsqueeze(1).expand(-1, num_views, -1, -1, -1)[
+                invalid_view_masks
+            ]
 
         teacher_img_masks = valid_view_masks.clone()
+        single_view_samples = valid_view_counts == 1
         teacher_img_masks[single_view_samples] = True
         return teacher_images, teacher_img_masks
 
@@ -1044,7 +1049,7 @@ class QwenA1(nn.Module):
         messenger_tokens: torch.Tensor,
         layer_idx: int,
     ) -> torch.Tensor:
-        if self.future_3d_output_queries is None or self.future_3d_output_decoder is None:
+        if self.future_3d_shared_output_queries is None or self.future_3d_output_decoder is None:
             raise RuntimeError("Future 3D output decoder is unavailable when 3D queries are disabled")
 
         decoder_dtype = next(self.future_3d_output_decoder.parameters()).dtype
@@ -1057,7 +1062,7 @@ class QwenA1(nn.Module):
                 f"Expected {expected_messenger_tokens} messenger tokens, got {messenger_tokens.shape[1]}"
             )
 
-        output_queries = self.future_3d_output_queries.expand(messenger_tokens.shape[0], -1, -1)
+        output_queries = self.future_3d_shared_output_queries.expand(messenger_tokens.shape[0], -1, -1)
         output_queries = output_queries.to(device=decoder_device, dtype=decoder_dtype)
         messenger_tokens = rearrange(
             messenger_tokens,
@@ -1152,6 +1157,11 @@ class QwenA1(nn.Module):
             )
         ):
             target = target.to(device=pred.device, dtype=pred.dtype)
+            if pred.shape[1] != target.shape[1]:
+                raise ValueError(
+                    f"Projected query length ({pred.shape[1]}) does not match DA3 teacher token length "
+                    f"({target.shape[1]}). Check da3_tokens_per_view, da3_num_views, and teacher process resolution."
+                )
             if pred.shape[-1] != target.shape[-1]:
                 raise ValueError(
                     f"Projected query dim ({pred.shape[-1]}) does not match DA3 teacher dim ({target.shape[-1]}). "
@@ -1714,10 +1724,13 @@ class CubeV2Policy(PreTrainedPolicy):
         )
         ignored_missing_exact = {
             "model.future_3d_queries",
-            "model.future_3d_output_queries",
+            "model.future_3d_shared_output_queries",
         }
         ignored_unexpected_prefixes = ignored_missing_prefixes
-        ignored_unexpected_exact = ignored_missing_exact
+        ignored_unexpected_exact = {
+            *ignored_missing_exact,
+            "model.future_3d_output_queries",
+        }
 
         expected_missing = [
             key

@@ -163,8 +163,8 @@ for ds_dir in "${DATASET_REPO_IDS[@]}"; do
 done
 
 BASE_OUTPUT_DIR="outputs/${POLICY}"
-DATASET_NAME="a1"
-JOB_NAME="$(date +'%Y_%m_%d_%H_%M_%S')-${POLICY}-${DATASET_NAME}-${ACTION_TYPE}-pretrain"
+DATASET_NAME="multidata"
+JOB_NAME="${POLICY}-${DATASET_NAME}-${ACTION_TYPE}-pretrain-$(date +'%Y_%m_%d_%H_%M_%S')"
 OUTPUT_DIR="${BASE_OUTPUT_DIR}/${JOB_NAME}"
 REPO_ID_FILE_DIR="${BASE_OUTPUT_DIR}/_repo_id_files"
 mkdir -p "${REPO_ID_FILE_DIR}"
@@ -183,7 +183,7 @@ ARGS=(
     src/lerobot/scripts/lerobot_train.py
 
     --output_dir="${OUTPUT_DIR}"
-    --num_workers=12
+    --num_workers=4
     --job_name="${JOB_NAME}"
     # --resume=true
     # --config_path=${config_path}
@@ -198,8 +198,8 @@ ARGS=(
     --policy.dtype=bfloat16
     --policy.optimizer_lr=5.0e-5
     --policy.scheduler_warmup_steps=0
-    --policy.scheduler_decay_steps=7_000_000
-    --policy.scheduler_decay_lr=5.0e-5
+    --policy.scheduler_decay_steps=300000
+    --policy.scheduler_decay_lr=1.0e-5
     --policy.freeze_vision_encoder=false
     --policy.train_expert_only=false
     --policy.train_vlm_only=false
@@ -221,12 +221,12 @@ ARGS=(
 
     --seed=42
     --batch_size=16
-    --steps=7_000_000
+    --steps=300000
     --save_freq=10000
-    --log_freq=200
+    --log_freq=20
 
     --wandb.enable=true
-    --wandb.project=lerobot_lab_${POLICY}
+    --wandb.project=CUBEv2
     --wandb.mode=offline
 )
 
