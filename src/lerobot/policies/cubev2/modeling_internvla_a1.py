@@ -1019,11 +1019,12 @@ class QwenA1(nn.Module):
         future_images: torch.Tensor,
         img_masks: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Promote single-view samples to three repeated views for DA3 distillation.
+        """Replace placeholder views before DA3 forward while keeping the original loss mask.
 
         This keeps the main model's masking semantics unchanged while ensuring the
-        teacher never sees placeholder views. Single-view samples are promoted to a
-        full 3-view target budget; multi-view samples keep their original loss mask.
+        teacher never sees placeholder views. The returned mask still reflects the
+        originally valid views, so 3D loss is only applied where the sample had
+        real visual evidence.
         """
         valid_view_masks = img_masks.to(dtype=torch.bool)
         valid_view_counts = valid_view_masks.sum(dim=1)
@@ -1044,8 +1045,6 @@ class QwenA1(nn.Module):
             ]
 
         teacher_img_masks = valid_view_masks.clone()
-        single_view_samples = valid_view_counts == 1
-        teacher_img_masks[single_view_samples] = True
         return teacher_images, teacher_img_masks
 
     def decode_3d_queries_from_messenger_tokens(
