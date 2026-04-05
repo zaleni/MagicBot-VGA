@@ -63,7 +63,7 @@ INTERNDATA_ROOT="${INTERNDATA_ROOT:-/inspire/qb-ilm/project/embodied-basic-model
 ROBOTWIN_ROOT="${ROBOTWIN_ROOT:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/RoboTwin-LeRobot-v30}"
 ROBOCHALLENGE_ROOT="${ROBOCHALLENGE_ROOT:-/inspire/qb-ilm/project/embodied-basic-model/zhangjianing-253108140206/DATASET/Robochallengev3.0_eef}"
 AGIBOT_ROOT="${AGIBOT_ROOT:-/inspire/qb-ilm/project/embodied-basic-model/zhangjianing-253108140206/DATASET/Agibotv3.0}"
-EGODEX_LEROBOT_ROOT="${EGODEX_LEROBOT_ROOT:-/inspire/qb-ilm/project/embodied-basic-model/zhangjianing-253108140206/DATASET/Egodex_v_train_v30}"
+EGODEX_LEROBOT_ROOT="${EGODEX_LEROBOT_ROOT:-/inspire/qb-ilm/project/embodied-basic-model/zhangjianing-253108140206/DATASET/Egodex_v_taskrepos_v30}"
 WEIGHT_RULES_PATH="${WEIGHT_RULES_PATH:-configs/weight_rules_cubev2_multi.yaml}"
 USE_DIST_LOADING="${USE_DIST_LOADING:-true}"
 VALIDATE_DATASETS="${VALIDATE_DATASETS:-false}"
@@ -246,7 +246,7 @@ ARGS=(
     --batch_size=16
     --steps=300000
     --save_freq=10000
-    --log_freq=20
+    --log_freq=25
 
     --wandb.enable=true
     --wandb.project=CUBEv2

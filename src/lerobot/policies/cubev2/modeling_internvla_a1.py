@@ -1714,14 +1714,23 @@ class CubeV2Policy(PreTrainedPolicy):
             lines.append(f"  - Alignment mode      : {self.config.da3_alignment_mode}")
             lines.append(f"  - Messenger tokens    : {self.config.num_3d_query_tokens}")
             lines.append(f"  - Views               : {self.config.da3_num_views}")
-            lines.append(f"  - Messenger grid/view : {query_grid_h} x {query_grid_w}")
+            lines.append(
+                f"  - Messenger tokens/view : {self.future_3d_tokens_per_view} (~{query_grid_h} x {query_grid_w} layout)"
+            )
             if self.config.da3_alignment_mode == "query_decoder":
-                lines.append(f"  - Shared queries/view : {self.model.future_3d_output_queries_per_view}")
+                lines.append(
+                    f"  - Shared queries/view : {self.model.future_3d_output_queries_per_view}"
+                )
                 lines.append(f"  - Total decoded tokens: {self.model.future_3d_output_token_count}")
                 lines.append("  - Resampler block     : cross-attn + SiLU FFN (fixed)")
-                lines.append(f"  - Target grid / view  : {target_grid_h} x {target_grid_w}")
+                lines.append(
+                    f"  - Output tokens/view  : {self.config.da3_tokens_per_view} "
+                    f"(~{target_grid_h} x {target_grid_w} equivalent)"
+                )
             else:
-                lines.append(f"  - Target grid / view  : {target_grid_h} x {target_grid_w}")
+                lines.append(
+                    f"  - Target grid / view  : {target_grid_h} x {target_grid_w}"
+                )
 
         lines.append("=" * 60)
 
