@@ -4,16 +4,16 @@ set -euo pipefail
 ###############################################################################
 ################################# ENV config ##################################
 
-export HF_HOME="${HF_HOME:-${HOME}/.cache/huggingface}"
+# export HF_HOME="${HF_HOME:-${HOME}/.cache/huggingface}"
 
-WANDB_TOKEN=${WANDB_TOKEN}
-CONDA_ROOT=${_CONDA_ROOT}
-CONDA_ENV=internvla_a1
+# WANDB_TOKEN=${WANDB_TOKEN}
+# CONDA_ROOT=${_CONDA_ROOT}
+# CONDA_ENV=internvla_a1
 
-source ${CONDA_ROOT}/etc/profile.d/conda.sh
-conda activate ${CONDA_ENV}
+# source ${CONDA_ROOT}/etc/profile.d/conda.sh
+# conda activate ${CONDA_ENV}
 
-wandb login ${WANDB_TOKEN}
+# wandb login ${WANDB_TOKEN}
 
 ###############################################################################
 
@@ -21,14 +21,14 @@ export MASTER_ADDR=${MASTER_ADDR:-"127.0.0.1"}
 export MASTER_PORT=${MASTER_PORT:-6379}
 echo "MASTER_ADDR=${MASTER_ADDR}, MASTER_PORT=${MASTER_PORT}"
 
-PROC_PER_NODE="${PROC_PER_NODE:-2}"
+PROC_PER_NODE="${PROC_PER_NODE:-8}"
 NODE_COUNT="${NODE_COUNT:-1}"
 NODE_RANK="${NODE_RANK:-0}"
 NUM_PROCESSES=$((NODE_COUNT * PROC_PER_NODE))
 
-export CUDA_HOME="/usr/local/cuda-12.8"
-export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
-export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH
+# export CUDA_HOME="/usr/local/cuda-12.8"
+# export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
+# export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH
 
 export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=1
@@ -48,26 +48,28 @@ echo "SCRIPT_DIR = ${SCRIPT_DIR}"
 echo "PROJ_ROOT  = ${PROJ_ROOT}"
 
 cd ${PROJ_ROOT}
+export PYTHONPATH="${PROJ_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}"
 
 POLICY="cubev2"
-QWEN3_VL_PRETRAINED_PATH="${QWEN3_VL_PRETRAINED_PATH:-Qwen/Qwen3-VL-2B-Instruct}"
+PRETRAINED_PATH="${PRETRAINED_PATH:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/model/InternVLA-A1-3B}"
+QWEN3_VL_PRETRAINED_PATH="${QWEN3_VL_PRETRAINED_PATH:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/model/Qwen3-VL-2B-Instruct}"
 QWEN3_VL_PROCESSOR_PATH="${QWEN3_VL_PROCESSOR_PATH:-${QWEN3_VL_PRETRAINED_PATH}}"
-COSMOS_TOKENIZER_PATH_OR_NAME="${COSMOS_TOKENIZER_PATH_OR_NAME:-nvidia/Cosmos-Tokenizer-CI8x8}"
-DA3_MODEL_PATH_OR_NAME="${DA3_MODEL_PATH_OR_NAME:-depth-anything/DA3-GIANT-1.1}"
+COSMOS_TOKENIZER_PATH_OR_NAME="${COSMOS_TOKENIZER_PATH_OR_NAME:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/model/Cosmos-Tokenizer-CI8x8}"
+DA3_MODEL_PATH_OR_NAME="${DA3_MODEL_PATH_OR_NAME:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/model/DA3-LARGE-1-1}"
 DA3_VARIANT="${DA3_VARIANT:-auto}"
 DA3_CODE_ROOT="${DA3_CODE_ROOT:-}"
 INTERNDATA_ROOT="${INTERNDATA_ROOT:-/inspire/qb-ilm/project/embodied-basic-model/zhangjianing-253108140206/DATASET/InternData-A1-v30}"
 ROBOTWIN_ROOT="${ROBOTWIN_ROOT:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/RoboTwin-LeRobot-v30}"
 ROBOCHALLENGE_ROOT="${ROBOCHALLENGE_ROOT:-/inspire/qb-ilm/project/embodied-basic-model/zhangjianing-253108140206/DATASET/Robochallengev3.0_eef}"
 AGIBOT_ROOT="${AGIBOT_ROOT:-/inspire/qb-ilm/project/embodied-basic-model/zhangjianing-253108140206/DATASET/Agibotv3.0}"
-EGODEX_LEROBOT_ROOT="${EGODEX_LEROBOT_ROOT:-}"
+EGODEX_LEROBOT_ROOT="${EGODEX_LEROBOT_ROOT:-/inspire/qb-ilm/project/embodied-basic-model/zhangjianing-253108140206/DATASET/Egodex_v_train_v30}"
 WEIGHT_RULES_PATH="${WEIGHT_RULES_PATH:-configs/weight_rules_cubev2_multi.yaml}"
 USE_DIST_LOADING="${USE_DIST_LOADING:-true}"
 
 ACTION_TYPE=delta
 USE_EXTERNAL_STATS="${USE_EXTERNAL_STATS:-true}"
 DATASET_EXTERNAL_STATS_PATH="${DATASET_EXTERNAL_STATS_PATH:-}"
-DATASET_EXTERNAL_STATS_ROOT="${DATASET_EXTERNAL_STATS_ROOT:-outputs/norm_stats}"
+DATASET_EXTERNAL_STATS_ROOT="${DATASET_EXTERNAL_STATS_ROOT:-norm_stats}"
 
 discover_dataset_dirs() {
   local root="$1"
@@ -98,6 +100,11 @@ mapfile -t DATASET_REPO_IDS < <(
 if [[ ${#DATASET_REPO_IDS[@]} -eq 0 ]]; then
   echo "No valid LeRobot datasets found."
   echo "Please set one or more of: INTERNDATA_ROOT ROBOTWIN_ROOT ROBOCHALLENGE_ROOT AGIBOT_ROOT EGODEX_LEROBOT_ROOT"
+  exit 1
+fi
+
+if [[ -n "${PRETRAINED_PATH}" && ! -d "${PRETRAINED_PATH}" ]]; then
+  echo "PRETRAINED_PATH does not exist or is not a directory: ${PRETRAINED_PATH}"
   exit 1
 fi
 
@@ -182,6 +189,7 @@ ARGS=(
 
     --policy.type=${POLICY}
     --policy.repo_id=lerobot_lab/${POLICY}
+    --policy.pretrained_path="${PRETRAINED_PATH}"
     --policy.qwen3_vl_pretrained_path="${QWEN3_VL_PRETRAINED_PATH}"
     --policy.cosmos_tokenizer_path_or_name="${COSMOS_TOKENIZER_PATH_OR_NAME}"
     --policy.push_to_hub=false
@@ -197,8 +205,8 @@ ARGS=(
     --policy.qwen3_vl_variant=qwen3_vl_28l
     --policy.action_expert_variant=qwen3_28l
     --policy.enable_3d_queries=true
-    --policy.num_3d_query_tokens=1296
-    --policy.lambda_3d=0.05
+    --policy.num_3d_query_tokens=432  # 3 views x 12 x 12 query grid
+    --policy.lambda_3d=0.01
     --policy.da3_model_path_or_name="${DA3_MODEL_PATH_OR_NAME}"
     --policy.da3_variant="${DA3_VARIANT}"
 
