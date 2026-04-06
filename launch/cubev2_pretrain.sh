@@ -205,7 +205,7 @@ ARGS=(
     src/lerobot/scripts/lerobot_train.py
 
     --output_dir="${OUTPUT_DIR}"
-    --num_workers=4
+    --num_workers=3
     --job_name="${JOB_NAME}"
     # --resume=true
     # --config_path=${config_path}
