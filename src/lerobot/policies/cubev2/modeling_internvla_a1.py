@@ -1065,21 +1065,21 @@ class QwenA1(nn.Module):
                 f"Expected {expected_messenger_tokens} messenger tokens, got {messenger_tokens.shape[1]}"
             )
 
-        output_queries = self.future_3d_shared_output_queries.expand(messenger_tokens.shape[0], -1, -1)
+        batch_size = messenger_tokens.shape[0]
+        num_views = self.config.da3_num_views
+        output_queries = self.future_3d_shared_output_queries.expand(batch_size, -1, -1)
         output_queries = output_queries.to(device=decoder_device, dtype=decoder_dtype)
         messenger_tokens = rearrange(
             messenger_tokens,
-            "b (v q) c -> b v q c",
-            v=self.config.da3_num_views,
+            "b (v q) c -> (b v) q c",
+            v=num_views,
             q=self.future_3d_tokens_per_view,
         )
+        output_queries = output_queries[:, None, :, :].expand(batch_size, num_views, -1, -1)
+        output_queries = rearrange(output_queries, "b v q c -> (b v) q c")
 
-        decoded_views = []
-        for view_idx in range(self.config.da3_num_views):
-            decoded_view = self.future_3d_output_decoder(output_queries, messenger_tokens[:, view_idx])
-            decoded_views.append(decoded_view)
-
-        return torch.cat(decoded_views, dim=1)
+        decoded_queries = self.future_3d_output_decoder(output_queries, messenger_tokens)
+        return rearrange(decoded_queries, "(b v) q c -> b (v q) c", b=batch_size, v=num_views)
 
     def upsample_3d_queries_from_messenger_tokens(
         self,
