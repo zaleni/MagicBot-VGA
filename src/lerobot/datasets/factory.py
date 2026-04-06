@@ -213,6 +213,132 @@ def compute_balanced_repo_assignment(
     return rank_to_repos
 
 
+def group_repo_ids_by_rules(
+    repo_ids: list[str],
+    groups_cfg: DictConfig,
+) -> tuple[dict[str, str], dict[str, list[str]], list[str]]:
+    repo_to_group: dict[str, str] = {}
+    group_to_repos: dict[str, list[str]] = defaultdict(list)
+    ordered_group_names = [str(g.name) for g in groups_cfg.groups]
+
+    for rid in repo_ids:
+        matched = False
+        for g in groups_cfg.groups:
+            if re.search(g.match, rid):
+                group_name = str(g.name)
+                repo_to_group[rid] = group_name
+                group_to_repos[group_name].append(rid)
+                matched = True
+                break
+        if not matched:
+            repo_to_group[rid] = "__default__"
+            group_to_repos["__default__"].append(rid)
+
+    if "__default__" in group_to_repos:
+        ordered_group_names.append("__default__")
+
+    return repo_to_group, group_to_repos, ordered_group_names
+
+
+def compute_group_balanced_repo_assignment(
+    repo_ids: list[str],
+    frames_map: dict[str, int],
+    world_size: int,
+    groups_cfg: DictConfig,
+) -> list[list[str]]:
+    """
+    Compute a source-aware repo assignment for dist_loading.
+
+    Goals:
+    - Spread repos from each source group across ranks as evenly as possible.
+    - Keep total frame counts per rank as balanced as possible.
+    - If a group has at least `world_size` repos, try to give every rank at least
+      one repo from that group.
+
+    The implementation is intentionally simple:
+    - Match repos into groups using the same regex rules as weight_rules.
+    - For each group, sort repos by descending total_frames.
+    - Seed one repo per rank when the group is large enough.
+    - Assign the remaining repos greedily using (group_load, total_load, count).
+    """
+    if world_size <= 0:
+        raise ValueError("world_size must be positive.")
+
+    if not repo_ids:
+        raise ValueError("compute_group_balanced_repo_assignment: repo_ids is empty.")
+
+    _, group_to_repos, ordered_group_names = group_repo_ids_by_rules(repo_ids, groups_cfg)
+
+    rank_to_repos: list[list[str]] = [[] for _ in range(world_size)]
+    rank_total_loads: list[int] = [0 for _ in range(world_size)]
+    rank_group_loads: dict[str, list[int]] = {
+        group_name: [0 for _ in range(world_size)] for group_name in ordered_group_names
+    }
+    rank_group_counts: dict[str, list[int]] = {
+        group_name: [0 for _ in range(world_size)] for group_name in ordered_group_names
+    }
+
+    def frames_key(rid: str) -> tuple[int, str]:
+        return (-frames_map.get(rid, 0), rid)
+
+    def assign_repo_to_rank(rid: str, group_name: str, rank: int) -> None:
+        rank_to_repos[rank].append(rid)
+        frame_count = frames_map.get(rid, 0)
+        rank_total_loads[rank] += frame_count
+        rank_group_loads[group_name][rank] += frame_count
+        rank_group_counts[group_name][rank] += 1
+
+    for group_name in ordered_group_names:
+        repos = group_to_repos.get(group_name, [])
+        if not repos:
+            continue
+
+        sorted_repos = sorted(repos, key=frames_key)
+        start_idx = 0
+
+        if len(sorted_repos) >= world_size:
+            for rid in sorted_repos[:world_size]:
+                candidate_ranks = [r for r in range(world_size) if rank_group_counts[group_name][r] == 0]
+                rank = min(
+                    candidate_ranks,
+                    key=lambda r: (rank_total_loads[r], rank_group_loads[group_name][r], r),
+                )
+                assign_repo_to_rank(rid, group_name, rank)
+            start_idx = world_size
+        elif len(sorted_repos) < world_size:
+            logging.warning(
+                f"[dist_loading] group '{group_name}' has only {len(sorted_repos)} repos for "
+                f"{world_size} ranks; some ranks will not receive this source."
+            )
+
+        for rid in sorted_repos[start_idx:]:
+            rank = min(
+                range(world_size),
+                key=lambda r: (
+                    rank_group_loads[group_name][r],
+                    rank_total_loads[r],
+                    rank_group_counts[group_name][r],
+                    r,
+                ),
+            )
+            assign_repo_to_rank(rid, group_name, rank)
+
+    logging.info(f"total_frames={sum(rank_total_loads)}")
+    for r in range(world_size):
+        group_summary_parts = []
+        for group_name in ordered_group_names:
+            group_count = rank_group_counts[group_name][r]
+            if group_count > 0:
+                group_frames = rank_group_loads[group_name][r]
+                group_summary_parts.append(f"{group_name}: repos={group_count}, frames={group_frames}")
+        group_summary = "; ".join(group_summary_parts) if group_summary_parts else "no groups"
+        logging.info(
+            f"[dist_loading] rank {r}: num_frames={rank_total_loads[r]} | {group_summary}"
+        )
+
+    return rank_to_repos
+
+
 def compute_repo_weights(
     repo_ids: list[str],
     frames_map: dict[str, int],
@@ -225,20 +351,7 @@ def compute_repo_weights(
     Returns:
         dict[str, float]: repo_id -> normalized weight (sum to 1)
     """
-    repo_to_group = {}
-    group_to_repos = defaultdict(list)
-
-    for rid in repo_ids:
-        matched = False
-        for g in groups_cfg.groups:
-            if re.search(g.match, rid):
-                repo_to_group[rid] = g.name
-                group_to_repos[g.name].append(rid)
-                matched = True
-                break
-        if not matched:
-            repo_to_group[rid] = "__default__"
-            group_to_repos["__default__"].append(rid)
+    _, group_to_repos, _ = group_repo_ids_by_rules(repo_ids, groups_cfg)
 
     group_budget = {}
     for g in groups_cfg.groups:
@@ -462,16 +575,27 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
     if cfg.dataset.dist_loading:
         # Try to balance by total_frames first.
         try:
-            rank_to_repos = compute_balanced_repo_assignment(
-                all_repo_ids,
-                frames_map,
-                world_size,
-            )
+            if cfg.dataset.weight_rules_path is not None:
+                rank_to_repos = compute_group_balanced_repo_assignment(
+                    all_repo_ids,
+                    frames_map,
+                    world_size,
+                    weight_cfg,
+                )
+                logging.info(
+                    "[make_dataset] dist_loading=True, using source-aware total_frames-balanced assignment."
+                )
+            else:
+                rank_to_repos = compute_balanced_repo_assignment(
+                    all_repo_ids,
+                    frames_map,
+                    world_size,
+                )
+                logging.info(
+                    f"[make_dataset] dist_loading=True, using total_frames-balanced "
+                    f"assignment."
+                )
             repo_ids = rank_to_repos[rank]
-            logging.info(
-                f"[make_dataset] dist_loading=True, using total_frames-balanced "
-                f"assignment."
-            )
         except Exception as e:
             # Fallback to the simple deterministic assignment
             logging.warning(
