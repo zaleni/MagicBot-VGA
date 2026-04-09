@@ -857,6 +857,46 @@ class CubeV2Model(nn.Module):
         att_2d_masks_4d = att_2d_masks[:, None, :, :]
         return torch.where(att_2d_masks_4d, 0.0, OPENPI_ATTENTION_MASK_VALUE)
 
+    def _prepare_suffix_denoise_cache(
+        self,
+        prefix_pad_masks: torch.Tensor,
+        max_prefix_position_ids: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Build suffix attention/position tensors once for the denoising loop.
+
+        During inference, the suffix layout is fixed: one state token followed by
+        `chunk_size` action tokens. Only the suffix embeddings change per denoise
+        step, so the attention mask and position ids can be reused.
+        """
+        suffix_len = 1 + self.config.chunk_size
+        batch_size = prefix_pad_masks.shape[0]
+        prefix_len = prefix_pad_masks.shape[1]
+
+        prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(batch_size, suffix_len, prefix_len)
+        suffix_pad_masks = torch.ones(
+            batch_size,
+            suffix_len,
+            dtype=torch.bool,
+            device=prefix_pad_masks.device,
+        )
+        suffix_att_masks = torch.zeros(
+            batch_size,
+            suffix_len,
+            dtype=torch.float32,
+            device=prefix_pad_masks.device,
+        )
+        suffix_att_masks[:, 0] = True
+        suffix_att_masks[:, 1] = True
+        suffix_att_2d_masks = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
+        full_att_2d_masks = torch.cat([prefix_pad_2d_masks, suffix_att_2d_masks], dim=2)
+        full_att_2d_masks_4d = self._prepare_attention_masks_4d(full_att_2d_masks)
+
+        position_ids = (
+            torch.arange(1, suffix_len + 1).repeat(3, 1, 1).to(max_prefix_position_ids)
+            + max_prefix_position_ids
+        )
+        return full_att_2d_masks_4d, position_ids
+
     def sample_noise(self, shape, device):
         return torch.normal(
             mean=0.0,
@@ -1595,6 +1635,10 @@ class CubeV2Model(nn.Module):
 
             max_position_ids = middle_position_ids.max(dim=-1, keepdim=True).values
             curr_pad_masks = torch.cat([prefix_pad_masks, middle_pad_masks], dim=1)
+            suffix_att_2d_masks_4d, suffix_position_ids = self._prepare_suffix_denoise_cache(
+                curr_pad_masks,
+                max_position_ids,
+            )
 
             dt = -1.0 / num_steps
             dt = torch.tensor(dt, dtype=torch.float32, device=device)
@@ -1605,9 +1649,9 @@ class CubeV2Model(nn.Module):
                 expanded_time = time.expand(bsize)
                 v_t = self.denoise_step(
                     state,
-                    curr_pad_masks,
                     past_key_values,
-                    max_position_ids,
+                    suffix_att_2d_masks_4d,
+                    suffix_position_ids,
                     x_t.to(dtype),
                     expanded_time.to(dtype),
                 )
@@ -1633,29 +1677,17 @@ class CubeV2Model(nn.Module):
     def denoise_step(
         self,
         state,
-        prefix_pad_masks,
         past_key_values,
-        max_prefix_position_ids,
+        suffix_att_2d_masks_4d,
+        suffix_position_ids,
         x_t,
         timestep,
     ):
         """Apply one denoising step of the noise `x_t` at a given timestep."""
-        suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(state, x_t, timestep)
-
-        suffix_len = suffix_pad_masks.shape[1]
-        batch_size = prefix_pad_masks.shape[0]
-        prefix_len = prefix_pad_masks.shape[1]
-
-        prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(batch_size, suffix_len, prefix_len)
-        suffix_att_2d_masks = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
-        full_att_2d_masks = torch.cat([prefix_pad_2d_masks, suffix_att_2d_masks], dim=2)
-
-        position_ids = torch.arange(1, suffix_len + 1).repeat(3, 1, 1).to(max_prefix_position_ids) + max_prefix_position_ids
-
-        full_att_2d_masks_4d = self._prepare_attention_masks_4d(full_att_2d_masks)
+        suffix_embs, _, _ = self.embed_suffix(state, x_t, timestep)
         outputs_embeds, _ = self.qwen3_vl_with_expert.forward(
-            attention_mask=full_att_2d_masks_4d,
-            position_ids=position_ids,
+            attention_mask=suffix_att_2d_masks_4d,
+            position_ids=suffix_position_ids,
             past_key_values=past_key_values,
             inputs_embeds=[None, None, suffix_embs],
             use_cache=False,
