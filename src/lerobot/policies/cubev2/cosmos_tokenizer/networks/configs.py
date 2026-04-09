@@ -14,7 +14,7 @@
 # limitations under the License.
 """The default image and video tokenizer configs."""
 
-from lerobot.policies.InternVLA_A1_3B.cosmos_tokenizer.modules import (
+from lerobot.policies.cubev2.cosmos_tokenizer.modules import (
     ContinuousFormulation,
     DiscreteQuantizer,
     EncoderType,

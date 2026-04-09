@@ -23,7 +23,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-from lerobot.policies.InternVLA_A1_3B.cosmos_tokenizer.networks import TokenizerModels
+from lerobot.policies.cubev2.cosmos_tokenizer.networks import TokenizerModels
 
 _DTYPE, _DEVICE = torch.bfloat16, "cuda"
 _UINT8_MAX_F = float(torch.iinfo(torch.uint8).max)

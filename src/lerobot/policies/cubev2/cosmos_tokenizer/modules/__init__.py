@@ -14,18 +14,18 @@
 # limitations under the License.
 from enum import Enum
 
-from lerobot.policies.InternVLA_A1_3B.cosmos_tokenizer.modules.distributions import (
+from lerobot.policies.cubev2.cosmos_tokenizer.modules.distributions import (
     GaussianDistribution,
     IdentityDistribution,
 )
-from lerobot.policies.InternVLA_A1_3B.cosmos_tokenizer.modules.layers2d import Decoder, Encoder
-from lerobot.policies.InternVLA_A1_3B.cosmos_tokenizer.modules.layers3d import (
+from lerobot.policies.cubev2.cosmos_tokenizer.modules.layers2d import Decoder, Encoder
+from lerobot.policies.cubev2.cosmos_tokenizer.modules.layers3d import (
     DecoderBase,
     DecoderFactorized,
     EncoderBase,
     EncoderFactorized,
 )
-from lerobot.policies.InternVLA_A1_3B.cosmos_tokenizer.modules.quantizers import (
+from lerobot.policies.cubev2.cosmos_tokenizer.modules.quantizers import (
     FSQuantizer,
     LFQuantizer,
     ResidualFSQuantizer,

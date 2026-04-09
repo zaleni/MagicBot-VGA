@@ -19,6 +19,7 @@ import math
 import os
 import time
 from collections import deque
+from contextlib import contextmanager
 from typing import Literal
 
 import torch
@@ -45,6 +46,8 @@ from lerobot.utils.constants import (
     OBS_IMAGES, 
     OPENPI_ATTENTION_MASK_VALUE,
 )
+
+_MISSING_ATTN_IMPL = object()
 
 
 class LayerNorm2d(nn.Module):
@@ -417,7 +420,7 @@ class Qwen3VLWithExpertModel(
         self.und_expert = Qwen3VLForConditionalGeneration.from_pretrained(
             qwen3_vl_pretrained_path,
             config=vlm_config_hf, 
-            ignore_mismatched_sizes=True
+            ignore_mismatched_sizes=False
         )
 
         gen_expert_config_hf = CONFIG_MAPPING["qwen3_vl_text"]()
@@ -793,6 +796,35 @@ class CubeV2Model(nn.Module):
         if self.da3_teacher is not None:
             self.da3_teacher.eval()
         return self
+
+    @contextmanager
+    def _temporary_attention_implementations(
+        self,
+        *,
+        und_expert_impl: str | None = None,
+        gen_expert_impl: str | None = None,
+        act_expert_impl: str | None = None,
+    ):
+        previous_impls = []
+
+        def set_impl(config: object, new_impl: str | None):
+            if new_impl is None:
+                return
+            previous_impls.append((config, getattr(config, "_attn_implementation", _MISSING_ATTN_IMPL)))
+            config._attn_implementation = new_impl
+
+        set_impl(self.qwen3_vl_with_expert.und_expert.language_model.config, und_expert_impl)
+        set_impl(self.qwen3_vl_with_expert.gen_expert.config, gen_expert_impl)
+        set_impl(self.qwen3_vl_with_expert.act_expert.config, act_expert_impl)
+
+        try:
+            yield
+        finally:
+            for config, previous_impl in reversed(previous_impls):
+                if previous_impl is _MISSING_ATTN_IMPL:
+                    delattr(config, "_attn_implementation")
+                else:
+                    config._attn_implementation = previous_impl
     
     def gradient_checkpointing_enable(self):
         """Enable gradient checkpointing for memory optimization."""
@@ -1523,81 +1555,87 @@ class CubeV2Model(nn.Module):
         prefix_position_ids, rope_deltas = self.get_position_ids(lang_tokens, image_grid_thw, prefix_pad_masks)
 
         prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks)
-        self.qwen3_vl_with_expert.und_expert.language_model.config._attn_implementation = "eager"  # noqa: SLF001
-
-        _, past_key_values = self.qwen3_vl_with_expert.forward(
-            attention_mask=prefix_att_2d_masks_4d,
-            position_ids=prefix_position_ids,
-            past_key_values=None,
-            inputs_embeds=[prefix_embs, None, None],
-            use_cache=True,
-        )
-        max_prefix_position_ids = prefix_position_ids.max(dim=-1, keepdim=True).values
-
-        middle_embs, middle_pad_masks, middle_att_masks = self.embed_middle(
-            images[:, :, :2], img_masks, 
-        )
-
-        middle_len = middle_pad_masks.shape[1]
-        batch_size = prefix_pad_masks.shape[0]
-        prefix_len = prefix_pad_masks.shape[1]
-        prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(batch_size, middle_len, prefix_len)
-        middle_att_2d_masks = make_att_2d_masks(middle_pad_masks, middle_att_masks)
-        middle_att_2d_masks = self.apply_view_aware_query_attention(middle_att_2d_masks, prefix_len=0)
-        full_att_2d_masks = torch.cat([prefix_pad_2d_masks, middle_att_2d_masks], dim=2)
-
-        middle_position_ids = torch.arange(1, middle_len + 1).repeat(3, 1, 1).to(max_prefix_position_ids) + max_prefix_position_ids
-
-        full_att_2d_masks_4d = self._prepare_attention_masks_4d(full_att_2d_masks)
-        self.qwen3_vl_with_expert.gen_expert.config._attn_implementation = "eager"  # noqa: SLF001
-
-        (_, middle_out, _), past_key_values = self.qwen3_vl_with_expert.forward(
-            attention_mask=full_att_2d_masks_4d,
-            position_ids=middle_position_ids,
-            past_key_values=past_key_values,
-            inputs_embeds=[None, middle_embs, None],
-            use_cache=True,
-        )
-
-        max_position_ids = middle_position_ids.max(dim=-1, keepdim=True).values
-        curr_pad_masks = torch.cat([prefix_pad_masks, middle_pad_masks], dim=1)
-
-        dt = -1.0 / num_steps
-        dt = torch.tensor(dt, dtype=torch.float32, device=device)
-
-        x_t = noise
-        time = torch.tensor(1.0, dtype=torch.float32, device=device)
-        while time >= -dt / 2:
-            expanded_time = time.expand(bsize)
-            v_t = self.denoise_step(
-                state,
-                curr_pad_masks,
-                past_key_values,
-                max_position_ids, 
-                x_t.to(dtype),
-                expanded_time.to(dtype),
+        with self._temporary_attention_implementations(
+            und_expert_impl="eager",
+            gen_expert_impl="eager",
+            act_expert_impl="eager",
+        ):
+            _, past_key_values = self.qwen3_vl_with_expert.forward(
+                attention_mask=prefix_att_2d_masks_4d,
+                position_ids=prefix_position_ids,
+                past_key_values=None,
+                inputs_embeds=[prefix_embs, None, None],
+                use_cache=True,
             )
-            x_t = x_t + dt * v_t
-            time += dt
+            max_prefix_position_ids = prefix_position_ids.max(dim=-1, keepdim=True).values
 
-        if decode_image:
-            def cosmos_out_func(middle_out):
-                return self.decode_cosmos(middle_out)
-            middle_visual_out, _ = self.split_middle_tokens(middle_out)
-            pred_cosmos_features = self._apply_checkpoint(cosmos_out_func, middle_visual_out.to(dtype=torch.bfloat16))
-            pred_cosmos_features = pred_cosmos_features.squeeze(0)
-            recon_images = self.cosmos.decode(pred_cosmos_features.squeeze(0))
-        else:
-            recon_images = None
+            middle_embs, middle_pad_masks, middle_att_masks = self.embed_middle(
+                images[:, :, :2], img_masks,
+            )
 
-        return x_t, recon_images
+            middle_len = middle_pad_masks.shape[1]
+            batch_size = prefix_pad_masks.shape[0]
+            prefix_len = prefix_pad_masks.shape[1]
+            prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(batch_size, middle_len, prefix_len)
+            middle_att_2d_masks = make_att_2d_masks(middle_pad_masks, middle_att_masks)
+            middle_att_2d_masks = self.apply_view_aware_query_attention(middle_att_2d_masks, prefix_len=0)
+            full_att_2d_masks = torch.cat([prefix_pad_2d_masks, middle_att_2d_masks], dim=2)
+
+            middle_position_ids = torch.arange(1, middle_len + 1).repeat(3, 1, 1).to(max_prefix_position_ids) + max_prefix_position_ids
+
+            full_att_2d_masks_4d = self._prepare_attention_masks_4d(full_att_2d_masks)
+
+            (_, middle_out, _), past_key_values = self.qwen3_vl_with_expert.forward(
+                attention_mask=full_att_2d_masks_4d,
+                position_ids=middle_position_ids,
+                past_key_values=past_key_values,
+                inputs_embeds=[None, middle_embs, None],
+                use_cache=True,
+            )
+
+            max_position_ids = middle_position_ids.max(dim=-1, keepdim=True).values
+            curr_pad_masks = torch.cat([prefix_pad_masks, middle_pad_masks], dim=1)
+
+            dt = -1.0 / num_steps
+            dt = torch.tensor(dt, dtype=torch.float32, device=device)
+
+            x_t = noise
+            time = torch.tensor(1.0, dtype=torch.float32, device=device)
+            while time >= -dt / 2:
+                expanded_time = time.expand(bsize)
+                v_t = self.denoise_step(
+                    state,
+                    curr_pad_masks,
+                    past_key_values,
+                    max_position_ids,
+                    x_t.to(dtype),
+                    expanded_time.to(dtype),
+                )
+                x_t = x_t + dt * v_t
+                time += dt
+
+            if decode_image:
+                def cosmos_out_func(middle_out):
+                    return self.decode_cosmos(middle_out)
+                middle_visual_out, _ = self.split_middle_tokens(middle_out)
+                decode_dtype = torch.bfloat16 if self.config.dtype == "bfloat16" else torch.float32
+                pred_cosmos_features = self._apply_checkpoint(
+                    cosmos_out_func,
+                    middle_visual_out.to(dtype=decode_dtype),
+                )
+                pred_cosmos_features = pred_cosmos_features.squeeze(0)
+                recon_images = self.cosmos.decode(pred_cosmos_features.squeeze(0))
+            else:
+                recon_images = None
+
+            return x_t, recon_images
 
     def denoise_step(
         self,
         state,
         prefix_pad_masks,
         past_key_values,
-        max_prefix_position_ids, 
+        max_prefix_position_ids,
         x_t,
         timestep,
     ):
@@ -1615,8 +1653,6 @@ class CubeV2Model(nn.Module):
         position_ids = torch.arange(1, suffix_len + 1).repeat(3, 1, 1).to(max_prefix_position_ids) + max_prefix_position_ids
 
         full_att_2d_masks_4d = self._prepare_attention_masks_4d(full_att_2d_masks)
-        self.qwen3_vl_with_expert.act_expert.config._attn_implementation = "eager"  # noqa: SLF001
-
         outputs_embeds, _ = self.qwen3_vl_with_expert.forward(
             attention_mask=full_att_2d_masks_4d,
             position_ids=position_ids,
@@ -1738,7 +1774,9 @@ class CubeV2Policy(PreTrainedPolicy):
     
     def to(self, *args, **kwargs):
         super().to(*args, **kwargs)
-        self.model.cosmos.to(torch.bfloat16)
+        cosmos_dtype = torch.bfloat16 if self.config.dtype == "bfloat16" else torch.float32
+        self.model.cosmos.to(cosmos_dtype)
+        # Keep the regression head in fp32 for the existing bf16 training/inference path.
         self.model.action_out_proj.to(torch.float32)
         return self
 

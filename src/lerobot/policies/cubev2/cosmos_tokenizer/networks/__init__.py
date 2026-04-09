@@ -15,25 +15,25 @@
 
 from enum import Enum
 
-from lerobot.policies.InternVLA_A1_3B.cosmos_tokenizer.networks.configs import (
+from lerobot.policies.cubev2.cosmos_tokenizer.networks.configs import (
     continuous_image as continuous_image_dict,
 )
-from lerobot.policies.InternVLA_A1_3B.cosmos_tokenizer.networks.configs import (
+from lerobot.policies.cubev2.cosmos_tokenizer.networks.configs import (
     discrete_image as discrete_image_dict,
 )
-from lerobot.policies.InternVLA_A1_3B.cosmos_tokenizer.networks.configs import (
+from lerobot.policies.cubev2.cosmos_tokenizer.networks.configs import (
     continuous_video as continuous_video_dict,
 )
-from lerobot.policies.InternVLA_A1_3B.cosmos_tokenizer.networks.configs import (
+from lerobot.policies.cubev2.cosmos_tokenizer.networks.configs import (
     discrete_video as discrete_video_dict,
 )
 
-from lerobot.policies.InternVLA_A1_3B.cosmos_tokenizer.networks.continuous_image import ContinuousImageTokenizer
-from lerobot.policies.InternVLA_A1_3B.cosmos_tokenizer.networks.discrete_image import DiscreteImageTokenizer
-from lerobot.policies.InternVLA_A1_3B.cosmos_tokenizer.networks.continuous_video import (
+from lerobot.policies.cubev2.cosmos_tokenizer.networks.continuous_image import ContinuousImageTokenizer
+from lerobot.policies.cubev2.cosmos_tokenizer.networks.discrete_image import DiscreteImageTokenizer
+from lerobot.policies.cubev2.cosmos_tokenizer.networks.continuous_video import (
     CausalContinuousVideoTokenizer,
 )
-from lerobot.policies.InternVLA_A1_3B.cosmos_tokenizer.networks.discrete_video import (
+from lerobot.policies.cubev2.cosmos_tokenizer.networks.discrete_video import (
     CausalDiscreteVideoTokenizer,
 )
 

@@ -38,10 +38,10 @@ from typing import Any
 
 import numpy as np
 from loguru import logger as logging
-from lerobot.policies.InternVLA_A1_3B.cosmos_tokenizer.networks import TokenizerConfigs
+from lerobot.policies.cubev2.cosmos_tokenizer.networks import TokenizerConfigs
 
-from lerobot.policies.InternVLA_A1_3B.cosmos_tokenizer.image_lib import ImageTokenizer
-from lerobot.policies.InternVLA_A1_3B.cosmos_tokenizer.utils import (
+from lerobot.policies.cubev2.cosmos_tokenizer.image_lib import ImageTokenizer
+from lerobot.policies.cubev2.cosmos_tokenizer.utils import (
     get_filepaths,
     get_output_filepath,
     read_image,

@@ -19,8 +19,8 @@ import torch
 from loguru import logger as logging
 from torch import nn
 
-from lerobot.policies.InternVLA_A1_3B.cosmos_tokenizer.modules import DecoderType, DiscreteQuantizer, EncoderType
-from lerobot.policies.InternVLA_A1_3B.cosmos_tokenizer.modules.quantizers import InvQuantizerJit
+from lerobot.policies.cubev2.cosmos_tokenizer.modules import DecoderType, DiscreteQuantizer, EncoderType
+from lerobot.policies.cubev2.cosmos_tokenizer.modules.quantizers import InvQuantizerJit
 
 NetworkEval = namedtuple("NetworkEval", ["reconstructions", "quant_loss", "quant_info"])
 

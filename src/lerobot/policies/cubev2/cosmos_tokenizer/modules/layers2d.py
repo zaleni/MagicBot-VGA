@@ -32,8 +32,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from loguru import logger as logging
 
-from lerobot.policies.InternVLA_A1_3B.cosmos_tokenizer.modules.patching import Patcher, UnPatcher
-from lerobot.policies.InternVLA_A1_3B.cosmos_tokenizer.modules.utils import Normalize, nonlinearity
+from lerobot.policies.cubev2.cosmos_tokenizer.modules.patching import Patcher, UnPatcher
+from lerobot.policies.cubev2.cosmos_tokenizer.modules.utils import Normalize, nonlinearity
 
 
 class Upsample(nn.Module):

@@ -20,7 +20,7 @@ from typing import Any
 
 from tqdm import tqdm
 
-from lerobot.policies.InternVLA_A1_3B.cosmos_tokenizer.utils import (
+from lerobot.policies.cubev2.cosmos_tokenizer.utils import (
     load_model,
     load_encoder_model,
     load_decoder_model,

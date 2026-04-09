@@ -23,7 +23,7 @@ import torch.nn.functional as F
 from einops import reduce
 from loguru import logger as logging
 
-from lerobot.policies.InternVLA_A1_3B.cosmos_tokenizer.modules.utils import (
+from lerobot.policies.cubev2.cosmos_tokenizer.modules.utils import (
     default,
     entropy,
     pack_one,

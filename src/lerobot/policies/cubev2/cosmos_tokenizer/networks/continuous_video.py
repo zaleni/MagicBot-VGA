@@ -18,12 +18,12 @@ from collections import OrderedDict, namedtuple
 from loguru import logger as logging
 from torch import nn
 
-from lerobot.policies.InternVLA_A1_3B.cosmos_tokenizer.modules import (
+from lerobot.policies.cubev2.cosmos_tokenizer.modules import (
     ContinuousFormulation,
     Decoder3DType,
     Encoder3DType,
 )
-from lerobot.policies.InternVLA_A1_3B.cosmos_tokenizer.modules.layers3d import CausalConv3d
+from lerobot.policies.cubev2.cosmos_tokenizer.modules.layers3d import CausalConv3d
 
 NetworkEval = namedtuple("NetworkEval", ["reconstructions", "posteriors", "latent"])
 

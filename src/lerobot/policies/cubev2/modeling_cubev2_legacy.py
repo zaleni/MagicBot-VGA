@@ -337,7 +337,7 @@ class Qwen3VLWithExpertModel(
         self.und_expert = Qwen3VLForConditionalGeneration.from_pretrained(
             qwen3_vl_pretrained_path,
             config=vlm_config_hf, 
-            ignore_mismatched_sizes=True
+            ignore_mismatched_sizes=False
         )
 
         gen_expert_config_hf = CONFIG_MAPPING["qwen3_vl_text"]()

@@ -20,7 +20,7 @@ import torch
 from loguru import logger as logging
 from torch import nn
 
-from lerobot.policies.InternVLA_A1_3B.cosmos_tokenizer.modules import (
+from lerobot.policies.cubev2.cosmos_tokenizer.modules import (
     ContinuousFormulation,
     DecoderType,
     EncoderType,

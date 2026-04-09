@@ -30,13 +30,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from loguru import logger as logging
 
-from lerobot.policies.InternVLA_A1_3B.cosmos_tokenizer.modules.patching import (
+from lerobot.policies.cubev2.cosmos_tokenizer.modules.patching import (
     Patcher,
     Patcher3D,
     UnPatcher,
     UnPatcher3D,
 )
-from lerobot.policies.InternVLA_A1_3B.cosmos_tokenizer.modules.utils import (
+from lerobot.policies.cubev2.cosmos_tokenizer.modules.utils import (
     CausalNormalize,
     batch2space,
     batch2time,
