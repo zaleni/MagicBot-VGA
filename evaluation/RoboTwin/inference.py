@@ -28,7 +28,7 @@ from lerobot.policies.factory import get_policy_class
 from lerobot.policies.InternVLA_A1_3B.transform_internvla_a1 import (
     Qwen3_VLProcessorTransformFn as QwenA1ProcessorTransformFn,
 )
-from lerobot.policies.cubev2.transform_internvla_a1 import (
+from lerobot.policies.cubev2.transform_cubev2 import (
     Qwen3_VLProcessorTransformFn as CubeV2ProcessorTransformFn,
 )
 from lerobot.transforms.core import (

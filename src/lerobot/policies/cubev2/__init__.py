@@ -14,8 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .configuration_internvla_a1 import CubeV2Config, CubeV2DatasetConfig
+from .configuration_cubev2 import CubeV2Config, CubeV2DatasetConfig
 from .da3_teacher import DA3BackboneTeacher
-from .modeling_internvla_a1 import CubeV2Policy
+from .modeling_cubev2 import CubeV2Policy
 
 __all__ = ["CubeV2Config", "CubeV2DatasetConfig", "CubeV2Policy", "DA3BackboneTeacher"]

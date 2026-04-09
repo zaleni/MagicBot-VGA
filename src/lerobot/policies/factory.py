@@ -23,7 +23,7 @@ import torch
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.InternVLA_A1_3B.configuration_internvla_a1 import QwenA1Config
 from lerobot.policies.InternVLA_A1_2B.configuration_internvla_a1 import InternA1Config
-from lerobot.policies.cubev2.configuration_internvla_a1 import CubeV2Config
+from lerobot.policies.cubev2.configuration_cubev2 import CubeV2Config
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.policies.pi05.configuration_pi05 import PI05Config
 from lerobot.policies.pretrained import PreTrainedPolicy
@@ -51,7 +51,7 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
 
         return QwenA1Policy
     elif name == "cubev2":
-        from lerobot.policies.cubev2.modeling_internvla_a1 import CubeV2Policy
+        from lerobot.policies.cubev2.modeling_cubev2 import CubeV2Policy
 
         return CubeV2Policy
     

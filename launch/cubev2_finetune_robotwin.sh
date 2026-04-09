@@ -8,7 +8,7 @@ set -euo pipefail
 
 # WANDB_TOKEN=${WANDB_TOKEN}
 # CONDA_ROOT=${_CONDA_ROOT}
-# CONDA_ENV=internvla_a1
+# CONDA_ENV=cubev2
 
 # source ${CONDA_ROOT}/etc/profile.d/conda.sh
 # conda activate ${CONDA_ENV}
@@ -51,7 +51,7 @@ export PYTHONPATH="${PROJ_ROOT}/src:${PYTHONPATH:-}"
 cd ${PROJ_ROOT}
 
 POLICY="cubev2"
-PRETRAINED_PATH="/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/model/InternVLA-A1-3B"
+POLICY_INIT_PATH="${POLICY_INIT_PATH:-${PRETRAINED_PATH:-}}"
 QWEN3_VL_PRETRAINED_PATH="${QWEN3_VL_PRETRAINED_PATH:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/model/Qwen3-VL-2B-Instruct}"
 COSMOS_TOKENIZER_PATH_OR_NAME="${COSMOS_TOKENIZER_PATH_OR_NAME:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/model/Cosmos-Tokenizer-CI8x8}"
 DA3_MODEL_PATH_OR_NAME="${DA3_MODEL_PATH_OR_NAME:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/model/DA3-LARGE-1-1}"
@@ -63,6 +63,12 @@ ACTION_TYPE=delta
 USE_EXTERNAL_STATS="${USE_EXTERNAL_STATS:-true}"
 DATASET_EXTERNAL_STATS_PATH="/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/Foundation-Moodel/norm_stats/aloha/delta/stats.json"
 DATASET_EXTERNAL_STATS_ROOT="${DATASET_EXTERNAL_STATS_ROOT:-}"
+
+if [[ -z "${POLICY_INIT_PATH}" ]]; then
+  echo "Please set POLICY_INIT_PATH to the CubeV2 bootstrap checkpoint."
+  echo "For backward compatibility, PRETRAINED_PATH is also accepted."
+  exit 1
+fi
 
 discover_dataset_dirs() {
   local root="$1"
@@ -93,8 +99,8 @@ if [[ "${USE_EXTERNAL_STATS}" == "true" && -z "${DATASET_EXTERNAL_STATS_PATH}" &
 fi
 
 BASE_OUTPUT_DIR="outputs/${POLICY}"
-PRETRAINED_DETAIL="a1_700k"
-JOB_NAME="${POLICY}-robotwin-3d-${ACTION_TYPE}-${PRETRAINED_DETAIL}-finetune-$(date +'%Y_%m_%d_%H_%M_%S')"
+BOOTSTRAP_TAG="foundation_700k"
+JOB_NAME="${POLICY}-robotwin-3d-${ACTION_TYPE}-${BOOTSTRAP_TAG}-finetune-$(date +'%Y_%m_%d_%H_%M_%S')"
 OUTPUT_DIR="${BASE_OUTPUT_DIR}/${JOB_NAME}"
 REPO_ID_FILE_DIR="${BASE_OUTPUT_DIR}/_repo_id_files"
 mkdir -p "${REPO_ID_FILE_DIR}"
@@ -116,7 +122,7 @@ ARGS=(
 
     --policy.type=${POLICY}
     --policy.repo_id=zaleni/${POLICY}
-    --policy.pretrained_path=${PRETRAINED_PATH}
+    --policy.pretrained_path="${POLICY_INIT_PATH}"
     --policy.qwen3_vl_pretrained_path="${QWEN3_VL_PRETRAINED_PATH}"
     --policy.cosmos_tokenizer_path_or_name="${COSMOS_TOKENIZER_PATH_OR_NAME}"
     --policy.push_to_hub=false

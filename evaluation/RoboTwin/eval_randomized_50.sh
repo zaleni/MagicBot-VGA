@@ -46,7 +46,7 @@ echo "PROJ_ROOT  = ${PROJ_ROOT}"
 
 cd "${PROJ_ROOT}"
 SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
-PRETRAINED_CKPT="/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/Foundation-Moodel/outputs/cubev2/cubev2-robotwin-3d-delta-a1_700k-finetune-2026_04_01_19_49_44/checkpoints/200000/pretrained_model"
+PRETRAINED_CKPT="/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/Foundation-Moodel/outputs/cubev2/cubev2-robotwin-3d-delta-a1_700k-finetune-2026_04_01_19_49_44/checkpoints/080000/pretrained_model"
 
 POLICY_TYPE="${POLICY_TYPE:-}"
 QWEN3_VL_PRETRAINED_PATH="${QWEN3_VL_PRETRAINED_PATH:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/model/Qwen3-VL-2B-Instruct}"
@@ -62,8 +62,8 @@ START_TASK_IDX="${START_TASK_IDX:-0}"
 TASK_COUNT="${TASK_COUNT:-50}"
 MAX_TASKS=50
 
-GPU_IDS="${GPU_IDS:-0,1,2,3}"
-MAX_JOBS_PER_GPU="${MAX_JOBS_PER_GPU:-2}"
+GPU_IDS="${GPU_IDS:-0,1}"
+MAX_JOBS_PER_GPU="${MAX_JOBS_PER_GPU:-3}"
 POLL_INTERVAL_SECONDS="${POLL_INTERVAL_SECONDS:-35}"
 
 RESIZE_SIZE="${RESIZE_SIZE:-224}"
@@ -98,9 +98,10 @@ if [[ -z "${PRETRAINED_CKPT}" ]]; then
     exit 1
 fi
 
-CKPT_TAG="cubev2-3d-delta-a1_700k-finetune-200k"
+CKPT_TAG="cubev2-3d-delta-a1_700k-finetune-80k"
 DEFAULT_RUN_NAME="${CKPT_TAG}-robotwin-$(date +%Y_%m_%d_%H_%M_%S)"
-RUN_NAME="cubev2-3d-delta-a1_700k-finetune-200k-robotwin-2026_04_04_19_23_43"
+RUN_NAME="${DEFAULT_RUN_NAME}"
+# RUN_NAME="cubev2-3d-delta-a1_700k-finetune-160k-robotwin-2026_04_06_07_58_41"
 RUN_OUTPUT_PATH="${BASE_OUTPUT_PATH}/${RUN_NAME}"
 
 if [[ -e "${PRETRAINED_CKPT}" && ! -d "${PRETRAINED_CKPT}" ]]; then

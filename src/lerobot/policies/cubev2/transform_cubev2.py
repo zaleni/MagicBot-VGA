@@ -116,6 +116,3 @@ if __name__ == "__main__":
     processor = Qwen3_VLProcessorTransformFn()
     output = processor(sample)
     print(output)
-
-
-UnifyQwenA1InputsTransformFn = UnifyCubeV2InputsTransformFn

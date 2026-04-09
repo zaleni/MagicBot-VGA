@@ -8,7 +8,7 @@ export HF_HOME="${HF_HOME:-${HOME}/.cache/huggingface}"
 
 WANDB_TOKEN=${WANDB_TOKEN}
 CONDA_ROOT=${_CONDA_ROOT}
-CONDA_ENV=internvla_a1
+CONDA_ENV="${CONDA_ENV:-cubev2}"
 
 source ${CONDA_ROOT}/etc/profile.d/conda.sh
 conda activate ${CONDA_ENV}

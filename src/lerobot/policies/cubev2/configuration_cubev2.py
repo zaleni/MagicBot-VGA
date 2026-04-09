@@ -22,7 +22,7 @@ from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
 from lerobot.policies.cubev2.da3_teacher import resolve_da3_backbone_defaults
-from lerobot.policies.cubev2.transform_internvla_a1 import (
+from lerobot.policies.cubev2.transform_cubev2 import (
     Qwen3_VLProcessorTransformFn,
     UnifyCubeV2InputsTransformFn,
 )
@@ -258,7 +258,3 @@ class CubeV2Config(PreTrainedConfig):
     @property
     def image_delta_indices(self) -> list | None:
         return [-15, 0, 15]
-
-
-QwenA1Config = CubeV2Config
-QwenA1DatasetConfig = CubeV2DatasetConfig

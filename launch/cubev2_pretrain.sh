@@ -8,7 +8,7 @@ set -euo pipefail
 
 # WANDB_TOKEN=${WANDB_TOKEN}
 # CONDA_ROOT=${_CONDA_ROOT}
-# CONDA_ENV=internvla_a1
+# CONDA_ENV=cubev2
 
 # source ${CONDA_ROOT}/etc/profile.d/conda.sh
 # conda activate ${CONDA_ENV}
@@ -51,7 +51,7 @@ cd ${PROJ_ROOT}
 export PYTHONPATH="${PROJ_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}"
 
 POLICY="cubev2"
-PRETRAINED_PATH="${PRETRAINED_PATH:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/model/InternVLA-A1-3B}"
+POLICY_INIT_PATH="${POLICY_INIT_PATH:-${PRETRAINED_PATH:-}}"
 QWEN3_VL_PRETRAINED_PATH="${QWEN3_VL_PRETRAINED_PATH:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/model/Qwen3-VL-2B-Instruct}"
 QWEN3_VL_PROCESSOR_PATH="${QWEN3_VL_PROCESSOR_PATH:-${QWEN3_VL_PRETRAINED_PATH}}"
 COSMOS_TOKENIZER_PATH_OR_NAME="${COSMOS_TOKENIZER_PATH_OR_NAME:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/model/Cosmos-Tokenizer-CI8x8}"
@@ -67,7 +67,7 @@ EGODEX_LEROBOT_ROOT="${EGODEX_LEROBOT_ROOT:-/inspire/qb-ilm/project/embodied-bas
 WEIGHT_RULES_PATH="${WEIGHT_RULES_PATH:-configs/weight_rules_cubev2_multi.yaml}"
 USE_DIST_LOADING="${USE_DIST_LOADING:-true}"
 VALIDATE_DATASETS="${VALIDATE_DATASETS:-false}"
-DDP_TIMEOUT_SEC="${DDP_TIMEOUT_SEC:-2400}"
+DDP_TIMEOUT_SEC="${DDP_TIMEOUT_SEC:-3600}"
 
 export LEROBOT_DDP_TIMEOUT_SEC="${DDP_TIMEOUT_SEC}"
 
@@ -108,8 +108,14 @@ if [[ ${#DATASET_REPO_IDS[@]} -eq 0 ]]; then
   exit 1
 fi
 
-if [[ -n "${PRETRAINED_PATH}" && ! -d "${PRETRAINED_PATH}" ]]; then
-  echo "PRETRAINED_PATH does not exist or is not a directory: ${PRETRAINED_PATH}"
+if [[ -z "${POLICY_INIT_PATH}" ]]; then
+  echo "Please set POLICY_INIT_PATH to the CubeV2 bootstrap checkpoint."
+  echo "For backward compatibility, PRETRAINED_PATH is also accepted."
+  exit 1
+fi
+
+if [[ -n "${POLICY_INIT_PATH}" && ! -d "${POLICY_INIT_PATH}" ]]; then
+  echo "POLICY_INIT_PATH does not exist or is not a directory: ${POLICY_INIT_PATH}"
   exit 1
 fi
 
@@ -136,7 +142,7 @@ echo "ROBOTWIN_ROOT=${ROBOTWIN_ROOT}"
 echo "ROBOCHALLENGE_ROOT=${ROBOCHALLENGE_ROOT}"
 echo "AGIBOT_ROOT=${AGIBOT_ROOT}"
 echo "EGODEX_LEROBOT_ROOT=${EGODEX_LEROBOT_ROOT}"
-echo "PRETRAINED_PATH=${PRETRAINED_PATH}"
+echo "POLICY_INIT_PATH=${POLICY_INIT_PATH}"
 echo "QWEN3_VL_PRETRAINED_PATH=${QWEN3_VL_PRETRAINED_PATH}"
 echo "QWEN3_VL_PROCESSOR_PATH=${QWEN3_VL_PROCESSOR_PATH}"
 echo "COSMOS_TOKENIZER_PATH_OR_NAME=${COSMOS_TOKENIZER_PATH_OR_NAME}"
@@ -205,14 +211,14 @@ ARGS=(
     src/lerobot/scripts/lerobot_train.py
 
     --output_dir="${OUTPUT_DIR}"
-    --num_workers=3
+    --num_workers=12
     --job_name="${JOB_NAME}"
     # --resume=true
     # --config_path=${config_path}
 
     --policy.type=${POLICY}
     --policy.repo_id=lerobot_lab/${POLICY}
-    --policy.pretrained_path="${PRETRAINED_PATH}"
+    --policy.pretrained_path="${POLICY_INIT_PATH}"
     --policy.qwen3_vl_pretrained_path="${QWEN3_VL_PRETRAINED_PATH}"
     --policy.cosmos_tokenizer_path_or_name="${COSMOS_TOKENIZER_PATH_OR_NAME}"
     --policy.push_to_hub=false
@@ -241,9 +247,10 @@ ARGS=(
     --dataset.qwen3_vl_processor_path="${QWEN3_VL_PROCESSOR_PATH}"
     --dataset.action_mode="${ACTION_TYPE}"
     --dataset.use_external_stats=${USE_EXTERNAL_STATS}
+    --dataset.video_backend=pyav
 
     --seed=42
-    --batch_size=16
+    --batch_size=12
     --steps=300000
     --save_freq=10000
     --log_freq=25

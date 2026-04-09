@@ -8,7 +8,7 @@ export HF_HOME="${HF_HOME:-${HOME}/.cache/huggingface}"
 
 WANDB_TOKEN=${WANDB_TOKEN}
 CONDA_ROOT=${_CONDA_ROOT}
-CONDA_ENV=internvla_a1
+CONDA_ENV="${CONDA_ENV:-cubev2}"
 
 source ${CONDA_ROOT}/etc/profile.d/conda.sh
 conda activate ${CONDA_ENV}
@@ -50,7 +50,7 @@ echo "PROJ_ROOT  = ${PROJ_ROOT}"
 cd ${PROJ_ROOT}
 
 POLICY="cubev2"
-PRETRAINED_PATH="InternRobotics/InternVLA-A1-3B"
+POLICY_INIT_PATH="${POLICY_INIT_PATH:-${PRETRAINED_PATH:-}}"
 QWEN3_VL_PRETRAINED_PATH="${QWEN3_VL_PRETRAINED_PATH:-Qwen/Qwen3-VL-2B-Instruct}"
 QWEN3_VL_PROCESSOR_PATH="${QWEN3_VL_PROCESSOR_PATH:-${QWEN3_VL_PRETRAINED_PATH}}"
 COSMOS_TOKENIZER_PATH_OR_NAME="${COSMOS_TOKENIZER_PATH_OR_NAME:-nvidia/Cosmos-Tokenizer-CI8x8}"
@@ -65,14 +65,20 @@ DATASET_REPO_ID="$1"
 ACTION_TYPE=${2:-abs}
 USE_EXTERNAL_STATS=${3:-false}
 
+if [[ -z "${POLICY_INIT_PATH}" ]]; then
+  echo "Please set POLICY_INIT_PATH to the CubeV2 bootstrap checkpoint."
+  echo "For backward compatibility, PRETRAINED_PATH is also accepted."
+  exit 1
+fi
+
 if [[ "${USE_EXTERNAL_STATS}" == "true" && -z "${DATASET_EXTERNAL_STATS_PATH}" && -z "${DATASET_EXTERNAL_STATS_ROOT}" ]]; then
   echo "USE_EXTERNAL_STATS=true but neither DATASET_EXTERNAL_STATS_PATH nor DATASET_EXTERNAL_STATS_ROOT is set."
   exit 1
 fi
 
 BASE_OUTPUT_DIR="outputs/${POLICY}"
-PRETRAINED_DETAIL="a1_agibotworld_700k"
-JOB_NAME="$(date +'%Y_%m_%d_%H_%M_%S')-${POLICY}-${DATASET_REPO_ID//[\/ ]/_}-${ACTION_TYPE}-${PRETRAINED_DETAIL}-finetune"
+BOOTSTRAP_TAG="foundation_agibotworld_700k"
+JOB_NAME="$(date +'%Y_%m_%d_%H_%M_%S')-${POLICY}-${DATASET_REPO_ID//[\/ ]/_}-${ACTION_TYPE}-${BOOTSTRAP_TAG}-finetune"
 OUTPUT_DIR="${BASE_OUTPUT_DIR}/${JOB_NAME}"
 
 ARGS=(
@@ -90,7 +96,7 @@ ARGS=(
 
     --policy.type=${POLICY}
     --policy.repo_id=lerobot_lab/${POLICY}
-    --policy.pretrained_path=${PRETRAINED_PATH}
+    --policy.pretrained_path="${POLICY_INIT_PATH}"
     --policy.qwen3_vl_pretrained_path="${QWEN3_VL_PRETRAINED_PATH}"
     --policy.cosmos_tokenizer_path_or_name="${COSMOS_TOKENIZER_PATH_OR_NAME}"
     --policy.push_to_hub=false

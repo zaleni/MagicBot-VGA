@@ -32,7 +32,7 @@ from transformers.models.qwen3_vl import modeling_qwen3_vl
 from transformers.models.qwen3_vl import Qwen3VLForConditionalGeneration, Qwen3VLTextModel
 
 from lerobot.policies.cubev2.cosmos_tokenizer.image_lib import ImageTokenizer
-from lerobot.policies.cubev2.configuration_internvla_a1 import CubeV2Config
+from lerobot.policies.cubev2.configuration_cubev2 import CubeV2Config
 from lerobot.policies.cubev2.da3_teacher import DA3BackboneTeacher
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.utils import format_big_number
@@ -301,7 +301,7 @@ def get_qwen_config(variant: str) -> QwenConfig:  # see openpi `gemma.py: get_co
 class Qwen3VLWithExpertModel(
     nn.Module
 ):  
-    """Qwen3_VL model with action expert for QwenA1."""
+    """Legacy CubeV2 Qwen3-VL backbone with expert heads."""
 
     def __init__(
         self,
@@ -515,7 +515,7 @@ class Qwen3VLWithExpertModel(
         return [prefix_output, middle_output, suffix_output], past_key_values, collected_middle_states
 
 
-class QwenA1(nn.Module):
+class CubeV2Model(nn.Module):
 
     @staticmethod
     def _resolve_cosmos_tokenizer_dir(path_or_name: str) -> str:
@@ -695,7 +695,7 @@ class QwenA1(nn.Module):
         self.qwen3_vl_with_expert.und_expert.visual.gradient_checkpointing = True
         self.qwen3_vl_with_expert.gen_expert.gradient_checkpointing = True
         self.qwen3_vl_with_expert.act_expert.gradient_checkpointing = True
-        logging.info("Enabled gradient checkpointing for QwenA1 model")
+        logging.info("Enabled gradient checkpointing for legacy CubeV2 model")
 
     def gradient_checkpointing_disable(self):
         """Disable gradient checkpointing."""
@@ -704,7 +704,7 @@ class QwenA1(nn.Module):
         self.qwen3_vl_with_expert.und_expert.visual.gradient_checkpointing = False
         self.qwen3_vl_with_expert.gen_expert.gradient_checkpointing = False
         self.qwen3_vl_with_expert.act_expert.gradient_checkpointing = False
-        logging.info("Disabled gradient checkpointing for QwenA1 model")
+        logging.info("Disabled gradient checkpointing for legacy CubeV2 model")
 
     def _apply_checkpoint(self, func, *args, **kwargs):
         """Helper method to apply gradient checkpointing if enabled."""
@@ -1392,7 +1392,7 @@ class QwenA1(nn.Module):
 
 
 class CubeV2Policy(PreTrainedPolicy):
-    """CubeV2 policy built from the InternVLA-A1-3B backbone."""
+    """Legacy CubeV2 policy implementation retained for reference."""
 
     config_class = CubeV2Config
     name = "cubev2"
@@ -1409,7 +1409,7 @@ class CubeV2Policy(PreTrainedPolicy):
         config.validate_features()
         self.config = config
 
-        self.model = QwenA1(config)
+        self.model = CubeV2Model(config)
 
         # Enable gradient checkpointing if requested
         if config.gradient_checkpointing:
@@ -1685,15 +1685,9 @@ class CubeV2Policy(PreTrainedPolicy):
         })
 
         return loss, loss_dict
-
-
-QwenA1Policy = CubeV2Policy
-QwenA1Config = CubeV2Config
-
-
 if __name__ == "__main__":
     from lerobot.utils.constants import OBS_IMAGES, OBS_STATE, ACTION
-    from lerobot.policies.cubev2.transform_internvla_a1 import Qwen3_VLProcessorTransformFn
+    from lerobot.policies.cubev2.transform_cubev2 import Qwen3_VLProcessorTransformFn
     from pprint import pp
     torch.manual_seed(0)
     device = torch.device("cuda")
