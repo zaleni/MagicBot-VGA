@@ -128,6 +128,24 @@ def update_policy(
     return train_metrics, output_dict
 
 
+def _sync_scalar_metrics(accelerator: Accelerator, metrics: dict[str, float]) -> dict[str, float]:
+    """All-reduce a small set of scalar logging metrics across ranks."""
+    if accelerator.num_processes <= 1 or not metrics:
+        return metrics
+
+    metric_names = list(metrics.keys())
+    metric_tensor = torch.tensor(
+        [float(metrics[name]) for name in metric_names],
+        device=accelerator.device,
+        dtype=torch.float32,
+    )
+    reduced_metrics = accelerator.reduce(metric_tensor, reduction="mean")
+    return {
+        name: float(value)
+        for name, value in zip(metric_names, reduced_metrics.detach().cpu().tolist(), strict=False)
+    }
+
+
 def _meter_avg_or_val(meter: AverageMeter) -> float:
     return meter.avg if meter.count > 0 else meter.val
 
@@ -139,7 +157,9 @@ def _format_train_status_line(
     elapsed_str: str,
     remaining_str: str,
     steps_per_second: float,
+    loss_overrides: dict[str, float] | None = None,
 ) -> str:
+    loss_overrides = loss_overrides or {}
     progress_parts = [
         f"step:{format_big_number(train_tracker.steps, precision=1)}",
         f"sample:{format_big_number(train_tracker.samples)}",
@@ -149,16 +169,18 @@ def _format_train_status_line(
 
     loss_parts = []
     if "loss" in train_tracker.metrics:
-        loss_parts.append(f"total:{_meter_avg_or_val(train_tracker.loss):.3f}")
+        loss_value = loss_overrides.get("loss", _meter_avg_or_val(train_tracker.loss))
+        loss_parts.append(f"total:{loss_value:.3f}")
     if "loss_action" in train_tracker.metrics:
-        loss_parts.append(f"action:{_meter_avg_or_val(train_tracker.loss_action):.3f}")
+        loss_action = loss_overrides.get("loss_action", _meter_avg_or_val(train_tracker.loss_action))
+        loss_parts.append(f"action:{loss_action:.3f}")
     if "loss_gen" in train_tracker.metrics:
-        loss_gen = _meter_avg_or_val(train_tracker.loss_gen)
+        loss_gen = loss_overrides.get("loss_gen", _meter_avg_or_val(train_tracker.loss_gen))
         lambda_gen = float(getattr(cfg.policy, "lambda_gen", 1.0))
         loss_parts.append(f"gen:{loss_gen:.3f}")
         loss_parts.append(f"gen_w:{lambda_gen * loss_gen:.3f}")
     if "loss_3d" in train_tracker.metrics:
-        loss_3d = _meter_avg_or_val(train_tracker.loss_3d)
+        loss_3d = loss_overrides.get("loss_3d", _meter_avg_or_val(train_tracker.loss_3d))
         lambda_3d = float(getattr(cfg.policy, "lambda_3d", 1.0))
         loss_parts.append(f"3d:{loss_3d:.3f}")
         loss_parts.append(f"3d_w:{lambda_3d * loss_3d:.3f}")
@@ -420,10 +442,36 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         # increment `step` here.
         step += 1
         train_tracker.step()
-        is_log_step = cfg.log_freq > 0 and step % cfg.log_freq == 0 and is_main_process
+        is_log_step = cfg.log_freq > 0 and step % cfg.log_freq == 0
+        should_log = is_log_step and is_main_process
         is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps
 
+        synced_log_loss_dict = None
         if is_log_step:
+            log_scalar_metrics = {
+                name: value
+                for name, value in {
+                    "loss": output_dict.get("loss", train_tracker.loss.val),
+                    "loss_action": output_dict.get("loss_action"),
+                    "loss_gen": output_dict.get("loss_gen"),
+                    "loss_3d": output_dict.get("loss_3d"),
+                }.items()
+                if value is not None
+            }
+            log_scalar_metrics.update(
+                {
+                    key: value
+                    for key, value in output_dict.items()
+                    if key.startswith("loss_action_dim")
+                    and isinstance(value, (int, float))
+                }
+            )
+            synced_log_loss_dict = _sync_scalar_metrics(
+                accelerator,
+                log_scalar_metrics,
+            )
+
+        if should_log:
             avg_update_time = train_tracker.update_s.avg if hasattr(train_tracker.update_s, 'avg') else train_tracker.update_s.val
             steps_per_second = 1.0 / avg_update_time if avg_update_time > 0 else 0
             
@@ -441,12 +489,18 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                     elapsed_str=elapsed_str,
                     remaining_str=remaining_str,
                     steps_per_second=steps_per_second,
+                    loss_overrides=synced_log_loss_dict,
                 )
             )
             if wandb_logger:
                 wandb_log_dict = train_tracker.to_dict()
+                if synced_log_loss_dict:
+                    wandb_log_dict.update(synced_log_loss_dict)
                 if output_dict:
-                    wandb_log_dict.update(output_dict)
+                    for key, value in output_dict.items():
+                        if key in wandb_log_dict:
+                            continue
+                        wandb_log_dict[key] = value
                 wandb_logger.log_dict(wandb_log_dict, step)
             train_tracker.reset_averages()
 
