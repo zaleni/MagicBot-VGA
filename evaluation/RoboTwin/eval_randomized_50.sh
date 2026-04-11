@@ -46,7 +46,7 @@ echo "PROJ_ROOT  = ${PROJ_ROOT}"
 
 cd "${PROJ_ROOT}"
 SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
-PRETRAINED_CKPT="/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/Foundation-Moodel/outputs/cubev2/cubev2-robotwin-3d-delta-a1_700k-finetune-2026_04_01_19_49_44/checkpoints/080000/pretrained_model"
+PRETRAINED_CKPT="/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/Foundation-Moodel/outputs/cubev2/cubev2-multidata-delta-pretrain-2026_04_07_07_42_16/checkpoints/300000/pretrained_model"
 
 POLICY_TYPE="${POLICY_TYPE:-}"
 QWEN3_VL_PRETRAINED_PATH="${QWEN3_VL_PRETRAINED_PATH:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/model/Qwen3-VL-2B-Instruct}"
@@ -98,7 +98,7 @@ if [[ -z "${PRETRAINED_CKPT}" ]]; then
     exit 1
 fi
 
-CKPT_TAG="cubev2-3d-delta-a1_700k-finetune-80k"
+CKPT_TAG="cubev2-3d-delta-multidata_pretrained300k-base"
 DEFAULT_RUN_NAME="${CKPT_TAG}-robotwin-$(date +%Y_%m_%d_%H_%M_%S)"
 RUN_NAME="${DEFAULT_RUN_NAME}"
 # RUN_NAME="cubev2-3d-delta-a1_700k-finetune-160k-robotwin-2026_04_06_07_58_41"
