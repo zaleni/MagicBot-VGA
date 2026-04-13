@@ -1396,6 +1396,10 @@ class CubeV2Policy(PreTrainedPolicy):
 
     config_class = CubeV2Config
     name = "cubev2"
+    _save_excluded_prefixes = (
+        "model.cosmos.",
+        "model.da3_teacher.",
+    )
 
     def __init__(
         self,
@@ -1489,10 +1493,30 @@ class CubeV2Policy(PreTrainedPolicy):
     def get_optim_params(self) -> dict:
         return self.parameters()
 
+    def get_state_dict_to_save(self) -> dict[str, Tensor]:
+        state_dict = self.state_dict()
+        filtered_state_dict = {
+            key: value
+            for key, value in state_dict.items()
+            if not any(key.startswith(prefix) for prefix in self._save_excluded_prefixes)
+        }
+        dropped_params = sum(
+            value.numel()
+            for key, value in state_dict.items()
+            if any(key.startswith(prefix) for prefix in self._save_excluded_prefixes)
+        )
+        logging.info(
+            "Saving CubeV2 legacy checkpoint without frozen external modules: "
+            f"dropped {format_big_number(dropped_params)} parameters from "
+            f"{', '.join(self._save_excluded_prefixes)}"
+        )
+        return filtered_state_dict
+
     def classify_model_loading_keys(
         self, missing_keys: list[str], unexpected_keys: list[str]
     ) -> tuple[list[str], list[str], list[str]]:
         ignored_missing_prefixes = (
+            "model.cosmos.",
             "model.da3_teacher.",
             "model.da3_query_projectors.",
             "model.future_3d_layer_input_norms.",

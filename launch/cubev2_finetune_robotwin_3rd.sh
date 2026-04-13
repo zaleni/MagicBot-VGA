@@ -153,9 +153,9 @@ ARGS=(
     --dataset.use_external_stats=${USE_EXTERNAL_STATS}
 
     --seed=42
-    --batch_size=12
+    --batch_size=16
     --steps=200000
-    --save_freq=20000
+    --save_freq=10000
     --log_freq=25
 
     --wandb.enable=true

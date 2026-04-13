@@ -42,6 +42,17 @@ class ActionSelectKwargs(TypedDict, total=False):
     noise: Tensor | None
 
 
+class _StateDictSaveWrapper(nn.Module):
+    """Minimal module wrapper so safetensors can save a filtered state dict."""
+
+    def __init__(self, state_dict: dict[str, Tensor]):
+        super().__init__()
+        self._state_dict = state_dict
+
+    def state_dict(self, *args, **kwargs) -> dict[str, Tensor]:
+        return self._state_dict
+
+
 class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
     """
     Base class for policy models.
@@ -70,7 +81,18 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
     def _save_pretrained(self, save_directory: Path) -> None:
         self.config._save_pretrained(save_directory)
         model_to_save = self.module if hasattr(self, "module") else self
-        save_model_as_safetensor(model_to_save, str(save_directory / SAFETENSORS_SINGLE_FILE))
+        state_dict = model_to_save.get_state_dict_to_save()
+        if state_dict is None:
+            save_model_as_safetensor(model_to_save, str(save_directory / SAFETENSORS_SINGLE_FILE))
+        else:
+            save_model_as_safetensor(
+                _StateDictSaveWrapper(state_dict),
+                str(save_directory / SAFETENSORS_SINGLE_FILE),
+            )
+
+    def get_state_dict_to_save(self) -> dict[str, Tensor] | None:
+        """Optional hook for subclasses that want to exclude keys from checkpoints."""
+        return None
 
     @classmethod
     def from_pretrained(
