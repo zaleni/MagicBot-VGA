@@ -5,6 +5,9 @@ This tool removes `model.cosmos.*` and `model.da3_teacher.*` tensors from an exi
 `model.safetensors` file and writes a smaller `pretrained_model` directory suitable for
 Hub upload. It copies every other artifact from the source directory unchanged.
 """
+# python util_scripts/repack_cubev2_checkpoint.py \
+#   --src /path/to/checkpoints/300000 \
+#   --dst /path/to/checkpoints/300000_slim/pretrained_model
 
 from __future__ import annotations
 
