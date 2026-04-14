@@ -19,7 +19,7 @@ set -euo pipefail
 ###############################################################################
 
 export MASTER_ADDR="${MASTER_ADDR:-127.0.0.1}"
-export MASTER_PORT="${MASTER_PORT:-6387}"
+export MASTER_PORT="${MASTER_PORT:-6379}"
 echo "MASTER_ADDR=${MASTER_ADDR}, MASTER_PORT=${MASTER_PORT}"
 
 export NCCL_P2P_DISABLE=1
@@ -46,7 +46,7 @@ echo "PROJ_ROOT  = ${PROJ_ROOT}"
 
 cd "${PROJ_ROOT}"
 SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
-PRETRAINED_CKPT="/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/Foundation-Moodel/outputs/cubev2/cubev2-robotwin-3d-delta-multidata_pretrained_300k-finetune-2026_04_11_05_25_17/checkpoints/200000/pretrained_model"
+PRETRAINED_CKPT="/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/Foundation-Moodel/outputs/cubev2/cubev2-robotwin-3d-delta-multidata_pretrained_300k-finetune-2026_04_11_05_25_17/checkpoints/190000/pretrained_model"
 
 POLICY_TYPE="${POLICY_TYPE:-}"
 QWEN3_VL_PRETRAINED_PATH="${QWEN3_VL_PRETRAINED_PATH:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/model/Qwen3-VL-2B-Instruct}"
@@ -62,13 +62,14 @@ START_TASK_IDX="${START_TASK_IDX:-0}"
 TASK_COUNT="${TASK_COUNT:-50}"
 MAX_TASKS=50
 
-GPU_IDS="${GPU_IDS:-0,1,2,3,4,5,6,7}"
+GPU_IDS="${GPU_IDS:-0,1}"
 MAX_JOBS_PER_GPU="${MAX_JOBS_PER_GPU:-3}"
 POLL_INTERVAL_SECONDS="${POLL_INTERVAL_SECONDS:-35}"
 
 RESIZE_SIZE="${RESIZE_SIZE:-224}"
 ACTION_MODE="${ACTION_MODE:-delta}"
 TEST_NUM="${TEST_NUM:-100}"
+SEED="${SEED:-0}"
 STATS_KEY="${STATS_KEY:-aloha}"
 DTYPE="${DTYPE:-bfloat16}"
 IMAGE_HISTORY_INTERVAL="${IMAGE_HISTORY_INTERVAL:-15}"
@@ -98,7 +99,7 @@ if [[ -z "${PRETRAINED_CKPT}" ]]; then
     exit 1
 fi
 
-CKPT_TAG="cubev2-3d-delta-multidata_pretrained300k-finetune-200k"
+CKPT_TAG="cubev2-3d-delta-multidata_pretrained300k-finetune-190k"
 DEFAULT_RUN_NAME="${CKPT_TAG}-robotwin-$(date +%Y_%m_%d_%H_%M_%S)"
 RUN_NAME="${DEFAULT_RUN_NAME}"
 # RUN_NAME="cubev2-3d-delta-a1_700k-finetune-160k-robotwin-2026_04_06_07_58_41"
@@ -195,6 +196,7 @@ done
     echo "total_parallel_jobs: ${TOTAL_SLOTS}"
     echo "action_mode: ${ACTION_MODE}"
     echo "test_num: ${TEST_NUM}"
+    echo "seed: ${SEED}"
     echo "resize_size: ${RESIZE_SIZE}"
     echo "stats_key: ${STATS_KEY}"
     echo "dtype: ${DTYPE}"
@@ -220,6 +222,7 @@ done
     printf 'MAX_JOBS_PER_GPU=%q ' "${MAX_JOBS_PER_GPU}"
     printf 'ACTION_MODE=%q ' "${ACTION_MODE}"
     printf 'TEST_NUM=%q ' "${TEST_NUM}"
+    printf 'SEED=%q ' "${SEED}"
     printf 'RESIZE_SIZE=%q ' "${RESIZE_SIZE}"
     printf 'POLICY_TYPE=%q ' "${POLICY_TYPE}"
     printf 'QWEN3_VL_PRETRAINED_PATH=%q ' "${QWEN3_VL_PRETRAINED_PATH}"
@@ -257,6 +260,7 @@ write_task_command_file() {
         --args.resize_size "${RESIZE_SIZE}"
         --args.action_mode "${ACTION_MODE}"
         --args.test_num "${TEST_NUM}"
+        --args.seed "${SEED}"
         --args.stats_key "${STATS_KEY}"
         --args.dtype "${DTYPE}"
         --args.image_history_interval "${IMAGE_HISTORY_INTERVAL}"
@@ -328,6 +332,7 @@ launch_task() {
             --args.resize_size "${RESIZE_SIZE}"
             --args.action_mode "${ACTION_MODE}"
             --args.test_num "${TEST_NUM}"
+            --args.seed "${SEED}"
             --args.stats_key "${STATS_KEY}"
             --args.dtype "${DTYPE}"
             --args.image_history_interval "${IMAGE_HISTORY_INTERVAL}"
