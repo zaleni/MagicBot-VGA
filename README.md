@@ -16,7 +16,8 @@ It covers:
 - required external model assets
 - single-task evaluation
 - 50-task randomized evaluation
-- custom task subset evaluation
+- CVPR 2026 RoboTwin Track 11-task evaluation
+- submission package generation for the leaderboard workflow
 
 ## 1. Requirements
 
@@ -273,15 +274,31 @@ TASK_COUNT=10 \
 bash evaluation/RoboTwin/eval_randomized_50.sh
 ```
 
-## 9. Evaluate a Custom Sparse Task List
+## 9. Evaluate the CVPR 2026 RoboTwin Track 11-Task Subset
 
-If you want to evaluate a sparse subset such as:
+For the Hugging Face leaderboard
+[`open-gigaai/CVPR-2026-RoboTwin-Track-LeaderBoard`](https://huggingface.co/spaces/open-gigaai/CVPR-2026-RoboTwin-Track-LeaderBoard),
+we use the following 11-task subset:
 
 ```text
 [2, 3, 9, 10, 12, 15, 17, 25, 28, 30, 44]
 ```
 
-the current batch script does not take a sparse task list directly. The recommended approach is to run a shell loop:
+The exact task names in `evaluation/RoboTwin/inference.py` are:
+
+- `blocks_ranking_rgb`
+- `blocks_ranking_size`
+- `handover_mic`
+- `hanging_mug`
+- `move_can_pot`
+- `move_stapler_pad`
+- `open_microwave`
+- `place_can_basket`
+- `place_dual_shoes`
+- `place_fan`
+- `stack_blocks_three`
+
+The current batch script does not take a sparse task list directly, so the recommended approach is to run a shell loop:
 
 ```bash
 cd third_party/RoboTwin
@@ -303,7 +320,43 @@ for t in "${TASKS[@]}"; do
 done
 ```
 
-## 10. Task Index Reference
+This produces one output directory per task, each containing replay videos plus `summary.json` and `summary.txt`.
+
+## 10. Package the 11-Task Submission and Export Success Rates
+
+After you finish the randomized evaluation run, you can convert those 11 tasks into a submission-style folder with:
+
+```bash
+python util_scripts/package_robotwin_submission.py \
+  --run /path/to/output_randomized_50/<run_name>/summary.txt \
+  --dst /path/to/output_randomized_50/<run_name>/submission_package \
+  --overwrite
+```
+
+If you also want to bundle a policy folder, add:
+
+```bash
+  --policy-dir /path/to/policy/Your_Policy
+```
+
+The packaging script will:
+
+- create `submission_package/<task_name>/episode0.mp4`, `episode1.mp4`, ...
+- preserve the 11-task ordering by task index
+- write `package_manifest.txt`
+- write `selected_task_summary.json`
+- write `selected_task_summary.txt`
+
+The selected-task summary files include:
+
+- per-task `success_rate`
+- per-task `success_count` and `test_num`
+- `avg_task_success_rate` across the 11 tasks
+- `overall_episode_success_rate` across all episodes in the 11-task subset
+
+This is useful when you want a leaderboard-facing summary for the competition subset rather than the full randomized-50 report.
+
+## 11. Task Index Reference
 
 Task indices are defined in [`evaluation/RoboTwin/inference.py`](evaluation/RoboTwin/inference.py).
 
@@ -322,20 +375,20 @@ For example:
 - `30`: `place_fan`
 - `44`: `stack_blocks_three`
 
-## 11. Common Notes
+## 12. Common Notes
 
 - `inference.py` can load checkpoints from either a local directory or a Hugging Face repo id.
 - If your server cannot access Hugging Face online, download the external assets in advance and pass local paths.
 - If you use the lightweight checkpoint release for action evaluation, keeping `--args.disable_3d_teacher_for_eval` enabled is recommended.
 - If you want to inspect reconstructed future images during inference, enable `--args.decode_image_flag`, though this is not required for standard RoboTwin scoring.
 
-## 12. Model Link
+## 13. Model Link
 
 Released RoboTwin checkpoint:
 
 - https://huggingface.co/zaleni/MagicBot-VGA-Robotwin
 
-## 13. Acknowledgments
+## 14. Acknowledgments
 
 MagicBot-VGA is developed on top of the excellent InternVLA framework. Our codebase
 started from that foundation and has since been substantially modified and extended
