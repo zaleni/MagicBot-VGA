@@ -1,14 +1,24 @@
-# MagicBot-VGA-Robotwin Evaluation Guide
+# MagicBot-VGA
 
-This guide explains how to evaluate our RoboTwin model
+This repository documents how to evaluate our RoboTwin model
 [`zaleni/MagicBot-VGA-Robotwin`](https://huggingface.co/zaleni/MagicBot-VGA-Robotwin)
-with the code in this repository.
+with the MagicBot-VGA codebase.
+
+Repository:
+
+- https://github.com/zaleni/MagicBot-VGA
+
+Model:
+
+- https://huggingface.co/zaleni/MagicBot-VGA-Robotwin
+
+This README focuses on RoboTwin 2.0 environment preparation and evaluation.
 
 It covers:
 
-- environment installation
-- RoboTwin setup
-- required model assets
+- MagicBot environment installation
+- RoboTwin evaluation setup
+- required external model assets
 - single-task evaluation
 - 50-task randomized evaluation
 - custom task subset evaluation
@@ -23,28 +33,27 @@ The codebase is built and tested with:
 
 We recommend using a Linux machine with NVIDIA GPUs.
 
-## 2. Install the Base Environment
+## 2. Install the MagicBot Base Environment
 
 Clone the repository:
 
 ```bash
-git clone https://github.com/InternRobotics/InternVLA-A1.git
-cd InternVLA-A1
+git clone https://github.com/zaleni/MagicBot-VGA.git
+cd MagicBot-VGA
 ```
 
 Create a conda environment:
 
 ```bash
-conda create -y -n magicbot_vga python=3.10
-conda activate magicbot_vga
+conda create -y -n magicbot python=3.10
+conda activate magicbot
 pip install --upgrade pip
 ```
 
-Install system dependencies:
+Install the basic system dependencies used by the codebase:
 
 ```bash
 conda install -c conda-forge ffmpeg=7.1.1 svt-av1 -y
-sudo apt install -y libvulkan1 mesa-vulkan-drivers vulkan-tools
 ```
 
 Install PyTorch for CUDA 12.8:
@@ -86,15 +95,56 @@ That file is best understood as a repo-side override copy. Most users evaluating
 `zaleni/MagicBot-VGA-Robotwin` should not need it unless they intentionally want to
 reproduce a specific local patched behavior.
 
-## 4. Prepare RoboTwin
+## 4. Prepare RoboTwin for Evaluation
 
-Initialize the RoboTwin submodule:
+This section is specifically for RoboTwin evaluation. If you only want to load the
+model or run other parts of the codebase, the extra RoboTwin setup below is not required.
+
+### Option A: initialize the bundled RoboTwin submodule
 
 ```bash
 git submodule update --init third_party/RoboTwin
 ```
 
-Install RoboTwin dependencies and assets:
+### Option B: copy an existing RoboTwin checkout
+
+You do not have to download RoboTwin from scratch if you already have a prepared copy.
+You can copy it into this repository instead.
+
+The evaluation code assumes RoboTwin is located exactly at:
+
+```text
+<repo_root>/third_party/RoboTwin
+```
+
+So a valid layout looks like:
+
+```text
+MagicBot-VGA/
+  evaluation/
+  launch/
+  src/
+  third_party/
+    RoboTwin/
+```
+
+If your RoboTwin directory already exists elsewhere, either:
+
+- copy it to `third_party/RoboTwin`, or
+- create a symlink at `third_party/RoboTwin` pointing to your existing RoboTwin directory
+
+This path requirement comes from the evaluation code, which imports RoboTwin modules
+and task configs from `third_party/RoboTwin` directly.
+
+### Install RoboTwin-specific system dependency
+
+RoboTwin rendering requires Vulkan:
+
+```bash
+sudo apt install -y libvulkan1 mesa-vulkan-drivers vulkan-tools
+```
+
+### Install RoboTwin Python dependencies and assets
 
 ```bash
 cp evaluation/RoboTwin/requirements.txt third_party/RoboTwin/script/requirements.txt
@@ -289,3 +339,21 @@ For example:
 Released RoboTwin checkpoint:
 
 - https://huggingface.co/zaleni/MagicBot-VGA-Robotwin
+
+## 13. Acknowledgments
+
+MagicBot-VGA is developed on top of the excellent InternVLA framework. Our codebase
+started from that foundation and has since been substantially modified and extended
+for our own model architecture, training pipeline, and evaluation workflow.
+
+We sincerely thank the [InternVLA](https://github.com/InternRobotics/InternVLA-A1)
+authors and contributors for open-sourcing their framework and making follow-up
+research and development much easier.
+
+We also thank the following open-source projects:
+
+- [InternVLA](https://github.com/InternRobotics/InternVLA-A1)
+- [LeRobot](https://github.com/huggingface/lerobot)
+- [RoboTwin](https://github.com/RoboTwin-Platform/RoboTwin)
+- [Qwen3-VL](https://github.com/QwenLM/Qwen3-VL)
+- [NVIDIA Cosmos](https://github.com/nvidia-cosmos)
