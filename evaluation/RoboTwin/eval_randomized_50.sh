@@ -19,7 +19,7 @@ set -euo pipefail
 ###############################################################################
 
 export MASTER_ADDR="${MASTER_ADDR:-127.0.0.1}"
-export MASTER_PORT="${MASTER_PORT:-6379}"
+export MASTER_PORT="${MASTER_PORT:-6387}"
 echo "MASTER_ADDR=${MASTER_ADDR}, MASTER_PORT=${MASTER_PORT}"
 
 export NCCL_P2P_DISABLE=1
@@ -46,7 +46,7 @@ echo "PROJ_ROOT  = ${PROJ_ROOT}"
 
 cd "${PROJ_ROOT}"
 SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
-PRETRAINED_CKPT="/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/Foundation-Moodel/outputs/cubev2/cubev2-multidata-delta-pretrain-2026_04_07_07_42_16/checkpoints/300000/pretrained_model"
+PRETRAINED_CKPT="/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/Foundation-Moodel/outputs/cubev2/cubev2-robotwin-3d-delta-multidata_pretrained_300k-finetune-2026_04_11_05_25_17/checkpoints/200000/pretrained_model"
 
 POLICY_TYPE="${POLICY_TYPE:-}"
 QWEN3_VL_PRETRAINED_PATH="${QWEN3_VL_PRETRAINED_PATH:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/model/Qwen3-VL-2B-Instruct}"
@@ -62,7 +62,7 @@ START_TASK_IDX="${START_TASK_IDX:-0}"
 TASK_COUNT="${TASK_COUNT:-50}"
 MAX_TASKS=50
 
-GPU_IDS="${GPU_IDS:-0,1}"
+GPU_IDS="${GPU_IDS:-0,1,2,3,4,5,6,7}"
 MAX_JOBS_PER_GPU="${MAX_JOBS_PER_GPU:-3}"
 POLL_INTERVAL_SECONDS="${POLL_INTERVAL_SECONDS:-35}"
 
@@ -98,7 +98,7 @@ if [[ -z "${PRETRAINED_CKPT}" ]]; then
     exit 1
 fi
 
-CKPT_TAG="cubev2-3d-delta-multidata_pretrained300k-base"
+CKPT_TAG="cubev2-3d-delta-multidata_pretrained300k-finetune-200k"
 DEFAULT_RUN_NAME="${CKPT_TAG}-robotwin-$(date +%Y_%m_%d_%H_%M_%S)"
 RUN_NAME="${DEFAULT_RUN_NAME}"
 # RUN_NAME="cubev2-3d-delta-a1_700k-finetune-160k-robotwin-2026_04_06_07_58_41"
