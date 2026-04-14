@@ -4,13 +4,8 @@ This repository documents how to evaluate our RoboTwin model
 [`zaleni/MagicBot-VGA-Robotwin`](https://huggingface.co/zaleni/MagicBot-VGA-Robotwin)
 with the MagicBot-VGA codebase.
 
-Repository:
-
-- https://github.com/zaleni/MagicBot-VGA
-
-Model:
-
-- https://huggingface.co/zaleni/MagicBot-VGA-Robotwin
+[![Repository](https://img.shields.io/badge/Repository-GitHub-181717?logo=github)](https://github.com/zaleni/MagicBot-VGA)
+[![Model](https://img.shields.io/badge/Model-HuggingFace-FFD21E?logo=huggingface&logoColor=000000)](https://huggingface.co/zaleni/MagicBot-VGA-Robotwin)
 
 This README focuses on RoboTwin 2.0 environment preparation and evaluation.
 
