@@ -15,7 +15,12 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
 from lerobot.transforms.utils import resize_with_pad, resize_center_crop
 from lerobot.utils.constants import OBS_IMAGE, OBS_IMAGES, OBS_STATE, ACTION
-from .constants import FEATURE_MAPPING, MASK_MAPPING, IMAGE_MAPPING
+from .constants import (
+    get_feature_mapping,
+    get_image_mapping,
+    get_mask_mapping,
+    infer_embodiment_variant,
+)
 
 
 DataDict = dict[str, Any]
@@ -375,11 +380,12 @@ def hydrate_normalize_transform(
         # if hasattr(t, "norm_stats") and hasattr(t, "selected_keys"):
         if isinstance(t, NormalizeTransformFn):
             robot_type = dataset.meta.robot_type
-            EMBODIMENT_SPEC = FEATURE_MAPPING[robot_type]
-            selected_keys = EMBODIMENT_SPEC[OBS_STATE] + EMBODIMENT_SPEC[ACTION]
+            embodiment_spec = get_feature_mapping(robot_type, dataset.meta.features)
+            resolved_robot_type = infer_embodiment_variant(robot_type, dataset.meta.features)
+            selected_keys = embodiment_spec[OBS_STATE] + embodiment_spec[ACTION]
             print(
                 f"Hydrating transform {t.__class__.__name__} "
-                f"with dataset.meta.stats (robot_type={robot_type}) "
+                f"with dataset.meta.stats (robot_type={robot_type}, resolved={resolved_robot_type}) "
                 f"and selected_keys (selected_keys={selected_keys})"
             )
             t = replace(t, norm_stats=dataset.meta.stats, selected_keys=selected_keys)
@@ -395,11 +401,12 @@ def hydrate_compose_field_transform(
     for t in transforms:
         # if hasattr(t, "mapping"):
         if isinstance(t, ComposeFieldsTransform):
+            resolved_robot_type = infer_embodiment_variant(dataset.meta.robot_type, dataset.meta.features)
             print(
                 f"Hydrating transform {t.__class__.__name__} "
-                f"with mapping (robot_type={dataset.meta.robot_type})"
+                f"with mapping (robot_type={dataset.meta.robot_type}, resolved={resolved_robot_type})"
             )
-            t = replace(t, mapping=FEATURE_MAPPING[dataset.meta.robot_type])
+            t = replace(t, mapping=get_feature_mapping(dataset.meta.robot_type, dataset.meta.features))
         hydrated.append(t)
     return hydrated
 
@@ -413,11 +420,16 @@ def hydrate_delta_action_transform(
         # if hasattr(t, "action_state_pairs") and hasattr(t, "mask"):
         if isinstance(t, DeltaActionTransformFn):
             robot_type = dataset.meta.robot_type
+            resolved_robot_type = infer_embodiment_variant(robot_type, dataset.meta.features)
             print(
                 f"Hydrating transform {t.__class__.__name__} "
-                f"with mapping and mask (robot_type={robot_type})"
+                f"with mapping and mask (robot_type={robot_type}, resolved={resolved_robot_type})"
             )
-            t = replace(t, mapping=FEATURE_MAPPING[robot_type], mask=MASK_MAPPING[robot_type])
+            t = replace(
+                t,
+                mapping=get_feature_mapping(robot_type, dataset.meta.features),
+                mask=get_mask_mapping(robot_type, dataset.meta.features),
+            )
         hydrated.append(t)
     return hydrated
 
@@ -431,11 +443,12 @@ def hydrate_remap_image_key_transform(
         # if hasattr(t, "action_state_pairs") and hasattr(t, "mask"):
         if isinstance(t, RemapImageKeyTransformFn):
             robot_type = dataset.meta.robot_type
+            resolved_robot_type = infer_embodiment_variant(robot_type, dataset.meta.features)
             print(
                 f"Hydrating transform {t.__class__.__name__} "
-                f"with mapping (robot_type={robot_type})"
+                f"with mapping (robot_type={robot_type}, resolved={resolved_robot_type})"
             )
-            t = replace(t, mapping=IMAGE_MAPPING[robot_type])
+            t = replace(t, mapping=get_image_mapping(robot_type, dataset.meta.features))
         hydrated.append(t)
     return hydrated
 
@@ -444,7 +457,7 @@ def filter_image_features(
     dataset: LeRobotDataset | StreamingLeRobotDataset, 
 ) -> None:
     robot_type = dataset.meta.robot_type
-    mapping=IMAGE_MAPPING[robot_type]
+    mapping = get_image_mapping(robot_type, dataset.meta.features)
     for key in dataset.meta.video_keys:
         if key not in mapping:
             dataset.meta.features.pop(key)

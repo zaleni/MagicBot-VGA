@@ -1,4 +1,5 @@
 from collections import defaultdict
+from collections.abc import Mapping
 
 from lerobot.utils.constants import OBS_STATE, ACTION, OBS_IMAGES, OBS_IMAGE
 from .utils import make_bool_mask
@@ -29,6 +30,9 @@ MASK_MAPPING = {
     "ARX5": make_bool_mask(6, -1),
     "FRANKA": make_bool_mask(7, -2),
 }
+
+LIBERO_FRANKA_MASK = make_bool_mask(7, -1)
+MASK_MAPPING["libero_franka"] = LIBERO_FRANKA_MASK
 
 
 FEATURE_MAPPING = defaultdict(
@@ -236,6 +240,14 @@ FEATURE_MAPPING["egodex_v"] = {
         "action",
     ],
 }
+FEATURE_MAPPING["libero_franka"] = {
+    OBS_STATE: [
+        "observation.state",
+    ],
+    ACTION: [
+        "action",
+    ],
+}
 
 
 IMAGE_MAPPING = defaultdict(
@@ -330,3 +342,46 @@ IMAGE_MAPPING["FRANKA"] = {
 IMAGE_MAPPING["egodex_v"] = {
     "observation.image": f"{OBS_IMAGES}.image0",
 }
+IMAGE_MAPPING["libero_franka"] = {
+    "observation.images.image": f"{OBS_IMAGES}.image0",
+    "observation.images.wrist_image": f"{OBS_IMAGES}.image1",
+}
+
+
+def _feature_key_set(feature_keys):
+    if feature_keys is None:
+        return None
+    if isinstance(feature_keys, Mapping):
+        return set(feature_keys.keys())
+    return set(feature_keys)
+
+
+def infer_embodiment_variant(robot_type, feature_keys=None):
+    resolved_robot_type = robot_type
+    keys = _feature_key_set(feature_keys)
+
+    # LIBERO datasets are tagged as "franka" but use a different flattened
+    # feature schema than the other Franka datasets in this codebase.
+    if robot_type == "franka" and keys is not None:
+        libero_keys = {
+            "observation.state",
+            "action",
+            "observation.images.image",
+            "observation.images.wrist_image",
+        }
+        if libero_keys.issubset(keys):
+            resolved_robot_type = "libero_franka"
+
+    return resolved_robot_type
+
+
+def get_mask_mapping(robot_type, feature_keys=None):
+    return MASK_MAPPING[infer_embodiment_variant(robot_type, feature_keys)]
+
+
+def get_feature_mapping(robot_type, feature_keys=None):
+    return FEATURE_MAPPING[infer_embodiment_variant(robot_type, feature_keys)]
+
+
+def get_image_mapping(robot_type, feature_keys=None):
+    return IMAGE_MAPPING[infer_embodiment_variant(robot_type, feature_keys)]

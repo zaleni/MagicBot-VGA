@@ -39,7 +39,7 @@ from lerobot.datasets.transformed_dataset import (
     MultiLeRobotDataset, 
     MultiStreamingLeRobotDataset, 
 )
-from lerobot.transforms.constants import FEATURE_MAPPING, IMAGE_MAPPING
+from lerobot.transforms.constants import get_feature_mapping, get_image_mapping
 from lerobot.utils.constants import ACTION, OBS_PREFIX, REWARD, OBS_STATE
 from lerobot.utils.constants import HF_LEROBOT_HOME
 
@@ -414,6 +414,8 @@ def resolve_delta_timestamps(
             returns `None` if the resulting dict is empty.
     """
     delta_timestamps = {}
+    feature_mapping = get_feature_mapping(ds_meta.robot_type, ds_meta.features)
+    image_mapping = get_image_mapping(ds_meta.robot_type, ds_meta.features)
     for key in ds_meta.features:
         if key == REWARD and cfg.reward_delta_indices is not None:
             delta_timestamps[key] = [i / ds_meta.fps for i in cfg.reward_delta_indices]
@@ -421,10 +423,10 @@ def resolve_delta_timestamps(
             delta_timestamps[key] = [i / ds_meta.fps for i in cfg.action_delta_indices]
         elif key.startswith(OBS_PREFIX) and cfg.observation_delta_indices is not None:
             delta_timestamps[key] = [i / ds_meta.fps for i in cfg.observation_delta_indices]
-        elif key in FEATURE_MAPPING[ds_meta.robot_type][ACTION] and cfg.action_delta_indices is not None:
+        elif key in feature_mapping[ACTION] and cfg.action_delta_indices is not None:
             delta_timestamps[key] = [i / ds_meta.fps for i in cfg.action_delta_indices]
         
-        if key in IMAGE_MAPPING[ds_meta.robot_type].keys() and hasattr(cfg, "image_delta_indices") and cfg.image_delta_indices is not None:
+        if key in image_mapping.keys() and hasattr(cfg, "image_delta_indices") and cfg.image_delta_indices is not None:
             delta_timestamps[key] = [i / ds_meta.fps for i in cfg.image_delta_indices]
 
     if len(delta_timestamps) == 0:

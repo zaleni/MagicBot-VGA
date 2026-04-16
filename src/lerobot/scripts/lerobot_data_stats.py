@@ -9,7 +9,7 @@ import torch
 import numpy as np
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.transforms.constants import MASK_MAPPING, FEATURE_MAPPING
+from lerobot.transforms.constants import get_feature_mapping, get_mask_mapping
 from lerobot.utils.constants import OBS_STATE, ACTION, HF_LEROBOT_HOME
 from lerobot.datasets.utils import write_json
 
@@ -37,8 +37,15 @@ def parse_args():
     parser.add_argument(
         "--repo_id",
         type=str,
-        required=True,
+        default=None,
         help="LeRobotDataset repo id, or an absolute path to a local dataset directory.",
+    )
+
+    parser.add_argument(
+        "--repo_id_file",
+        type=str,
+        default=None,
+        help="Optional text file with one dataset repo_id/path per line. When set, stats are aggregated across all listed datasets.",
     )
 
     parser.add_argument(
@@ -62,7 +69,39 @@ def parse_args():
         help="Optional exact output path for stats.json. Overrides --output_dir.",
     )
 
-    return parser.parse_args()
+    args = parser.parse_args()
+    if not args.repo_id and not args.repo_id_file:
+        parser.error("One of --repo_id or --repo_id_file must be provided.")
+    return args
+
+
+def resolve_dataset_entry(repo_id: str, root: str | None) -> tuple[LeRobotDataset, str]:
+    repo_path = Path(repo_id)
+    if repo_path.is_absolute():
+        dataset = LeRobotDataset(str(repo_path))
+        dataset_name = repo_path.name
+        return dataset, dataset_name
+
+    dataset = LeRobotDataset(repo_id, root=root)
+    dataset_name = Path(dataset.root).name
+    return dataset, dataset_name
+
+
+def resolve_datasets(cfg) -> tuple[list[LeRobotDataset], str]:
+    if cfg.repo_id_file:
+        path = Path(cfg.repo_id_file)
+        repo_ids = [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        if not repo_ids:
+            raise ValueError(f"repo_id_file is empty: {path}")
+
+        datasets = []
+        for repo_id in repo_ids:
+            dataset, _ = resolve_dataset_entry(repo_id, cfg.root)
+            datasets.append(dataset)
+        return datasets, path.stem
+
+    dataset, dataset_name = resolve_dataset_entry(cfg.repo_id, cfg.root)
+    return [dataset], dataset_name
 
 
 def resolve_dataset(cfg) -> tuple[LeRobotDataset, str]:
@@ -151,19 +190,17 @@ def compute_norm_stats(cfg):
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
 
-    print(f"---------- compute statistics for dataset: {cfg.repo_id} ----------")
-    dataset, dataset_name = resolve_dataset(cfg)
+    dataset_tag = cfg.repo_id_file if cfg.repo_id_file else cfg.repo_id
+    print(f"---------- compute statistics for dataset(s): {dataset_tag} ----------")
+    datasets, dataset_name = resolve_datasets(cfg)
+    dataset = datasets[0]
 
-    from_ids = np.asarray(dataset.meta.episodes['dataset_from_index'])
-    to_ids = np.asarray(dataset.meta.episodes['dataset_to_index'])
-    total_episodes = dataset.num_episodes
-    
     action_mode = cfg.action_mode
     chunk_size = cfg.chunk_size
     robot_type = dataset.meta.robot_type
 
-    mask = MASK_MAPPING[robot_type]
-    mapping = FEATURE_MAPPING[robot_type]
+    mask = get_mask_mapping(robot_type, dataset.meta.features)
+    mapping = get_feature_mapping(robot_type, dataset.meta.features)
 
     keys = list(dataset.meta.features.keys())
     [keys.remove(video_key) for video_key in dataset.meta.video_keys]
@@ -172,36 +209,51 @@ def compute_norm_stats(cfg):
 
     total_frame = 0
 
-    for from_idx, to_idx in tqdm.tqdm(zip(from_ids, to_ids), total=total_episodes, desc="Computing stats"):
-        ep_len = to_idx - from_idx
-        total_frame += ep_len
-        if ep_len < chunk_size:
-            continue
-        curr_episode = dataset.hf_dataset.select(np.arange(from_idx, to_idx))
-        for key in keys:
-            if action_mode == 'abs' or key not in mapping[ACTION]:
-                val = torch.stack(curr_episode[key][:])
-                stats[key].update(val)
-        if action_mode == 'delta':
-            action = [torch.stack(curr_episode[key][:]) for key in mapping[ACTION]]
-            action = [a if a.ndim > 1 else a[:, None] for a in action]
-            action = torch.cat(action, dim=-1)
-            state = [torch.stack(curr_episode[key][:]) for key in mapping[OBS_STATE]]
-            state = [s if s.ndim > 1 else s[:, None] for s in state]
-            state = torch.cat(state, dim=-1)
-            truncated_state = state[0:(ep_len - chunk_size + 1)]
-            action_chunk = action.unfold(dimension=0, size=chunk_size, step=1).permute(0, 2, 1)
-            delta_action = action_chunk - torch.where(mask, truncated_state, 0)[:, None]
-            sid, eid = 0, 0
-            for action_key in mapping[ACTION]:
-                eid += dataset.meta.features[action_key]['shape'][0]
-                stats[action_key].update(delta_action[..., sid:eid])
-                sid = eid
+    for dataset_idx, dataset in enumerate(datasets):
+        if dataset.meta.robot_type != robot_type:
+            raise ValueError(
+                f"All datasets must share the same robot_type for aggregated stats. "
+                f"Expected {robot_type}, got {dataset.meta.robot_type} for dataset #{dataset_idx}: {dataset.root}"
+            )
+
+        from_ids = np.asarray(dataset.meta.episodes['dataset_from_index'])
+        to_ids = np.asarray(dataset.meta.episodes['dataset_to_index'])
+        total_episodes = dataset.num_episodes
+
+        for from_idx, to_idx in tqdm.tqdm(
+            zip(from_ids, to_ids),
+            total=total_episodes,
+            desc=f"Computing stats [{dataset_idx + 1}/{len(datasets)}]",
+        ):
+            ep_len = to_idx - from_idx
+            total_frame += ep_len
+            if ep_len < chunk_size:
+                continue
+            curr_episode = dataset.hf_dataset.select(np.arange(from_idx, to_idx))
+            for key in keys:
+                if action_mode == 'abs' or key not in mapping[ACTION]:
+                    val = torch.stack(curr_episode[key][:])
+                    stats[key].update(val)
+            if action_mode == 'delta':
+                action = [torch.stack(curr_episode[key][:]) for key in mapping[ACTION]]
+                action = [a if a.ndim > 1 else a[:, None] for a in action]
+                action = torch.cat(action, dim=-1)
+                state = [torch.stack(curr_episode[key][:]) for key in mapping[OBS_STATE]]
+                state = [s if s.ndim > 1 else s[:, None] for s in state]
+                state = torch.cat(state, dim=-1)
+                truncated_state = state[0:(ep_len - chunk_size + 1)]
+                action_chunk = action.unfold(dimension=0, size=chunk_size, step=1).permute(0, 2, 1)
+                delta_action = action_chunk - torch.where(mask, truncated_state, 0)[:, None]
+                sid, eid = 0, 0
+                for action_key in mapping[ACTION]:
+                    eid += dataset.meta.features[action_key]['shape'][0]
+                    stats[action_key].update(delta_action[..., sid:eid])
+                    sid = eid
         
     output_dict = {key: stats[key].get_statistics() for key in keys}
-    for key in dataset.meta.video_keys + dataset.meta.image_keys:
+    for key in datasets[0].meta.video_keys + datasets[0].meta.image_keys:
         dataset.meta.stats[key]
-        visual_stats = dataset.meta.stats[key]
+        visual_stats = datasets[0].meta.stats[key]
         for stat_key in visual_stats:
             if isinstance(visual_stats[stat_key], np.ndarray):
                 visual_stats[stat_key] = visual_stats[stat_key].tolist()
