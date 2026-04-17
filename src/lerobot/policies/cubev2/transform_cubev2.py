@@ -30,15 +30,27 @@ class Qwen3_VLProcessorTransformFn(DataTransformFn):
     vision_end_token_id: int = 151653
     image_token_id: int = 151655
 
-    process: Any = field(default=None, init=False, repr=False)
+    processor: Any = field(default=None, init=False, repr=False)
+    _processor_source: str | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self):
+        # Delay loading so config parsing can override pretrained_model_name_or_path
+        # before we touch the filesystem / Hugging Face cache.
+        self.processor = None
+        self._processor_source = None
+
+    def _ensure_processor(self) -> None:
+        if self.processor is not None and self._processor_source == self.pretrained_model_name_or_path:
+            return
+
         self.processor = Qwen3VLProcessor.from_pretrained(self.pretrained_model_name_or_path)
+        self._processor_source = self.pretrained_model_name_or_path
         self.vision_start_token_id = self.processor.vision_start_token_id
         self.vision_end_token_id = self.processor.vision_end_token_id
         self.image_token_id = self.processor.image_token_id
 
     def __call__(self, data: DataDict) -> DataDict: 
+        self._ensure_processor()
         input_ids = []
         attention_mask = []
         pixel_values = []
