@@ -44,8 +44,8 @@ DA3_ALIGNMENT_MODE="${DA3_ALIGNMENT_MODE:-query_decoder}"
 DA3_CODE_ROOT="${DA3_CODE_ROOT:-}"
 
 DATASET_DIR="${DATASET_DIR:-/inspire/qb-ilm/project/embodied-basic-model/zhangjianing-253108140206/zhenji/new_data_0416/scene1_joint_96_60hz_v30}"
-DATASET_ROOT="${DATASET_ROOT:-${DATASET_DIR}}"
-DATASET_REPO_ID="${DATASET_REPO_ID:-$(basename "${DATASET_DIR}")}"
+DATASET_NAME="${DATASET_NAME:-$(basename "${DATASET_DIR}")}"
+DATASET_REPO_ID="${DATASET_REPO_ID:-${DATASET_DIR}}"
 
 ACTION_TYPE="${ACTION_TYPE:-delta}"
 CHUNK_SIZE="${CHUNK_SIZE:-50}"
@@ -56,7 +56,7 @@ LAMBDA_3D="${LAMBDA_3D:-0.01}"
 
 USE_EXTERNAL_STATS="${USE_EXTERNAL_STATS:-true}"
 NORM_STATS_ROOT="${NORM_STATS_ROOT:-/inspire/qb-ilm/project/embodied-basic-model/zhangjianing-253108140206/zhenji/norm_stats}"
-DATASET_EXTERNAL_STATS_PATH="${DATASET_EXTERNAL_STATS_PATH:-${NORM_STATS_ROOT}/${ACTION_TYPE}/${DATASET_REPO_ID}/stats.json}"
+DATASET_EXTERNAL_STATS_PATH="${DATASET_EXTERNAL_STATS_PATH:-${NORM_STATS_ROOT}/${ACTION_TYPE}/${DATASET_NAME}/stats.json}"
 
 BATCH_SIZE="${BATCH_SIZE:-16}"
 STEPS="${STEPS:-60000}"
@@ -76,11 +76,6 @@ fi
 
 if [[ ! -f "${DATASET_DIR}/meta/info.json" ]]; then
   echo "meta/info.json not found under DATASET_DIR: ${DATASET_DIR}"
-  exit 1
-fi
-
-if [[ ! -d "${DATASET_ROOT}" ]]; then
-  echo "DATASET_ROOT does not exist: ${DATASET_ROOT}"
   exit 1
 fi
 
@@ -109,12 +104,12 @@ fi
 python -c 'from lerobot.transforms.constants import MASK_MAPPING, FEATURE_MAPPING, IMAGE_MAPPING; import sys; rt=sys.argv[1]; missing=[name for name,m in [("MASK_MAPPING", MASK_MAPPING), ("FEATURE_MAPPING", FEATURE_MAPPING), ("IMAGE_MAPPING", IMAGE_MAPPING)] if rt not in m]; raise SystemExit(0 if not missing else "robot_type=" + rt + " missing in " + ", ".join(missing))' \
   "${robot_type}"
 
-BASE_OUTPUT_DIR="outputs/${POLICY}"
+BASE_OUTPUT_DIR="outputs_real/${POLICY}"
 JOB_NAME="${POLICY}-real_lift2-${ACTION_TYPE}-chunk${CHUNK_SIZE}-finetune-$(date +'%Y_%m_%d_%H_%M_%S')"
 OUTPUT_DIR="${BASE_OUTPUT_DIR}/${JOB_NAME}"
 
 echo "DATASET_DIR=${DATASET_DIR}"
-echo "DATASET_ROOT=${DATASET_ROOT}"
+echo "DATASET_NAME=${DATASET_NAME}"
 echo "DATASET_REPO_ID=${DATASET_REPO_ID}"
 echo "robot_type=${robot_type}"
 echo "ACTION_TYPE=${ACTION_TYPE}"
@@ -165,12 +160,10 @@ ARGS=(
     --policy.log_da3_teacher_timing=true
 
     --dataset.type="${POLICY}"
-    --dataset.root="${DATASET_ROOT}"
     --dataset.repo_id="${DATASET_REPO_ID}"
     --dataset.qwen3_vl_processor_path="${QWEN3_VL_PROCESSOR_PATH}"
     --dataset.action_mode="${ACTION_TYPE}"
     --dataset.use_external_stats="${USE_EXTERNAL_STATS}"
-    --dataset.video_backend=pyav
 
     --seed=42
     --batch_size="${BATCH_SIZE}"
