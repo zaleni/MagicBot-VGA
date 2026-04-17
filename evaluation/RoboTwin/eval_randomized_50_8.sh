@@ -46,7 +46,7 @@ echo "PROJ_ROOT  = ${PROJ_ROOT}"
 
 cd "${PROJ_ROOT}"
 SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
-PRETRAINED_CKPT="/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/Foundation-Moodel/outputs/cubev2/cubev2-robotwin-3d-delta-multidata_pretrained_300k-finetune-2026_04_11_05_25_17/checkpoints/200000/pretrained_model"
+PRETRAINED_CKPT="/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/Foundation-Moodel/outputs/cubev2/cubev2-robotwin-3d-delta-multidata_pretrained_300k-finetune96-2026_04_14_14_11_50/checkpoints/200000/pretrained_model"
 
 POLICY_TYPE="${POLICY_TYPE:-}"
 QWEN3_VL_PRETRAINED_PATH="${QWEN3_VL_PRETRAINED_PATH:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/model/Qwen3-VL-2B-Instruct}"
@@ -73,7 +73,7 @@ SEED="${SEED:-42}"
 STATS_KEY="${STATS_KEY:-aloha}"
 DTYPE="${DTYPE:-bfloat16}"
 IMAGE_HISTORY_INTERVAL="${IMAGE_HISTORY_INTERVAL:-15}"
-INFER_HORIZON="${INFER_HORIZON:-24}"
+INFER_HORIZON="${INFER_HORIZON:-30}"
 ACTION_HORIZON_SIZE="${ACTION_HORIZON_SIZE:-50}"
 INSTRUCTION_TYPE="${INSTRUCTION_TYPE:-unseen}"
 LOG_LEVEL="${LOG_LEVEL:-WARNING}"
@@ -99,7 +99,7 @@ if [[ -z "${PRETRAINED_CKPT}" ]]; then
     exit 1
 fi
 
-CKPT_TAG="cubev2-3d-delta-multidata_pretrained300k-finetune-200k-s42h24"
+CKPT_TAG="cubev2-3d-delta-multidata_pretrained300k-finetune96-200k-s42h30"
 DEFAULT_RUN_NAME="${CKPT_TAG}-robotwin-$(date +%Y_%m_%d_%H_%M_%S)"
 RUN_NAME="${DEFAULT_RUN_NAME}"
 # RUN_NAME="cubev2-3d-delta-a1_700k-finetune-160k-robotwin-2026_04_06_07_58_41"
