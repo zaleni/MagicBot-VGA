@@ -47,7 +47,10 @@ LIBERO_ROOT="${LIBERO_ROOT:-${PROJ_ROOT}/playground/Datasets/LEROBOT_LIBERO_DATA
 USE_DIST_LOADING="${USE_DIST_LOADING:-false}"
 VALIDATE_DATASETS="${VALIDATE_DATASETS:-true}"
 
-ACTION_TYPE="${ACTION_TYPE:-delta}"
+# LIBERO actions are consumed downstream as end-effector deltas in the StarVLA
+# evaluation pipeline, so keep the stored action as-is unless the caller
+# explicitly overrides this to a different mode.
+ACTION_TYPE="${ACTION_TYPE:-abs}"
 CHUNK_SIZE="${CHUNK_SIZE:-10}"
 N_ACTION_STEPS="${N_ACTION_STEPS:-${CHUNK_SIZE}}"
 
