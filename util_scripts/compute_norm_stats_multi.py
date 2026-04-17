@@ -41,6 +41,12 @@ def parse_args():
         help="One or more LeRobotDataset repo ids (must share the same robot_type and feature schema).",
     )
     p.add_argument(
+        "--root",
+        type=str,
+        default=None,
+        help="Optional LeRobot dataset root. Useful when repo_ids are relative dataset names.",
+    )
+    p.add_argument(
         "--num_workers",
         type=int,
         default=8,
@@ -166,12 +172,12 @@ class RunningStats:
         }
 
 
-def _compute_one_repo(repo_id: str, action_mode: str, chunk_size: int) -> dict:
+def _compute_one_repo(repo_id: str, action_mode: str, chunk_size: int, root: str | None) -> dict:
     """Worker: compute stats for one repo, return serializable payload."""
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
 
-    dataset = LeRobotDataset(repo_id)
+    dataset = LeRobotDataset(repo_id, root=root)
     robot_type = dataset.meta.robot_type
 
     mask = MASK_MAPPING[robot_type]
@@ -278,7 +284,7 @@ def compute_norm_stats_multi(cfg):
             tqdm.tqdm(
                 pool.starmap(
                     _compute_one_repo,
-                    [(rid, action_mode, chunk_size) for rid in repo_ids],
+                    [(rid, action_mode, chunk_size, cfg.root) for rid in repo_ids],
                 ),
                 total=len(repo_ids),
                 desc="Computing per-repo stats",

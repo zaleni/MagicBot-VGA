@@ -197,6 +197,30 @@ def summarize_numeric_array(array: np.ndarray, preview_dim: int) -> dict[str, An
     return summary
 
 
+def summarize_action_state_alignment(state_array: np.ndarray, action_array: np.ndarray) -> dict[str, Any]:
+    if state_array.ndim != 2 or action_array.ndim != 2 or state_array.shape[1] != action_array.shape[1]:
+        return {
+            "available": False,
+            "reason": "state/action are not aligned 2D arrays with the same feature dimension",
+        }
+
+    same_step = np.abs(action_array - state_array)
+    summary: dict[str, Any] = {
+        "available": True,
+        "same_step_mean_abs": float(same_step.mean()),
+        "same_step_max_abs": float(same_step.max()),
+    }
+
+    if state_array.shape[0] > 1 and action_array.shape[0] > 1:
+        next_state = state_array[1:]
+        curr_action = action_array[:-1]
+        next_step = np.abs(curr_action - next_state)
+        summary["next_state_mean_abs"] = float(next_step.mean())
+        summary["next_state_max_abs"] = float(next_step.max())
+
+    return summary
+
+
 def summarize_image_array(
     image_array: np.ndarray,
     *,
@@ -310,6 +334,10 @@ def print_report(report: dict[str, Any]) -> None:
     for key, value in report["action_summary"].items():
         print(f"  - {key}: {value}")
 
+    print("\nAction-State Alignment:")
+    for key, value in report["action_state_alignment"].items():
+        print(f"  - {key}: {value}")
+
     print("\nCamera Summary:")
     for camera_name, camera_summary in report["image_summaries"].items():
         print(f"  - {camera_name}:")
@@ -398,6 +426,10 @@ def inspect_file(file_path: Path, args: argparse.Namespace, input_root: Path) ->
             },
             "state_summary": summarize_numeric_array(np.asarray(state_array), args.vector_preview_dim),
             "action_summary": summarize_numeric_array(np.asarray(action_array), args.vector_preview_dim),
+            "action_state_alignment": summarize_action_state_alignment(
+                np.asarray(state_array),
+                np.asarray(action_array),
+            ),
             "image_summaries": {
                 camera_name: summarize_image_array(
                     np.asarray(image_array),
@@ -418,6 +450,7 @@ def inspect_file(file_path: Path, args: argparse.Namespace, input_root: Path) ->
         "python util_scripts/convert_real_hdf5_to_lerobot.py",
         f'--input-root "{input_root}"',
         f'--output-dir "{input_root / "lerobot_v30"}"',
+        '--robot-type "real_lift2"',
         f'--task "{instruction}"',
         f'--image-layout "{args.image_layout}"',
         f"--fps 15",

@@ -19,6 +19,7 @@ python util_scripts/convert_real_hdf5_to_lerobot.py ^
   --input-root /path/to/datasets ^
   --output-dir /path/to/output/my_real_robot_lerobot ^
   --task "pick up the object" ^
+  --frame-stride 2 ^
   --fps 15
 """
 
@@ -95,15 +96,22 @@ def parse_args() -> argparse.Namespace:
         "--fps",
         type=int,
         default=15,
-        help="Recording FPS written into LeRobot metadata.",
+        help="Effective FPS written into LeRobot metadata after any frame subsampling.",
+    )
+    parser.add_argument(
+        "--frame-stride",
+        type=int,
+        default=1,
+        help="Keep one frame every N frames. Example: source 60Hz -> target 30Hz uses --frame-stride 2 --fps 30.",
     )
     parser.add_argument(
         "--robot-type",
         type=str,
-        default="ALOHA",
+        default="real_lift2",
         help=(
             "robot_type written into meta/info.json. "
-            "For 14D bimanual state/action plus head/left/right images, ALOHA is a practical default."
+            "For the current 14D real dual-arm setup (left arm + left gripper + right arm + right gripper), "
+            "real_lift2 is the recommended default."
         ),
     )
     parser.add_argument(
@@ -299,7 +307,8 @@ def convert_episode(
             task_attr=args.task_attr,
         )
 
-        for frame_idx in range(episode_len):
+        kept_frames = 0
+        for frame_idx in range(0, episode_len, args.frame_stride):
             frame = {
                 "observation.state": state_array[frame_idx],
                 "action": action_array[frame_idx],
@@ -309,9 +318,10 @@ def convert_episode(
                 decoded = decode_image_frame(image_arrays[camera_name][frame_idx], raw_image_shape)
                 frame[output_key] = decoded
             dataset.add_frame(frame)
+            kept_frames += 1
 
     dataset.save_episode()
-    return episode_len
+    return kept_frames
 
 
 def main() -> None:
@@ -353,6 +363,7 @@ def main() -> None:
 
     logging.info("Creating LeRobot dataset at %s", args.output_dir)
     logging.info("repo_id=%s robot_type=%s fps=%s", repo_id, args.robot_type, args.fps)
+    logging.info("frame_stride=%s", args.frame_stride)
     logging.info(
         "state_dim=%s action_dim=%s image_shapes=%s",
         spec.state_dim,
