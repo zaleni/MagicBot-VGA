@@ -184,11 +184,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--batch-encoding-size",
         type=int,
-        default=1,
+        default=8,
         help=(
             "Number of episodes to accumulate before LeRobot batch video encoding. "
-            "For multi-camera real-robot conversion, 1 is usually the safest default and "
-            "lets LeRobot parallelize encoding across cameras per episode."
+            "Larger values usually improve conversion throughput by amortizing ffmpeg startup costs."
         ),
     )
     parser.add_argument(
