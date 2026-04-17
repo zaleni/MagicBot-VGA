@@ -17,7 +17,7 @@ export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 
-export WANDB_MODE=offline
+export WANDB_MODE=online
 export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 export TOKENIZERS_PARALLELISM=false
@@ -63,9 +63,9 @@ DATASET_EXTERNAL_STATS_PATH="/home/jiangjiahao/research/MagicBot-VGA/outputs/nor
 DATASET_EXTERNAL_STATS_ROOT="${DATASET_EXTERNAL_STATS_ROOT:-}"
 
 BATCH_SIZE="${BATCH_SIZE:-8}"
-STEPS="${STEPS:-60000}"
-SAVE_FREQ="${SAVE_FREQ:-20000}"
-LOG_FREQ="${LOG_FREQ:-50}"
+STEPS="${STEPS:-80000}"
+SAVE_FREQ="${SAVE_FREQ:-10000}"
+LOG_FREQ="${LOG_FREQ:-25}"
 
 discover_dataset_dirs() {
   local root="$1"
@@ -143,7 +143,7 @@ fi
 echo "Discovered ${#DATASET_REPO_IDS[@]} LIBERO datasets under ${LIBERO_ROOT}"
 printf '  %s\n' "${DATASET_REPO_IDS[@]}"
 
-BASE_OUTPUT_DIR="outputs/${POLICY}"
+BASE_OUTPUT_DIR="/home/jiangjiahao/data/ckpt/${POLICY}"
 JOB_NAME="${POLICY}-libero4-${ACTION_TYPE}-chunk${CHUNK_SIZE}-finetune-$(date +'%Y_%m_%d_%H_%M_%S')"
 OUTPUT_DIR="${BASE_OUTPUT_DIR}/${JOB_NAME}"
 REPO_ID_FILE_DIR="${BASE_OUTPUT_DIR}/_repo_id_files"
@@ -207,7 +207,7 @@ ARGS=(
 
     --wandb.enable=true
     --wandb.project=CUBEv2
-    --wandb.mode=offline
+    --wandb.mode=online
 )
 
 if [[ -n "${DA3_CODE_ROOT}" ]]; then
