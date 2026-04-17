@@ -46,6 +46,7 @@ DA3_CODE_ROOT="${DA3_CODE_ROOT:-}"
 LIBERO_ROOT="/home/jiangjiahao/data/LIBERO/libero_v30"
 USE_DIST_LOADING="${USE_DIST_LOADING:-false}"
 VALIDATE_DATASETS="${VALIDATE_DATASETS:-true}"
+VIDEO_BACKEND="${VIDEO_BACKEND:-}"
 
 # LIBERO actions are consumed downstream as end-effector deltas in the StarVLA
 # evaluation pipeline, so keep the stored action as-is unless the caller
@@ -197,7 +198,6 @@ ARGS=(
     --dataset.qwen3_vl_processor_path="${QWEN3_VL_PROCESSOR_PATH}"
     --dataset.action_mode="${ACTION_TYPE}"
     --dataset.use_external_stats=${USE_EXTERNAL_STATS}
-    --dataset.video_backend=pyav
 
     --seed=42
     --batch_size="${BATCH_SIZE}"
@@ -220,6 +220,10 @@ fi
 
 if [[ -n "${DATASET_EXTERNAL_STATS_ROOT}" ]]; then
     ARGS+=(--dataset.external_stats_root="${DATASET_EXTERNAL_STATS_ROOT}")
+fi
+
+if [[ -n "${VIDEO_BACKEND}" ]]; then
+    ARGS+=(--dataset.video_backend="${VIDEO_BACKEND}")
 fi
 
 if [[ "${USE_DIST_LOADING}" == "true" ]]; then

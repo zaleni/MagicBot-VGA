@@ -1004,7 +1004,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
             shifted_query_ts = [from_timestamp + ts for ts in query_ts]
 
             video_path = self.root / self.meta.get_video_file_path(ep_idx, vid_key)
-            frames = decode_video_frames(video_path, shifted_query_ts, self.tolerance_s, self.video_backend)
+            try:
+                frames = decode_video_frames(video_path, shifted_query_ts, self.tolerance_s, self.video_backend)
+            except Exception as exc:
+                raise RuntimeError(
+                    "Failed to decode video frames for "
+                    f"episode={ep_idx}, key={vid_key}, backend={self.video_backend}, "
+                    f"video_path={video_path}, query_timestamps={shifted_query_ts}"
+                ) from exc
             item[vid_key] = frames.squeeze(0)
 
         return item

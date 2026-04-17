@@ -68,7 +68,20 @@ def decode_video_frames(
     if backend == "torchcodec":
         return decode_video_frames_torchcodec(video_path, timestamps, tolerance_s)
     elif backend in ["pyav", "video_reader"]:
-        return decode_video_frames_torchvision(video_path, timestamps, tolerance_s, backend)
+        try:
+            return decode_video_frames_torchvision(video_path, timestamps, tolerance_s, backend)
+        except av.error.InvalidDataError:
+            # Some videos fail under the torchvision+PyAV path even though an
+            # alternate decoder can still read them. Retry once with
+            # torchcodec when it is available before surfacing the error.
+            if importlib.util.find_spec("torchcodec") and backend != "torchcodec":
+                logging.warning(
+                    "Video decode failed with backend=%s for %s; retrying with torchcodec.",
+                    backend,
+                    video_path,
+                )
+                return decode_video_frames_torchcodec(video_path, timestamps, tolerance_s)
+            raise
     else:
         raise ValueError(f"Unsupported video backend: {backend}")
 
