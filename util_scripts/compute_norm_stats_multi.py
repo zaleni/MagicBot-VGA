@@ -62,6 +62,18 @@ def parse_args():
     return p.parse_args()
 
 
+def resolve_dataset_entry(repo_id: str, root: str | None) -> tuple[LeRobotDataset, str]:
+    repo_path = Path(repo_id)
+    if repo_path.is_absolute():
+        dataset = LeRobotDataset(str(repo_path))
+        dataset_name = repo_path.name
+        return dataset, dataset_name
+
+    dataset = LeRobotDataset(repo_id, root=root)
+    dataset_name = Path(dataset.root).name
+    return dataset, dataset_name
+
+
 class RunningStats:
     """Running stats for vectors: keeps count, mean, mean_sq, min, max."""
 
@@ -177,7 +189,7 @@ def _compute_one_repo(repo_id: str, action_mode: str, chunk_size: int, root: str
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
 
-    dataset = LeRobotDataset(repo_id, root=root)
+    dataset, dataset_name = resolve_dataset_entry(repo_id, root)
     robot_type = dataset.meta.robot_type
 
     mask = MASK_MAPPING[robot_type]
@@ -238,6 +250,7 @@ def _compute_one_repo(repo_id: str, action_mode: str, chunk_size: int, root: str
 
     return {
         "repo_id": repo_id,
+        "dataset_name": dataset_name,
         "robot_type": robot_type,
         "keys": keys,
         "shapes": shapes,
@@ -322,7 +335,7 @@ def compute_norm_stats_multi(cfg):
     output_dict = {k: global_stats[k].get_statistics() for k in keys0}
 
     # Visual stats: take from the first repo for simplicity
-    first_ds = LeRobotDataset(repo_ids[0])
+    first_ds, _ = resolve_dataset_entry(repo_ids[0], cfg.root)
     for k in first_ds.meta.video_keys + first_ds.meta.image_keys:
         output_dict[k] = _normalize_visual_stats(first_ds.meta.stats[k])
 

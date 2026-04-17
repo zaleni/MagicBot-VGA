@@ -184,8 +184,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--batch-encoding-size",
         type=int,
-        default=32,
-        help="Number of episodes to accumulate before LeRobot batch video encoding.",
+        default=1,
+        help=(
+            "Number of episodes to accumulate before LeRobot batch video encoding. "
+            "For multi-camera real-robot conversion, 1 is usually the safest default and "
+            "lets LeRobot parallelize encoding across cameras per episode."
+        ),
     )
     parser.add_argument(
         "--raw-image-shape",
@@ -203,6 +207,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=10,
         help="Emit a progress log after every N converted episodes.",
+    )
+    parser.add_argument(
+        "--validate-output",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Load the converted dataset back through LeRobotDataset and validate a sample after conversion.",
     )
     return parser.parse_args()
 
@@ -324,6 +334,43 @@ def convert_episode(
     return kept_frames
 
 
+def validate_output_dataset(
+    output_dir: Path,
+    repo_id: str,
+    fps: int,
+    robot_type: str,
+    use_videos: bool,
+) -> None:
+    dataset = LeRobotDataset(repo_id, root=output_dir, episodes=[0])
+
+    if dataset.meta.robot_type != robot_type:
+        raise RuntimeError(
+            f"Validation failed: robot_type mismatch. Expected {robot_type}, got {dataset.meta.robot_type}."
+        )
+    if dataset.fps != fps:
+        raise RuntimeError(f"Validation failed: fps mismatch. Expected {fps}, got {dataset.fps}.")
+    if dataset.meta.total_episodes <= 0 or dataset.meta.total_frames <= 0:
+        raise RuntimeError("Validation failed: converted dataset is empty.")
+    if use_videos and len(dataset.meta.video_keys) == 0:
+        raise RuntimeError("Validation failed: expected video-backed cameras, but no video keys were found.")
+    if not use_videos and len(dataset.meta.image_keys) == 0:
+        raise RuntimeError("Validation failed: expected image-backed cameras, but no image keys were found.")
+
+    sample = dataset[0]
+    required_keys = {"observation.state", "action", "task", "robot_type", *dataset.meta.camera_keys}
+    missing = sorted(key for key in required_keys if key not in sample)
+    if missing:
+        raise RuntimeError(f"Validation failed: sample 0 is missing keys: {missing}")
+
+    logging.info(
+        "Validated LeRobot dataset: episodes=%s frames=%s cameras=%s storage=%s",
+        dataset.meta.total_episodes,
+        dataset.meta.total_frames,
+        dataset.meta.camera_keys,
+        "video" if use_videos else "image",
+    )
+
+
 def main() -> None:
     args = parse_args()
 
@@ -384,32 +431,48 @@ def main() -> None:
     )
 
     total_frames = 0
-    for episode_idx, episode_path in enumerate(
-        iter_progress(episode_paths, desc="Converting episodes", unit="episode"),
-        start=1,
-    ):
-        episode_frames = convert_episode(dataset, episode_path, args)
-        total_frames += episode_frames
-        if episode_idx % args.log_every == 0 or episode_idx == len(episode_paths):
-            logging.info(
-                "Converted %s/%s episodes (%s total frames). Latest: %s",
-                episode_idx,
-                len(episode_paths),
-                total_frames,
-                episode_path,
-            )
+    try:
+        for episode_idx, episode_path in enumerate(
+            iter_progress(episode_paths, desc="Converting episodes", unit="episode"),
+            start=1,
+        ):
+            episode_frames = convert_episode(dataset, episode_path, args)
+            total_frames += episode_frames
+            if episode_idx % args.log_every == 0 or episode_idx == len(episode_paths):
+                logging.info(
+                    "Converted %s/%s episodes (%s total frames). Latest: %s",
+                    episode_idx,
+                    len(episode_paths),
+                    total_frames,
+                    episode_path,
+                )
 
-    if args.use_videos and dataset.batch_encoding_size > 1 and dataset.episodes_since_last_encoding > 0:
-        start_ep = dataset.num_episodes - dataset.episodes_since_last_encoding
-        logging.info(
-            "Flushing final partial video batch for episodes %s to %s",
-            start_ep,
-            dataset.num_episodes - 1,
-        )
-        dataset._batch_save_episode_video(start_ep, dataset.num_episodes)
-        dataset.episodes_since_last_encoding = 0
+        if args.use_videos and dataset.batch_encoding_size > 1 and dataset.episodes_since_last_encoding > 0:
+            start_ep = dataset.num_episodes - dataset.episodes_since_last_encoding
+            logging.info(
+                "Flushing final partial video batch for episodes %s to %s",
+                start_ep,
+                dataset.num_episodes - 1,
+            )
+            dataset._batch_save_episode_video(start_ep, dataset.num_episodes)
+            dataset.episodes_since_last_encoding = 0
+    except Exception:
+        try:
+            dataset.finalize()
+        except Exception as finalize_exc:  # pragma: no cover - best effort cleanup
+            logging.warning("Failed to finalize partially converted dataset after error: %s", finalize_exc)
+        raise
 
     dataset.finalize()
+
+    if args.validate_output:
+        validate_output_dataset(
+            output_dir=args.output_dir,
+            repo_id=repo_id,
+            fps=args.fps,
+            robot_type=args.robot_type,
+            use_videos=args.use_videos,
+        )
 
     logging.info(
         "Finished conversion: %s episodes, %s frames written to %s",

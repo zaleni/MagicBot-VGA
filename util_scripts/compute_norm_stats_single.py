@@ -38,7 +38,7 @@ def parse_args():
         "--repo_id",
         type=str,
         required=True,
-        help="LeRobotDataset repo id.",
+        help="LeRobotDataset repo id, or an absolute path to a local dataset directory.",
     )
 
     parser.add_argument(
@@ -56,6 +56,18 @@ def parse_args():
     )
 
     return parser.parse_args()
+
+
+def resolve_dataset(cfg) -> tuple[LeRobotDataset, str]:
+    repo_path = Path(cfg.repo_id)
+    if repo_path.is_absolute():
+        dataset = LeRobotDataset(str(repo_path))
+        dataset_name = repo_path.name
+        return dataset, dataset_name
+
+    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
+    dataset_name = Path(dataset.root).name
+    return dataset, dataset_name
 
 
 class RunningStats:
@@ -125,7 +137,7 @@ def compute_norm_stats(cfg):
     torch.backends.cuda.matmul.allow_tf32 = True
 
     print(f"---------- compute statistics for dataset: {cfg.repo_id} ----------")
-    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
+    dataset, dataset_name = resolve_dataset(cfg)
 
     from_ids = np.asarray(dataset.meta.episodes['dataset_from_index'])
     to_ids = np.asarray(dataset.meta.episodes['dataset_to_index'])
@@ -182,9 +194,9 @@ def compute_norm_stats(cfg):
                 visual_stats[stat_key] = visual_stats[stat_key].cpu().numpy().tolist()
         output_dict[key] = visual_stats
     if cfg.output_dir:
-        output_dir = Path(cfg.output_dir)/action_mode/cfg.repo_id
+        output_dir = Path(cfg.output_dir) / action_mode / dataset_name
     else:
-        output_dir = HF_LEROBOT_HOME/'stats'/action_mode/cfg.repo_id
+        output_dir = HF_LEROBOT_HOME / "stats" / action_mode / dataset_name
     if not output_dir.exists():
         output_dir.mkdir(parents=True)
     write_json(output_dict, output_dir/"stats.json")
