@@ -34,7 +34,7 @@ export PYTHONPATH="${PROJ_ROOT}/src:${PYTHONPATH:-}"
 cd "${PROJ_ROOT}"
 
 POLICY="cubev2"
-POLICY_INIT_PATH="${POLICY_INIT_PATH:-${PRETRAINED_PATH:-}}"
+POLICY_INIT_PATH="${POLICY_INIT_PATH:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/Foundation-Moodel/outputs/cubev2/cubev2-multidata-delta-pretrain-2026_04_07_07_42_16/checkpoints/300000/pretrained_model}"
 QWEN3_VL_PRETRAINED_PATH="${QWEN3_VL_PRETRAINED_PATH:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/model/Qwen3-VL-2B-Instruct}"
 QWEN3_VL_PROCESSOR_PATH="${QWEN3_VL_PROCESSOR_PATH:-${QWEN3_VL_PRETRAINED_PATH}}"
 COSMOS_TOKENIZER_PATH_OR_NAME="${COSMOS_TOKENIZER_PATH_OR_NAME:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/model/Cosmos-Tokenizer-CI8x8}"
@@ -43,7 +43,7 @@ DA3_VARIANT="${DA3_VARIANT:-auto}"
 DA3_ALIGNMENT_MODE="${DA3_ALIGNMENT_MODE:-query_decoder}"
 DA3_CODE_ROOT="${DA3_CODE_ROOT:-}"
 
-DATASET_DIR="${DATASET_DIR:-/inspire/qb-ilm/project/embodied-basic-model/zhangjianing-253108140206/zhenji/new_data_0416/scene1_joint_0414_0415_60hz_v30}"
+DATASET_DIR="${DATASET_DIR:-/inspire/qb-ilm/project/embodied-basic-model/zhangjianing-253108140206/zhenji/new_data_0416/scene1_joint_96_60hz_v30}"
 DATASET_ROOT="${DATASET_ROOT:-${DATASET_DIR}}"
 DATASET_REPO_ID="${DATASET_REPO_ID:-$(basename "${DATASET_DIR}")}"
 
@@ -58,8 +58,8 @@ USE_EXTERNAL_STATS="${USE_EXTERNAL_STATS:-true}"
 NORM_STATS_ROOT="${NORM_STATS_ROOT:-/inspire/qb-ilm/project/embodied-basic-model/zhangjianing-253108140206/zhenji/norm_stats}"
 DATASET_EXTERNAL_STATS_PATH="${DATASET_EXTERNAL_STATS_PATH:-${NORM_STATS_ROOT}/${ACTION_TYPE}/${DATASET_REPO_ID}/stats.json}"
 
-BATCH_SIZE="${BATCH_SIZE:-8}"
-STEPS="${STEPS:-80000}"
+BATCH_SIZE="${BATCH_SIZE:-16}"
+STEPS="${STEPS:-60000}"
 SAVE_FREQ="${SAVE_FREQ:-10000}"
 LOG_FREQ="${LOG_FREQ:-25}"
 
