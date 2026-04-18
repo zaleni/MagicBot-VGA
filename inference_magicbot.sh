@@ -3,7 +3,9 @@ cd /home/arx/MagicBot-VGA
 
 conda activate magicbot
 
-CHECKPOINT_DIR=/home/arx/MagicBot-VGA/models/zaleni/magicbot-lift2-0418 \
+CHECKPOINT_DIR=/home/arx/MagicBot-VGA/models/magicbot-lift2-0418 \
+QWEN3_VL_PRETRAINED_PATH=Qwen/Qwen3-VL-2B-Instruct \
+QWEN3_VL_PROCESSOR_PATH=Qwen/Qwen3-VL-2B-Instruct \
 STATS_KEY=real_lift2 \
 ACTION_MODE=delta \
 HOST=127.0.0.1 \
