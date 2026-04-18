@@ -15,7 +15,7 @@ except ImportError:
 
 
 class RealLift2RemoteClient:
-    """Small helper for real-robot loops that query the CubeV2 websocket server."""
+    """Small helper for real-robot loops that query the MagicBot websocket server."""
 
     def __init__(
         self,

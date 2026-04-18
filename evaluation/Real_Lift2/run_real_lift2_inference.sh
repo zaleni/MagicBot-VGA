@@ -15,6 +15,12 @@ PROMPT="${PROMPT:-Clear the junk and items off the desktop.}"
 FRAME_RATE="${FRAME_RATE:-60}"
 IMAGE_HISTORY_INTERVAL="${IMAGE_HISTORY_INTERVAL:-15}"
 MAX_PUBLISH_STEP="${MAX_PUBLISH_STEP:-10000}"
+RECORD_MODE="${RECORD_MODE:-}"
+STATE_DIM="${STATE_DIM:-}"
+ACTION_DIM="${ACTION_DIM:-}"
+SEED="${SEED:-}"
+SAFE_STOP_BODY_HEIGHT="${SAFE_STOP_BODY_HEIGHT:-}"
+SAFE_STOP_PUBLISH_STEPS="${SAFE_STOP_PUBLISH_STEPS:-}"
 
 ARGS=(
   python evaluation/Real_Lift2/real_lift2_inference.py
@@ -29,6 +35,10 @@ if [[ -n "${DATA_CONFIG:-}" ]]; then
   ARGS+=(--data="${DATA_CONFIG}")
 fi
 
+if [[ -n "${SEED}" ]]; then
+  ARGS+=(--seed="${SEED}")
+fi
+
 if [[ "${USE_BASE:-false}" == "true" ]]; then
   ARGS+=(--use_base)
 fi
@@ -39,6 +49,26 @@ fi
 
 if [[ -n "${GRIPPER_GATE:-}" ]]; then
   ARGS+=(--gripper_gate="${GRIPPER_GATE}")
+fi
+
+if [[ -n "${RECORD_MODE}" ]]; then
+  ARGS+=(--record="${RECORD_MODE}")
+fi
+
+if [[ -n "${STATE_DIM}" ]]; then
+  ARGS+=(--state_dim="${STATE_DIM}")
+fi
+
+if [[ -n "${ACTION_DIM}" ]]; then
+  ARGS+=(--action_dim="${ACTION_DIM}")
+fi
+
+if [[ -n "${SAFE_STOP_BODY_HEIGHT}" ]]; then
+  ARGS+=(--safe_stop_body_height="${SAFE_STOP_BODY_HEIGHT}")
+fi
+
+if [[ -n "${SAFE_STOP_PUBLISH_STEPS}" ]]; then
+  ARGS+=(--safe_stop_publish_steps="${SAFE_STOP_PUBLISH_STEPS}")
 fi
 
 "${ARGS[@]}"

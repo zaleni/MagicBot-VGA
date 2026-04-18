@@ -21,12 +21,12 @@ DEFAULT_PROMPT="${DEFAULT_PROMPT:-Clear the junk and items off the desktop.}"
 DISABLE_3D_TEACHER_FOR_EVAL="${DISABLE_3D_TEACHER_FOR_EVAL:-true}"
 
 if [[ -z "${CHECKPOINT_DIR}" ]]; then
-  echo "Please set CHECKPOINT_DIR to a CubeV2 checkpoint step dir or pretrained_model dir."
+  echo "Please set CHECKPOINT_DIR to a MagicBot checkpoint step dir or pretrained_model dir."
   exit 1
 fi
 
 ARGS=(
-  python evaluation/Real_Lift2/serve_cubev2_policy.py
+  python evaluation/Real_Lift2/serve_magicbot_policy.py
   --ckpt_path="${CHECKPOINT_DIR}"
   --host="${HOST}"
   --port="${PORT}"

@@ -9,6 +9,7 @@ import os
 import signal
 import sys
 import threading
+import time
 from functools import partial
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
@@ -164,11 +165,38 @@ def init_robot(ros_operator, use_base, connected_event, start_event):
         ros_operator.start_base_control_thread()
 
 
-def signal_handler(_signal, _frame, ros_operator):
-    print("Caught Ctrl+C / SIGINT signal")
+def publish_safe_stop_base(ros_operator, safe_stop_body_height: float | None, frame_rate: int, publish_steps: int) -> None:
+    if safe_stop_body_height is None:
+        return
+
+    try:
+        action_base = np.zeros((10,), dtype=np.float32)
+        action_base[3] = float(safe_stop_body_height)
+        print(
+            f"[SafeStop] Publishing base target height={safe_stop_body_height} "
+            f"for {publish_steps} steps before shutdown."
+        )
+        for _ in range(max(1, int(publish_steps))):
+            ros_operator.set_robot_base_target(action_base)
+            time.sleep(max(1.0 / max(1, int(frame_rate)), 0.01))
+    except Exception as exc:
+        print(f"[SafeStop] Failed to publish safe-stop base target: {exc}")
+
+
+def signal_handler(_signal, _frame, ros_operator, use_base: bool, safe_stop_body_height: float | None, safe_stop_publish_steps: int, frame_rate: int):
+    print("Caught shutdown signal")
+    if use_base:
+        publish_safe_stop_base(
+            ros_operator=ros_operator,
+            safe_stop_body_height=safe_stop_body_height,
+            frame_rate=frame_rate,
+            publish_steps=safe_stop_publish_steps,
+        )
     ros_operator.base_enable = False
     ros_operator.robot_base_shutdown()
-    ros_operator.base_control_thread.join()
+    base_thread = getattr(ros_operator, "base_control_thread", None)
+    if base_thread is not None:
+        base_thread.join(timeout=2.0)
     sys.exit(0)
 
 
@@ -230,8 +258,28 @@ def ros_process(args, config, meta_queue, connected_event, start_event, shm_read
     spin_thread = threading.Thread(target=_spin_loop, args=(ros_operator,), daemon=True)
     spin_thread.start()
 
-    if args.use_base:
-        signal.signal(signal.SIGINT, partial(signal_handler, ros_operator=ros_operator))
+    signal.signal(
+        signal.SIGINT,
+        partial(
+            signal_handler,
+            ros_operator=ros_operator,
+            use_base=args.use_base,
+            safe_stop_body_height=args.safe_stop_body_height,
+            safe_stop_publish_steps=args.safe_stop_publish_steps,
+            frame_rate=args.frame_rate,
+        ),
+    )
+    signal.signal(
+        signal.SIGTERM,
+        partial(
+            signal_handler,
+            ros_operator=ros_operator,
+            use_base=args.use_base,
+            safe_stop_body_height=args.safe_stop_body_height,
+            safe_stop_publish_steps=args.safe_stop_publish_steps,
+            frame_rate=args.frame_rate,
+        ),
+    )
 
     init_robot(ros_operator, args.use_base, connected_event, start_event)
 
@@ -329,9 +377,9 @@ def inference_process(args, config, shm_dict, shapes, ros_proc):
         )
 
     client = build_client()
-    print(f"[CubeV2] WebSocket inference enabled: {ws_url}")
+    print(f"[MagicBot] WebSocket inference enabled: {ws_url}")
     try:
-        print(f"[CubeV2] server metadata keys: {list(client.metadata.keys())}")
+        print(f"[MagicBot] server metadata keys: {list(client.metadata.keys())}")
     except Exception:
         pass
 
@@ -364,17 +412,17 @@ def inference_process(args, config, shm_dict, shapes, ros_proc):
                     prompt=args.prompt,
                 )
             except Exception as exc:
-                print(f"[CubeV2] remote inference failed: {exc}")
+                print(f"[MagicBot] remote inference failed: {exc}")
                 try:
                     client = build_client()
                     client.reset()
                 except Exception as reconnect_exc:
-                    print(f"[CubeV2] reconnect failed: {reconnect_exc}")
+                    print(f"[MagicBot] reconnect failed: {reconnect_exc}")
                 timestep += 1
                 continue
 
             if response is None:
-                print("[SafeGuard] CubeV2 server returned nothing, skip this cycle.")
+                print("[SafeGuard] MagicBot server returned nothing, skip this cycle.")
                 timestep += 1
                 continue
 
@@ -384,19 +432,19 @@ def inference_process(args, config, shm_dict, shapes, ros_proc):
                 qpos_full[: min(args.state_dim, qpos.size)] = qpos[: args.state_dim]
 
                 if not isinstance(response, dict) or response.get("actions", None) is None:
-                    print("[SafeGuard] CubeV2 response is missing `actions`, aborting before robot execution.")
+                    print("[SafeGuard] MagicBot response is missing `actions`, aborting before robot execution.")
                     return
 
                 actions_seq = np.asarray(response["actions"], dtype=np.float32)
                 if actions_seq.ndim != 2 or actions_seq.shape[1] != action_dim:
                     print(
-                        f"[SafeGuard] CubeV2 returned unexpected action shape: {actions_seq.shape}, "
+                        f"[SafeGuard] MagicBot returned unexpected action shape: {actions_seq.shape}, "
                         f"expected (N, {action_dim})."
                     )
                     return
 
                 print("\n" + "=" * 72)
-                print("[First Safety Check] Received first CubeV2 action chunk, pausing before execution")
+                print("[First Safety Check] Received first MagicBot action chunk, pausing before execution")
                 print("=" * 72)
                 print("Current qpos:")
                 print("[" + ", ".join([f"{x:8.4f}" for x in qpos_full]) + "]")
@@ -416,7 +464,7 @@ def inference_process(args, config, shm_dict, shapes, ros_proc):
 
             action_seq = extract_action_sequence(response, action_dim)
             if len(action_seq) == 0:
-                print("[SafeGuard] CubeV2 returned an empty action sequence, skip this cycle.")
+                print("[SafeGuard] MagicBot returned an empty action sequence, skip this cycle.")
                 timestep += 1
                 continue
 
@@ -462,10 +510,22 @@ def parse_args(known=False):
     parser.add_argument("--frame_rate", type=int, default=60, help="Control frame rate.")
     parser.add_argument("--gripper_gate", type=float, default=-1, help="Optional gripper threshold.")
     parser.add_argument("--prompt", type=str, default="Clear the junk and items off the desktop.")
-    parser.add_argument("--ws_url", type=str, default="", help="CubeV2 websocket URL.")
+    parser.add_argument("--ws_url", type=str, default="", help="MagicBot websocket URL.")
     parser.add_argument("--image_history_interval", type=int, default=15, help="History interval in frames.")
     parser.add_argument("--state_dim", type=int, default=14, help="State dimension.")
     parser.add_argument("--action_dim", type=int, default=14, help="Action dimension.")
+    parser.add_argument(
+        "--safe_stop_body_height",
+        type=float,
+        default=None,
+        help="Optional base height target to publish for a few cycles before shutdown. Set to 0 to lower before stop.",
+    )
+    parser.add_argument(
+        "--safe_stop_publish_steps",
+        type=int,
+        default=30,
+        help="Number of cycles to publish the safe-stop base target before shutdown.",
+    )
 
     return parser.parse_known_args()[0] if known else parser.parse_args()
 

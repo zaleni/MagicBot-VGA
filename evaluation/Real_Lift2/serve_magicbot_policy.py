@@ -72,7 +72,7 @@ class ServeArgs:
 
 
 def parse_args() -> ServeArgs:
-    parser = argparse.ArgumentParser(description="Serve a fine-tuned CubeV2 policy for Real_Lift2.")
+    parser = argparse.ArgumentParser(description="Serve a fine-tuned MagicBot policy for Real_Lift2.")
     parser.add_argument("--ckpt_path", required=True, help="Checkpoint step dir or pretrained_model dir.")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
@@ -220,7 +220,7 @@ def coerce_history(image_value: Any) -> np.ndarray:
     return np.stack([frames[0], frames[-1]], axis=0)
 
 
-class CubeV2RemotePolicy:
+class MagicBotRemotePolicy:
     def __init__(self, args: ServeArgs):
         self.args = args
         self.ckpt_dir = resolve_ckpt_dir(args.ckpt_path)
@@ -228,7 +228,7 @@ class CubeV2RemotePolicy:
 
         config = PreTrainedConfig.from_pretrained(self.ckpt_dir)
         if config.type != "cubev2":
-            raise ValueError(f"Expected a CubeV2 checkpoint, got config.type={config.type!r}")
+            raise ValueError(f"Expected a MagicBot/CubeV2 checkpoint, got config.type={config.type!r}")
         apply_runtime_config_overrides(config, args)
 
         self.device = resolve_device(args.device)
@@ -276,7 +276,7 @@ class CubeV2RemotePolicy:
             or getattr(config, "qwen3_vl_pretrained_path", None)
         )
         if processor_path is None:
-            raise ValueError("Failed to resolve a Qwen3-VL processor path for CubeV2 serving.")
+            raise ValueError("Failed to resolve a Qwen3-VL processor path for MagicBot serving.")
         self.processor_fn = Qwen3_VLProcessorTransformFn(
             pretrained_model_name_or_path=processor_path,
             max_length=int(getattr(config, "tokenizer_max_length", 48)),
@@ -408,11 +408,11 @@ class CubeV2RemotePolicy:
 
 def main(args: ServeArgs) -> None:
     logging.info("Serve args:\n%s", json.dumps(asdict(args), indent=2, ensure_ascii=False))
-    policy = CubeV2RemotePolicy(args)
+    policy = MagicBotRemotePolicy(args)
 
     hostname = socket.gethostname()
     local_ip = socket.gethostbyname(hostname)
-    logging.info("Creating CubeV2 server (host=%s, ip=%s, port=%s)", hostname, local_ip, args.port)
+    logging.info("Creating MagicBot server (host=%s, ip=%s, port=%s)", hostname, local_ip, args.port)
     logging.info("Server metadata: %s", json.dumps(policy.metadata, indent=2, ensure_ascii=False))
 
     server = WebsocketPolicyServer(

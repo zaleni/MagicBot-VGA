@@ -1,16 +1,16 @@
 # Real_Lift2 Deployment
 
-This directory contains a standalone CubeV2 real-robot deployment path.
+This directory contains a standalone MagicBot real-robot deployment path.
 It does not depend on `openpi` or on the original PI deployment script.
 
 ## Files
 
-- `serve_cubev2_policy.py`
-  Starts the CubeV2 websocket inference server.
-- `serve_cubev2_real_lift2.sh`
+- `serve_magicbot_policy.py`
+  Starts the MagicBot websocket inference server.
+- `01_serve_magicbot_real_lift2.sh`
   Shell wrapper for starting the server.
 - `real_lift2_inference.py`
-  An independent real-robot deployment loop for CubeV2.
+  An independent real-robot deployment loop for MagicBot.
 - `run_real_lift2_inference.sh`
   Shell wrapper for the real-robot deployment loop.
 - `real_lift2_remote_client.py`
@@ -29,14 +29,14 @@ It does not depend on `openpi` or on the original PI deployment script.
 We recommend using two separate environments.
 
 - `serve` environment
-  Use the same environment that can already run CubeV2 training or offline evaluation.
+  Use the same environment that can already run MagicBot training or offline evaluation.
 - `run` environment
   Use the same robot runtime environment that already works with your robot-side ROS control stack.
 
 This split is the safest setup because the two sides depend on different stacks:
 
 - `serve` side
-  Mainly needs model-serving dependencies such as `torch`, `transformers`, `numpy`, `msgpack`, `websockets`, `pyyaml`, and the local `lerobot/CubeV2` code.
+  Mainly needs model-serving dependencies such as `torch`, `transformers`, `numpy`, `msgpack`, `websockets`, `pyyaml`, and the local `lerobot/MagicBot` code.
 - `run` side
   Mainly needs robot-runtime dependencies such as `rclpy`, `utils.ros_operator`, `utils.setup_loader`, `numpy`, `msgpack`, `websockets`, and `pyyaml`.
 
@@ -44,13 +44,13 @@ If you really want to run both on one machine, you can still keep two conda envi
 
 ## DA3 Note For The Serve Side
 
-By default, `serve_cubev2_real_lift2.sh` keeps:
+By default, `01_serve_magicbot_real_lift2.sh` keeps:
 
 ```bash
 DISABLE_3D_TEACHER_FOR_EVAL=true
 ```
 
-In that default mode, the server sets `lambda_3d=0` at runtime, so CubeV2 will not instantiate the DA3 teacher during model startup.
+In that default mode, the server sets `lambda_3d=0` at runtime, so MagicBot will not instantiate the DA3 teacher during model startup.
 That means the `serve` environment does not need a separate DA3 runtime by default.
 
 You only need DA3-related setup on the `serve` side if you explicitly want to enable 3D-teacher evaluation, for example by disabling that flag and keeping DA3 active.
@@ -61,14 +61,14 @@ In that case, the server must be able to import `depth_anything_3`, either by:
 
 ## Serve-Side Extra Pip Packages
 
-If your CubeV2 training/eval environment is already working, the main deep-learning stack should already be present.
+If your MagicBot training/eval environment is already working, the main deep-learning stack should already be present.
 The most common extra runtime packages needed by the websocket `serve` side are:
 
 ```bash
 pip install "websockets>=14" msgpack pyyaml draccus huggingface_hub datasets pandas pyarrow pillow packaging einops
 ```
 
-In most setups you should not reinstall `torch`, `torchvision`, or `transformers` here unless your existing CubeV2 environment is missing them.
+In most setups you should not reinstall `torch`, `torchvision`, or `transformers` here unless your existing MagicBot environment is missing them.
 
 ## Start The Server
 
@@ -77,7 +77,7 @@ CHECKPOINT_DIR=/path/to/outputs_real/.../checkpoints/060000 \
 STATS_KEY=real_lift2 \
 ACTION_MODE=delta \
 INFER_HORIZON=30 \
-bash evaluation/Real_Lift2/serve_cubev2_real_lift2.sh
+bash evaluation/Real_Lift2/01_serve_magicbot_real_lift2.sh
 ```
 
 If `CHECKPOINT_DIR` points to:
@@ -89,7 +89,7 @@ If `CHECKPOINT_DIR` points to:
 
 Typical `serve`-machine checklist:
 
-- GPU machine with the CubeV2 training/eval environment
+- GPU machine with the MagicBot training/eval environment
 - access to the checkpoint directory
 - access to Qwen3-VL / Cosmos resources referenced by the checkpoint or overridden by env vars
 - no ROS runtime needed
@@ -106,7 +106,7 @@ bash evaluation/Real_Lift2/run_real_lift2_inference.sh
 `real_lift2_inference.py` follows the same broad structure as the existing robot deployment loop:
 
 - a ROS/shared-memory process reads robot observations
-- an inference process sends camera/state data to the CubeV2 websocket server
+- an inference process sends camera/state data to the MagicBot websocket server
 - returned action chunks are executed step by step
 - the first successful inference pauses for manual safety confirmation
 
@@ -116,7 +116,7 @@ Typical `run`-machine checklist:
 - ROS and `rclpy`
 - `utils.ros_operator`, `utils.setup_loader`, and related robot-side helpers
 - network access to the websocket server
-- no CubeV2 checkpoint loading needed on this side
+- no MagicBot checkpoint loading needed on this side
 
 ## Minimal Client Usage
 
