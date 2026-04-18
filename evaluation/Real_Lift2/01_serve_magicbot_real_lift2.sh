@@ -63,6 +63,14 @@ if [[ -n "${ACTION_MODE:-}" ]]; then
   ARGS+=(--action_mode="${ACTION_MODE}")
 fi
 
+if [[ -n "${LOAD_DEVICE:-}" ]]; then
+  ARGS+=(--load_device="${LOAD_DEVICE}")
+fi
+
+if [[ -n "${COSMOS_DEVICE:-}" ]]; then
+  ARGS+=(--cosmos_device="${COSMOS_DEVICE}")
+fi
+
 if [[ -n "${QWEN3_VL_PROCESSOR_PATH:-}" ]]; then
   ARGS+=(--qwen3_vl_processor_path="${QWEN3_VL_PROCESSOR_PATH}")
 fi

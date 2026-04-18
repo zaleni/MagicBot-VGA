@@ -40,7 +40,7 @@ class ImageTokenizer(torch.nn.Module):
     ) -> None:
         super().__init__()
         self._device = device
-        self._dtype = getattr(torch, "bfloat16")
+        self._dtype = torch.float32 if str(device).startswith("cpu") else getattr(torch, "bfloat16")
         self._full_model = (
             load_model(checkpoint, tokenizer_config, device).to(self._dtype)
             if checkpoint is not None
@@ -85,10 +85,12 @@ class ImageTokenizer(torch.nn.Module):
             The output tensor in Bx3xHxW, range [-1..1].
         """
         original_dtype = input_latent.dtype
+        original_device = input_latent.device
+        model_device = next(self.parameters()).device
         model_dtype = next(self.parameters()).dtype
-        input_latent = input_latent.to(model_dtype)
+        input_latent = input_latent.to(device=model_device, dtype=model_dtype)
         output_tensor = self._dec_model(input_latent)
-        return output_tensor.to(original_dtype)
+        return output_tensor.to(device=original_device, dtype=original_dtype)
 
     def encode(self, input_tensor: torch.Tensor) -> tuple[torch.Tensor]:
         """Encodes an image into a latent embedding or code.
@@ -106,12 +108,14 @@ class ImageTokenizer(torch.nn.Module):
                 again (H/h x W/w), and channel dimension of 6.
         """
         original_dtype = input_tensor.dtype
+        original_device = input_tensor.device
+        model_device = next(self.parameters()).device
         model_dtype = next(self.parameters()).dtype
-        input_tensor = input_tensor.to(model_dtype)
+        input_tensor = input_tensor.to(device=model_device, dtype=model_dtype)
         output_latent = self._enc_model(input_tensor)
         if isinstance(output_latent, torch.Tensor):
-            return output_latent.to(original_dtype)
-        return output_latent[0].to(original_dtype)
+            return output_latent.to(device=original_device, dtype=original_dtype)
+        return output_latent[0].to(device=original_device, dtype=original_dtype)
 
     def forward(self, image: np.ndarray) -> np.ndarray:
         """Reconstructs an image using a pre-trained tokenizer.

@@ -639,10 +639,12 @@ class CubeV2Model(nn.Module):
         )
 
         cosmos_tokenizer_dir = self._resolve_cosmos_tokenizer_dir(config.cosmos_tokenizer_path_or_name)
+        cosmos_device = getattr(config, "cosmos_device", None) or config.device or "cuda"
 
         self.cosmos = ImageTokenizer(
             checkpoint_enc=os.path.join(cosmos_tokenizer_dir, "encoder.jit"), 
             checkpoint_dec=os.path.join(cosmos_tokenizer_dir, "decoder.jit"), 
+            device=cosmos_device,
         )
 
         vae_dim = 16
@@ -1809,9 +1811,25 @@ class CubeV2Policy(PreTrainedPolicy):
         return "\n".join(lines)
     
     def to(self, *args, **kwargs):
-        super().to(*args, **kwargs)
-        cosmos_dtype = torch.bfloat16 if self.config.dtype == "bfloat16" else torch.float32
-        self.model.cosmos.to(cosmos_dtype)
+        cosmos_device = getattr(self.config, "cosmos_device", None)
+        if cosmos_device is None:
+            super().to(*args, **kwargs)
+        else:
+            cosmos_module = self.model.cosmos
+            self.model.cosmos = nn.Identity()
+            try:
+                super().to(*args, **kwargs)
+            finally:
+                self.model.cosmos = cosmos_module
+        target_cosmos_device = cosmos_device or next(self.model.cosmos.parameters()).device
+        if str(target_cosmos_device).startswith("cpu"):
+            cosmos_dtype = torch.float32
+        else:
+            cosmos_dtype = torch.bfloat16 if self.config.dtype == "bfloat16" else torch.float32
+        if cosmos_device is None:
+            self.model.cosmos.to(cosmos_dtype)
+        else:
+            self.model.cosmos.to(device=cosmos_device, dtype=cosmos_dtype)
         # Keep the regression head in fp32 for the existing bf16 training/inference path.
         self.model.action_out_proj.to(torch.float32)
         return self

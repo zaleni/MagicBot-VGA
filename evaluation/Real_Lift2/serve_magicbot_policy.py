@@ -62,6 +62,8 @@ class ServeArgs:
     request_image_width: int = 640
     dtype: str = "bfloat16"
     device: str = "auto"
+    load_device: str | None = None
+    cosmos_device: str | None = None
     qwen3_vl_processor_path: str | None = None
     qwen3_vl_pretrained_path: str | None = None
     cosmos_tokenizer_path_or_name: str | None = None
@@ -93,6 +95,8 @@ def parse_args() -> ServeArgs:
     parser.add_argument("--request_image_width", type=int, default=640)
     parser.add_argument("--dtype", choices=["float32", "bfloat16"], default="bfloat16")
     parser.add_argument("--device", default="auto", help="`auto`, `cpu`, `cuda`, or `cuda:N`.")
+    parser.add_argument("--load_device", default=None, help="Device used for initial checkpoint loading.")
+    parser.add_argument("--cosmos_device", default=None, help="Device used by the Cosmos tokenizer.")
     parser.add_argument("--qwen3_vl_processor_path", default=None)
     parser.add_argument("--qwen3_vl_pretrained_path", default=None)
     parser.add_argument("--cosmos_tokenizer_path_or_name", default=None)
@@ -108,6 +112,8 @@ def parse_args() -> ServeArgs:
     parsed = ServeArgs(**vars(parser.parse_args()))
     parsed.stats_key = _env_fallback(parsed.stats_key, "STATS_KEY")
     parsed.stats_path = _env_fallback(parsed.stats_path, "STATS_PATH")
+    parsed.load_device = _env_fallback(parsed.load_device, "LOAD_DEVICE")
+    parsed.cosmos_device = _env_fallback(parsed.cosmos_device, "COSMOS_DEVICE")
     parsed.qwen3_vl_processor_path = _env_fallback(parsed.qwen3_vl_processor_path, "QWEN3_VL_PROCESSOR_PATH")
     parsed.qwen3_vl_pretrained_path = _env_fallback(parsed.qwen3_vl_pretrained_path, "QWEN3_VL_PRETRAINED_PATH")
     parsed.cosmos_tokenizer_path_or_name = _env_fallback(
@@ -246,6 +252,13 @@ class MagicBotRemotePolicy:
         if config.type != "cubev2":
             raise ValueError(f"Expected a MagicBot/CubeV2 checkpoint, got config.type={config.type!r}")
         apply_runtime_config_overrides(config, args)
+        self.device = resolve_device(args.device)
+        self.load_device = resolve_device(args.load_device) if args.load_device else ("cpu" if self.device != "cpu" else "cpu")
+        self.cosmos_device = resolve_device(args.cosmos_device) if args.cosmos_device else self.device
+        config.device = self.load_device
+        setattr(config, "cosmos_device", self.cosmos_device)
+        self.runtime_dtype = resolve_runtime_dtype(args.dtype, self.device)
+        config.dtype = "float32" if self.runtime_dtype == torch.float32 else "bfloat16"
         logging.info(
             "Resolved runtime backbone paths: qwen_pretrained=%s | qwen_processor=%s | cosmos=%s | da3=%s",
             getattr(config, "qwen3_vl_pretrained_path", None),
@@ -253,11 +266,13 @@ class MagicBotRemotePolicy:
             getattr(config, "cosmos_tokenizer_path_or_name", None),
             getattr(config, "da3_model_path_or_name", None),
         )
-
-        self.device = resolve_device(args.device)
-        config.device = self.device
-        self.runtime_dtype = resolve_runtime_dtype(args.dtype, self.device)
-        config.dtype = "float32" if self.runtime_dtype == torch.float32 else "bfloat16"
+        logging.info(
+            "Resolved runtime devices: runtime_device=%s | load_device=%s | cosmos_device=%s | runtime_dtype=%s",
+            self.device,
+            self.load_device,
+            self.cosmos_device,
+            self.runtime_dtype,
+        )
 
         if args.infer_horizon is not None:
             config.n_action_steps = min(args.infer_horizon, config.chunk_size)
@@ -265,6 +280,8 @@ class MagicBotRemotePolicy:
 
         policy_cls = get_policy_class(config.type)
         self.policy = policy_cls.from_pretrained(config=config, pretrained_name_or_path=self.ckpt_dir)
+        self.policy.config.device = self.device
+        setattr(self.policy.config, "cosmos_device", self.cosmos_device)
         self.policy.to(device=self.device, dtype=self.runtime_dtype).eval()
 
         stats_path = Path(args.stats_path).expanduser() if args.stats_path else self.ckpt_dir / "stats.json"
