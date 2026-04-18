@@ -61,6 +61,19 @@ obs_dict = collections.OrderedDict()
 np.set_printoptions(linewidth=200, suppress=True)
 
 
+def ensure_compat_args(args) -> None:
+    """Populate legacy robot-runtime flags expected by the ROS deployment helpers."""
+    compat_defaults = {
+        "use_depth_image": False,
+        "use_qvel": False,
+        "use_effort": False,
+        "use_eef_states": False,
+    }
+    for key, value in compat_defaults.items():
+        if not hasattr(args, key):
+            setattr(args, key, value)
+
+
 def ensure_runtime_available() -> None:
     if rclpy is None:
         raise ImportError(
@@ -137,6 +150,7 @@ def robot_action(action, shm_dict):
 
 
 def get_model_config(args):
+    ensure_compat_args(args)
     if set_seed is not None:
         set_seed(args.seed)
     else:
@@ -148,6 +162,8 @@ def get_model_config(args):
         "policy_config": {
             "action_dim": args.action_dim,
             "states_dim": args.state_dim,
+            "use_base": args.use_base,
+            "use_depth_image": args.use_depth_image,
         },
         "camera_names": args.camera_names,
     }
@@ -245,6 +261,7 @@ def extract_action_sequence(response, action_dim):
 
 def ros_process(args, config, meta_queue, connected_event, start_event, shm_ready_event):
     ensure_runtime_available()
+    ensure_compat_args(args)
     setup_loader(ROBOT_RUNTIME_ROOT)
 
     rclpy.init()
@@ -507,6 +524,7 @@ def parse_args(known=False):
         default=["head", "left_wrist", "right_wrist"],
         help="Camera names to use.",
     )
+    parser.add_argument("--use_depth_image", action="store_true", help="Enable depth image subscriptions.")
     parser.add_argument("--use_base", action="store_true", help="Use robot base.")
     parser.add_argument(
         "--fixed_body_height",
