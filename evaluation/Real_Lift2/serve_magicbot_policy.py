@@ -392,14 +392,14 @@ class MagicBotRemotePolicy:
             f"{OBS_IMAGES}.image0": torch.from_numpy(head_history).permute(0, 3, 1, 2).float() / 255.0,
             f"{OBS_IMAGES}.image1": torch.from_numpy(left_history).permute(0, 3, 1, 2).float() / 255.0,
             f"{OBS_IMAGES}.image2": torch.from_numpy(right_history).permute(0, 3, 1, 2).float() / 255.0,
-            f"{OBS_IMAGES}.image0_mask": torch.tensor(head_mask),
-            f"{OBS_IMAGES}.image1_mask": torch.tensor(left_mask),
-            f"{OBS_IMAGES}.image2_mask": torch.tensor(right_mask),
             OBS_STATE: torch.from_numpy(state),
             "task": prompt,
         }
 
         sample = self.resize_fn(sample)
+        sample[f"{OBS_IMAGES}.image0_mask"] = torch.tensor(head_mask)
+        sample[f"{OBS_IMAGES}.image1_mask"] = torch.tensor(left_mask)
+        sample[f"{OBS_IMAGES}.image2_mask"] = torch.tensor(right_mask)
         sample = self.processor_fn(sample)
         sample = self.normalize_state_fn(sample)
 
