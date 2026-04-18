@@ -297,6 +297,7 @@ class MagicBotRemotePolicy:
         self.action_stats = {
             "action": {key: np.asarray(stats["action"][key]) for key in stat_keys}
         }
+        self.target_action_dim = int(self.action_stats["action"]["mean"].shape[0])
 
         self.resize_fn = ResizeImagesWithPadFn(height=args.resize_size, width=args.resize_size)
         self.normalize_state_fn = NormalizeTransformFn(
@@ -427,7 +428,9 @@ class MagicBotRemotePolicy:
         with torch.no_grad():
             action_pred, _ = self.policy.predict_action_chunk(inputs, decode_image=False)
 
-        action_pred = action_pred[0, : self.infer_horizon]
+        if action_pred.ndim != 3:
+            raise RuntimeError(f"Unexpected action prediction shape: {tuple(action_pred.shape)}")
+        action_pred = action_pred[0, : self.infer_horizon, : self.target_action_dim]
         action_pred = self.unnormalize_action_fn({"action": action_pred})["action"]
         action_np = action_pred.detach().cpu().numpy().astype(np.float32)
 
