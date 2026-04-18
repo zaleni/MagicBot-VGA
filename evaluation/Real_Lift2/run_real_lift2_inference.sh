@@ -3,10 +3,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJ_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+REAL_LIFT2_RUNTIME_ROOT="${REAL_LIFT2_RUNTIME_ROOT:-/home/arx/ROS2_LIFT_Play/act}"
 
 export PYTHONUNBUFFERED=1
 export TOKENIZERS_PARALLELISM=false
-export PYTHONPATH="${PROJ_ROOT}/src:${PROJ_ROOT}:${PYTHONPATH:-}"
+export REAL_LIFT2_RUNTIME_ROOT
+export PYTHONPATH="${REAL_LIFT2_RUNTIME_ROOT}:${PROJ_ROOT}/src:${PROJ_ROOT}:${PYTHONPATH:-}"
 
 cd "${PROJ_ROOT}"
 

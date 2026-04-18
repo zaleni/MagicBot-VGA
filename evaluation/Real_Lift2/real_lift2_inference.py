@@ -21,8 +21,11 @@ import yaml
 THIS_DIR = Path(__file__).resolve().parent
 ROOT = THIS_DIR.parents[1]
 SRC_ROOT = ROOT / "src"
+ROBOT_RUNTIME_ROOT = Path(
+    os.environ.get("REAL_LIFT2_RUNTIME_ROOT", "/home/arx/ROS2_LIFT_Play/act")
+).expanduser()
 
-for candidate in [THIS_DIR, ROOT, SRC_ROOT]:
+for candidate in [THIS_DIR, ROOT, SRC_ROOT, ROBOT_RUNTIME_ROOT]:
     candidate_str = str(candidate)
     if candidate_str not in sys.path:
         sys.path.insert(0, candidate_str)
@@ -242,7 +245,7 @@ def extract_action_sequence(response, action_dim):
 
 def ros_process(args, config, meta_queue, connected_event, start_event, shm_ready_event):
     ensure_runtime_available()
-    setup_loader(ROOT)
+    setup_loader(ROBOT_RUNTIME_ROOT)
 
     rclpy.init()
     data = load_yaml(args.data)
@@ -489,7 +492,12 @@ def parse_args(known=False):
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--max_publish_step", type=int, default=10000, help="Max publish step.")
-    parser.add_argument("--data", type=str, default=str(ROOT / "data" / "config.yaml"), help="Robot config YAML.")
+    parser.add_argument(
+        "--data",
+        type=str,
+        default=str(ROBOT_RUNTIME_ROOT / "data" / "config.yaml"),
+        help="Robot config YAML.",
+    )
     parser.add_argument("--seed", type=int, default=0, help="Random seed.")
     parser.add_argument(
         "--camera_names",
