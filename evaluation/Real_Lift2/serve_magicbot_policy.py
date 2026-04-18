@@ -71,6 +71,10 @@ class ServeArgs:
     disable_3d_teacher_for_eval: bool = True
 
 
+def _env_fallback(value: str | None, env_name: str) -> str | None:
+    return value if value is not None else os.environ.get(env_name)
+
+
 def parse_args() -> ServeArgs:
     parser = argparse.ArgumentParser(description="Serve a fine-tuned MagicBot policy for Real_Lift2.")
     parser.add_argument("--ckpt_path", required=True, help="Checkpoint step dir or pretrained_model dir.")
@@ -101,7 +105,18 @@ def parse_args() -> ServeArgs:
         action=argparse.BooleanOptionalAction,
         default=True,
     )
-    return ServeArgs(**vars(parser.parse_args()))
+    parsed = ServeArgs(**vars(parser.parse_args()))
+    parsed.stats_key = _env_fallback(parsed.stats_key, "STATS_KEY")
+    parsed.stats_path = _env_fallback(parsed.stats_path, "STATS_PATH")
+    parsed.qwen3_vl_processor_path = _env_fallback(parsed.qwen3_vl_processor_path, "QWEN3_VL_PROCESSOR_PATH")
+    parsed.qwen3_vl_pretrained_path = _env_fallback(parsed.qwen3_vl_pretrained_path, "QWEN3_VL_PRETRAINED_PATH")
+    parsed.cosmos_tokenizer_path_or_name = _env_fallback(
+        parsed.cosmos_tokenizer_path_or_name, "COSMOS_TOKENIZER_PATH_OR_NAME"
+    )
+    parsed.da3_model_path_or_name = _env_fallback(parsed.da3_model_path_or_name, "DA3_MODEL_PATH_OR_NAME")
+    parsed.da3_code_root = _env_fallback(parsed.da3_code_root, "DA3_CODE_ROOT")
+    parsed.action_mode = _env_fallback(parsed.action_mode, "ACTION_MODE")
+    return parsed
 
 
 def resolve_ckpt_dir(ckpt_path: str | Path) -> Path:
@@ -231,6 +246,13 @@ class MagicBotRemotePolicy:
         if config.type != "cubev2":
             raise ValueError(f"Expected a MagicBot/CubeV2 checkpoint, got config.type={config.type!r}")
         apply_runtime_config_overrides(config, args)
+        logging.info(
+            "Resolved runtime backbone paths: qwen_pretrained=%s | qwen_processor=%s | cosmos=%s | da3=%s",
+            getattr(config, "qwen3_vl_pretrained_path", None),
+            getattr(config, "qwen3_vl_processor_path", None),
+            getattr(config, "cosmos_tokenizer_path_or_name", None),
+            getattr(config, "da3_model_path_or_name", None),
+        )
 
         self.device = resolve_device(args.device)
         config.device = self.device
