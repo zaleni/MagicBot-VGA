@@ -6,6 +6,7 @@ import argparse
 import collections
 import multiprocessing as mp
 import os
+import queue
 import signal
 import sys
 import threading
@@ -259,6 +260,144 @@ def extract_action_sequence(response, action_dim):
     return out_seq
 
 
+def read_observation_snapshot(args, shm_dict, shapes):
+    obs_dict = {
+        "images": {},
+        "qpos": None,
+        "qvel": None,
+        "effort": None,
+        "robot_base": None,
+        "base_velocity": None,
+    }
+
+    for cam in args.camera_names:
+        shm, shape, dtype = shm_dict[cam]
+        obs_dict["images"][cam] = np.ndarray(shape, dtype=dtype, buffer=shm.buf).copy()
+    for state_key in shapes["states"]:
+        shm, shape, dtype = shm_dict[state_key]
+        obs_dict[state_key] = np.ndarray(shape, dtype=dtype, buffer=shm.buf).copy()
+
+    return obs_dict
+
+
+def compute_prefetch_lead_steps(frame_rate: int, action_seq_len: int, round_trip_ms: float | None, min_lead_steps: int) -> int:
+    lead_steps = max(1, int(min_lead_steps))
+    if round_trip_ms is not None:
+        inferred_steps = int(np.ceil(float(round_trip_ms) * max(1, frame_rate) / 1000.0)) + 1
+        lead_steps = max(lead_steps, inferred_steps)
+    return min(lead_steps, max(1, action_seq_len - 1))
+
+
+class AsyncChunkPrefetcher:
+    """Background websocket inference worker that can prefetch the next action chunk."""
+
+    def __init__(self, build_client):
+        self._build_client = build_client
+        self._request_queue: queue.Queue[dict | None] = queue.Queue(maxsize=1)
+        self._result_queue: queue.Queue[dict] = queue.Queue(maxsize=1)
+        self._stop_event = threading.Event()
+        self._lock = threading.Lock()
+        self._inflight = False
+        self._thread = threading.Thread(target=self._worker_loop, daemon=True)
+        self._thread.start()
+
+    def _worker_loop(self):
+        client = self._build_client()
+        while not self._stop_event.is_set():
+            try:
+                task = self._request_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+
+            if task is None:
+                return
+
+            try:
+                response = client.infer_step(
+                    images=task["images"],
+                    qpos=task["qpos"],
+                    timestep=task["timestep"],
+                    prompt=task["prompt"],
+                )
+                result = {
+                    "ok": True,
+                    "response": response,
+                    "timestep": task["timestep"],
+                }
+            except Exception as exc:
+                result = {
+                    "ok": False,
+                    "error": exc,
+                    "timestep": task["timestep"],
+                }
+                try:
+                    client = self._build_client()
+                    client.reset()
+                except Exception as reconnect_exc:
+                    result["reconnect_error"] = reconnect_exc
+
+            while not self._stop_event.is_set():
+                try:
+                    self._result_queue.put(result, timeout=0.1)
+                    break
+                except queue.Full:
+                    try:
+                        self._result_queue.get_nowait()
+                    except queue.Empty:
+                        pass
+
+    def submit(self, *, images, qpos, timestep: int, prompt: str) -> bool:
+        with self._lock:
+            if self._inflight or self._stop_event.is_set():
+                return False
+            self._inflight = True
+
+        task = {
+            "images": images,
+            "qpos": np.asarray(qpos, dtype=np.float32).reshape(-1),
+            "timestep": int(timestep),
+            "prompt": prompt,
+        }
+
+        try:
+            self._request_queue.put_nowait(task)
+            return True
+        except queue.Full:
+            with self._lock:
+                self._inflight = False
+            return False
+
+    def has_inflight(self) -> bool:
+        with self._lock:
+            return self._inflight
+
+    def poll(self):
+        try:
+            result = self._result_queue.get_nowait()
+        except queue.Empty:
+            return None
+        with self._lock:
+            self._inflight = False
+        return result
+
+    def wait(self, timeout: float | None = None):
+        try:
+            result = self._result_queue.get(timeout=timeout)
+        except queue.Empty:
+            return None
+        with self._lock:
+            self._inflight = False
+        return result
+
+    def stop(self):
+        self._stop_event.set()
+        try:
+            self._request_queue.put_nowait(None)
+        except queue.Full:
+            pass
+        self._thread.join(timeout=1.0)
+
+
 def ros_process(args, config, meta_queue, connected_event, start_event, shm_ready_event):
     ensure_runtime_available()
     ensure_compat_args(args)
@@ -386,6 +525,7 @@ def inference_process(args, config, shm_dict, shapes, ros_proc):
     action = np.zeros((action_dim,), dtype=np.float32)
     first_inference = True
     exec_rate = Rate(args.frame_rate)
+    chunk_idx = 0
 
     def build_client():
         return RealLift2RemoteClient(
@@ -396,106 +536,178 @@ def inference_process(args, config, shm_dict, shapes, ros_proc):
             max_history=args.image_history_interval + 1,
         )
 
-    client = build_client()
+    metadata_client = build_client()
     print(f"[MagicBot] WebSocket inference enabled: {ws_url}")
     try:
-        print(f"[MagicBot] server metadata keys: {list(client.metadata.keys())}")
+        print(f"[MagicBot] server metadata keys: {list(metadata_client.metadata.keys())}")
     except Exception:
         pass
+    finally:
+        metadata_client.close()
 
     while ros_proc.is_alive():
         timestep = 0
-        client.reset()
+        prefetcher = AsyncChunkPrefetcher(build_client)
+        current_response = None
+        current_obs = None
+        next_response = None
+        last_round_trip_ms = None
 
-        while timestep < args.max_publish_step and ros_proc.is_alive():
-            obs_dict = {
-                "images": {},
-                "qpos": None,
-                "qvel": None,
-                "effort": None,
-                "robot_base": None,
-                "base_velocity": None,
-            }
+        try:
+            while timestep < args.max_publish_step and ros_proc.is_alive():
+                if current_response is None:
+                    if next_response is not None:
+                        current_response = next_response
+                        next_response = None
+                    else:
+                        if not prefetcher.has_inflight():
+                            current_obs = read_observation_snapshot(args, shm_dict, shapes)
+                            submitted = prefetcher.submit(
+                                images=current_obs["images"],
+                                qpos=current_obs.get("qpos", np.zeros((args.state_dim,), dtype=np.float32)),
+                                timestep=timestep,
+                                prompt=args.prompt,
+                            )
+                            if not submitted:
+                                time.sleep(0.002)
+                                continue
 
-            for cam in args.camera_names:
-                shm, shape, dtype = shm_dict[cam]
-                obs_dict["images"][cam] = np.ndarray(shape, dtype=dtype, buffer=shm.buf).copy()
-            for state_key in shapes["states"]:
-                shm, shape, dtype = shm_dict[state_key]
-                obs_dict[state_key] = np.ndarray(shape, dtype=dtype, buffer=shm.buf).copy()
+                        result = prefetcher.wait(timeout=5.0)
+                        if result is None:
+                            print("[MagicBot] waiting for prefetched chunk timed out, retrying...")
+                            continue
 
-            try:
-                response = client.infer_step(
-                    images=obs_dict["images"],
-                    qpos=obs_dict.get("qpos", np.zeros((args.state_dim,), dtype=np.float32)),
-                    timestep=timestep,
-                    prompt=args.prompt,
-                )
-            except Exception as exc:
-                print(f"[MagicBot] remote inference failed: {exc}")
-                try:
-                    client = build_client()
-                    client.reset()
-                except Exception as reconnect_exc:
-                    print(f"[MagicBot] reconnect failed: {reconnect_exc}")
-                timestep += 1
-                continue
+                        if not result.get("ok", False):
+                            print(f"[MagicBot] remote inference failed: {result['error']}")
+                            reconnect_exc = result.get("reconnect_error")
+                            if reconnect_exc is not None:
+                                print(f"[MagicBot] reconnect failed: {reconnect_exc}")
+                            timestep += 1
+                            continue
 
-            if response is None:
-                print("[SafeGuard] MagicBot server returned nothing, skip this cycle.")
-                timestep += 1
-                continue
+                        current_response = result.get("response")
 
-            if first_inference:
-                qpos = np.asarray(obs_dict.get("qpos", np.zeros((args.state_dim,), dtype=np.float32)), dtype=np.float32).reshape(-1)
-                qpos_full = np.zeros((args.state_dim,), dtype=np.float32)
-                qpos_full[: min(args.state_dim, qpos.size)] = qpos[: args.state_dim]
+                response = current_response
+                current_response = None
 
-                if not isinstance(response, dict) or response.get("actions", None) is None:
-                    print("[SafeGuard] MagicBot response is missing `actions`, aborting before robot execution.")
-                    return
+                if response is None:
+                    print("[SafeGuard] MagicBot server returned nothing, skip this cycle.")
+                    timestep += 1
+                    continue
 
-                actions_seq = np.asarray(response["actions"], dtype=np.float32)
-                if actions_seq.ndim != 2 or actions_seq.shape[1] != action_dim:
-                    print(
-                        f"[SafeGuard] MagicBot returned unexpected action shape: {actions_seq.shape}, "
-                        f"expected (N, {action_dim})."
+                if first_inference:
+                    if current_obs is None:
+                        current_obs = read_observation_snapshot(args, shm_dict, shapes)
+                    qpos = np.asarray(
+                        current_obs.get("qpos", np.zeros((args.state_dim,), dtype=np.float32)), dtype=np.float32
+                    ).reshape(-1)
+                    qpos_full = np.zeros((args.state_dim,), dtype=np.float32)
+                    qpos_full[: min(args.state_dim, qpos.size)] = qpos[: args.state_dim]
+
+                    if not isinstance(response, dict) or response.get("actions", None) is None:
+                        print("[SafeGuard] MagicBot response is missing `actions`, aborting before robot execution.")
+                        return
+
+                    actions_seq = np.asarray(response["actions"], dtype=np.float32)
+                    if actions_seq.ndim != 2 or actions_seq.shape[1] != action_dim:
+                        print(
+                            f"[SafeGuard] MagicBot returned unexpected action shape: {actions_seq.shape}, "
+                            f"expected (N, {action_dim})."
+                        )
+                        return
+
+                    print("\n" + "=" * 72)
+                    print("[First Safety Check] Received first MagicBot action chunk, pausing before execution")
+                    print("=" * 72)
+                    print("Current qpos:")
+                    print("[" + ", ".join([f"{x:8.4f}" for x in qpos_full]) + "]")
+
+                    print("\nPredicted actions (first up to 30 steps):")
+                    num_steps = min(30, actions_seq.shape[0])
+                    for idx in range(num_steps):
+                        print(f"Step {idx:2d}: [" + ", ".join([f"{x:8.4f}" for x in actions_seq[idx]]) + "]")
+
+                    user_input = input("\n[Safety Confirm] Inspect the actions and input y to continue: ").strip().lower()
+                    if user_input != "y":
+                        print("[SafeGuard] User did not confirm, exiting without robot execution.")
+                        return
+
+                    first_inference = False
+                    print("[Safety Confirmed] Starting normal real-time execution.\n")
+
+                action_seq = extract_action_sequence(response, action_dim)
+                if len(action_seq) == 0:
+                    print("[SafeGuard] MagicBot returned an empty action sequence, skip this cycle.")
+                    timestep += 1
+                    continue
+
+                chunk_idx += 1
+                if isinstance(response, dict):
+                    client_timing = response.get("client_timing", {})
+                    if client_timing is not None:
+                        last_round_trip_ms = client_timing.get("round_trip_ms", last_round_trip_ms)
+
+                if args.log_timing_every > 0 and (chunk_idx <= 3 or chunk_idx % args.log_timing_every == 0):
+                    server_timing = response.get("server_timing", {}) if isinstance(response, dict) else {}
+                    client_timing = response.get("client_timing", {}) if isinstance(response, dict) else {}
+                    infer_ms = server_timing.get("infer_ms")
+                    round_trip_ms = client_timing.get("round_trip_ms")
+                    chunk_budget_ms = 1000.0 * len(action_seq) / max(1, args.frame_rate)
+
+                    message = (
+                        f"[Timing] chunk={chunk_idx} horizon={len(action_seq)} "
+                        f"budget={chunk_budget_ms:.1f}ms"
                     )
-                    return
+                    if infer_ms is not None:
+                        message += f" server_infer={float(infer_ms):.1f}ms"
+                    if round_trip_ms is not None:
+                        message += f" round_trip={float(round_trip_ms):.1f}ms"
+                        if float(round_trip_ms) > chunk_budget_ms:
+                            message += "  <- slower than chunk budget, likely to cause stop-go motion"
+                    print(message)
 
-                print("\n" + "=" * 72)
-                print("[First Safety Check] Received first MagicBot action chunk, pausing before execution")
-                print("=" * 72)
-                print("Current qpos:")
-                print("[" + ", ".join([f"{x:8.4f}" for x in qpos_full]) + "]")
+                prefetch_lead_steps = compute_prefetch_lead_steps(
+                    frame_rate=args.frame_rate,
+                    action_seq_len=len(action_seq),
+                    round_trip_ms=last_round_trip_ms,
+                    min_lead_steps=args.prefetch_lead_steps,
+                )
 
-                print("\nPredicted actions (first up to 30 steps):")
-                num_steps = min(30, actions_seq.shape[0])
-                for idx in range(num_steps):
-                    print(f"Step {idx:2d}: [" + ", ".join([f"{x:8.4f}" for x in actions_seq[idx]]) + "]")
+                for step_idx, step_action in enumerate(action_seq):
+                    if timestep >= args.max_publish_step or (not ros_proc.is_alive()):
+                        break
 
-                user_input = input("\n[Safety Confirm] Inspect the actions and input y to continue: ").strip().lower()
-                if user_input != "y":
-                    print("[SafeGuard] User did not confirm, exiting without robot execution.")
-                    return
+                    remaining_steps = len(action_seq) - step_idx - 1
+                    if (
+                        next_response is None
+                        and not prefetcher.has_inflight()
+                        and remaining_steps <= prefetch_lead_steps
+                        and timestep + 1 < args.max_publish_step
+                    ):
+                        next_obs = read_observation_snapshot(args, shm_dict, shapes)
+                        prefetcher.submit(
+                            images=next_obs["images"],
+                            qpos=next_obs.get("qpos", np.zeros((args.state_dim,), dtype=np.float32)),
+                            timestep=timestep,
+                            prompt=args.prompt,
+                        )
 
-                first_inference = False
-                print("[Safety Confirmed] Starting normal real-time execution.\n")
+                    maybe_result = prefetcher.poll()
+                    if maybe_result is not None:
+                        if maybe_result.get("ok", False):
+                            next_response = maybe_result.get("response")
+                        else:
+                            print(f"[MagicBot] background prefetch failed: {maybe_result['error']}")
+                            reconnect_exc = maybe_result.get("reconnect_error")
+                            if reconnect_exc is not None:
+                                print(f"[MagicBot] reconnect failed: {reconnect_exc}")
 
-            action_seq = extract_action_sequence(response, action_dim)
-            if len(action_seq) == 0:
-                print("[SafeGuard] MagicBot returned an empty action sequence, skip this cycle.")
-                timestep += 1
-                continue
-
-            for step_action in action_seq:
-                if timestep >= args.max_publish_step or (not ros_proc.is_alive()):
-                    break
-
-                action = step_action
-                robot_action(action, shm_dict)
-                timestep += 1
-                exec_rate.sleep()
+                    action = step_action
+                    robot_action(action, shm_dict)
+                    timestep += 1
+                    exec_rate.sleep()
+        finally:
+            prefetcher.stop()
 
         if args.use_base and action_dim > 19:
             action[16] = 0
@@ -540,6 +752,18 @@ def parse_args(known=False):
     parser.add_argument("--image_history_interval", type=int, default=15, help="History interval in frames.")
     parser.add_argument("--state_dim", type=int, default=14, help="State dimension.")
     parser.add_argument("--action_dim", type=int, default=14, help="Action dimension.")
+    parser.add_argument(
+        "--prefetch_lead_steps",
+        type=int,
+        default=10,
+        help="Minimum number of remaining control steps before we start prefetching the next action chunk.",
+    )
+    parser.add_argument(
+        "--log_timing_every",
+        type=int,
+        default=5,
+        help="Print server/client timing every N chunks. The first 3 chunks are always logged.",
+    )
     parser.add_argument(
         "--safe_stop_body_height",
         type=float,

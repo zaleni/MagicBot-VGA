@@ -13,7 +13,7 @@ LOAD_DEVICE=cpu \
 COSMOS_DEVICE=cuda \
 HOST=127.0.0.1 \
 PORT=8000 \
-INFER_HORIZON=30 \
+INFER_HORIZON=50 \
 bash evaluation/Real_Lift2/01_serve_magicbot_real_lift2.sh
 
 
@@ -23,4 +23,6 @@ cd /home/arx/MagicBot-VGA
 RUN_ENV=act \
 WS_URL=ws://127.0.0.1:8000 \
 PROMPT="Clear the junk and items off the desktop." \
+PREFETCH_LEAD_STEPS=10 \
+LOG_TIMING_EVERY=5 \
 bash evaluation/Real_Lift2/02_inference_lift2.sh

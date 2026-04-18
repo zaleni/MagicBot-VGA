@@ -20,6 +20,8 @@ MAX_PUBLISH_STEP="${MAX_PUBLISH_STEP:-10000}"
 RECORD_MODE="${RECORD_MODE:-}"
 STATE_DIM="${STATE_DIM:-}"
 ACTION_DIM="${ACTION_DIM:-}"
+PREFETCH_LEAD_STEPS="${PREFETCH_LEAD_STEPS:-}"
+LOG_TIMING_EVERY="${LOG_TIMING_EVERY:-}"
 SEED="${SEED:-}"
 SAFE_STOP_BODY_HEIGHT="${SAFE_STOP_BODY_HEIGHT:-}"
 SAFE_STOP_PUBLISH_STEPS="${SAFE_STOP_PUBLISH_STEPS:-}"
@@ -63,6 +65,14 @@ fi
 
 if [[ -n "${ACTION_DIM}" ]]; then
   ARGS+=(--action_dim="${ACTION_DIM}")
+fi
+
+if [[ -n "${PREFETCH_LEAD_STEPS}" ]]; then
+  ARGS+=(--prefetch_lead_steps="${PREFETCH_LEAD_STEPS}")
+fi
+
+if [[ -n "${LOG_TIMING_EVERY}" ]]; then
+  ARGS+=(--log_timing_every="${LOG_TIMING_EVERY}")
 fi
 
 if [[ -n "${SAFE_STOP_BODY_HEIGHT}" ]]; then

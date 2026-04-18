@@ -43,6 +43,9 @@ class RealLift2RemoteClient:
         self._image_histories.clear()
         self._send_reset = True
 
+    def close(self) -> None:
+        self._policy.close()
+
     def infer_step(
         self,
         *,

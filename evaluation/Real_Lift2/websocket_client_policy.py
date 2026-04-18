@@ -42,11 +42,23 @@ class WebsocketClientPolicy:
 
     def infer(self, obs: dict) -> dict:
         data = self._packer.pack(obs)
+        start_time = time.perf_counter()
         self._ws.send(data)
         response = self._ws.recv()
+        round_trip_ms = (time.perf_counter() - start_time) * 1000.0
         if isinstance(response, str):
             raise RuntimeError(f"Error in inference server:\n{response}")
-        return unpackb(response)
+        result = unpackb(response)
+        if isinstance(result, dict):
+            client_timing = result.setdefault("client_timing", {})
+            client_timing["round_trip_ms"] = float(round_trip_ms)
+        return result
 
     def reset(self) -> None:
         pass
+
+    def close(self) -> None:
+        try:
+            self._ws.close()
+        except Exception:
+            pass
