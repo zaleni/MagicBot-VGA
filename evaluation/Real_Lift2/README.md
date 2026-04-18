@@ -65,7 +65,7 @@ If your CubeV2 training/eval environment is already working, the main deep-learn
 The most common extra runtime packages needed by the websocket `serve` side are:
 
 ```bash
-pip install websockets msgpack pyyaml draccus huggingface_hub datasets pandas pyarrow pillow packaging einops
+pip install "websockets>=14" msgpack pyyaml draccus huggingface_hub datasets pandas pyarrow pillow packaging einops
 ```
 
 In most setups you should not reinstall `torch`, `torchvision`, or `transformers` here unless your existing CubeV2 environment is missing them.
