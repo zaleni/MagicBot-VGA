@@ -97,6 +97,7 @@ def parse_args() -> ServeArgs:
     parser.add_argument("--action_mode", choices=["abs", "delta"], default=None)
     parser.add_argument(
         "--disable_3d_teacher_for_eval",
+        "--disable-3d-teacher-for-eval",
         action=argparse.BooleanOptionalAction,
         default=True,
     )

@@ -35,8 +35,21 @@ ARGS=(
   --infer_horizon="${INFER_HORIZON}"
   --resize_size="${RESIZE_SIZE}"
   --default_prompt="${DEFAULT_PROMPT}"
-  --disable_3d_teacher_for_eval="${DISABLE_3D_TEACHER_FOR_EVAL}"
 )
+
+case "${DISABLE_3D_TEACHER_FOR_EVAL,,}" in
+  true|1|yes|y|on)
+    ARGS+=(--disable_3d_teacher_for_eval)
+    ;;
+  false|0|no|n|off)
+    ARGS+=(--no-disable_3d_teacher_for_eval)
+    ;;
+  *)
+    echo "Invalid DISABLE_3D_TEACHER_FOR_EVAL=${DISABLE_3D_TEACHER_FOR_EVAL}"
+    echo "Expected one of: true/false, 1/0, yes/no, on/off"
+    exit 1
+    ;;
+esac
 
 if [[ -n "${STATS_KEY:-}" ]]; then
   ARGS+=(--stats_key="${STATS_KEY}")

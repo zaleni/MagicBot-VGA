@@ -8,6 +8,7 @@ STATS_KEY=real_lift2 \
 ACTION_MODE=delta \
 HOST=127.0.0.1 \
 PORT=8000 \
+INFER_HORIZON=30 \
 bash evaluation/Real_Lift2/01_serve_magicbot_real_lift2.sh
 
 
