@@ -6,6 +6,7 @@ conda activate magicbot
 CHECKPOINT_DIR=/home/arx/MagicBot-VGA/models/magicbot-lift2-0418 \
 QWEN3_VL_PRETRAINED_PATH=/home/arx/MagicBot-VGA/models/Qwen3-VL-2B-Instruct \
 QWEN3_VL_PROCESSOR_PATH=/home/arx/MagicBot-VGA/models/Qwen3-VL-2B-Instruct \
+COSMOS_TOKENIZER_PATH_OR_NAME=nvidia/Cosmos-Tokenizer-CI8x8 \
 STATS_KEY=real_lift2 \
 ACTION_MODE=delta \
 HOST=127.0.0.1 \
