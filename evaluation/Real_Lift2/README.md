@@ -104,8 +104,12 @@ Typical `serve`-machine checklist:
 ```bash
 WS_URL=ws://127.0.0.1:8000 \
 PROMPT="Clear the junk and items off the desktop." \
+SEND_IMAGE_HEIGHT=240 \
+SEND_IMAGE_WIDTH=320 \
 bash evaluation/Real_Lift2/run_real_lift2_inference.sh
 ```
+
+If `sync` mode is stable but chunk boundaries still pause for too long, the safest first optimization is usually reducing the robot-side websocket image size, for example `240x320`. The server will still resize/pad again to the model input size.
 
 `real_lift2_inference.py` + `real_lift2_runtime.py` follow the same broad structure as the existing robot deployment loop:
 

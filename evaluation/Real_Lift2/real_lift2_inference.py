@@ -121,16 +121,26 @@ def print_timing_log(args, *, chunk_idx: int, action_seq_len: int, response: dic
     server_timing = response.get("server_timing", {}) if isinstance(response, dict) else {}
     client_timing = response.get("client_timing", {}) if isinstance(response, dict) else {}
     infer_ms = server_timing.get("infer_ms")
+    pack_ms = client_timing.get("pack_ms")
     round_trip_ms = client_timing.get("round_trip_ms")
+    total_client_ms = client_timing.get("total_client_ms")
+    payload_bytes = client_timing.get("payload_bytes")
+    effective_client_ms = total_client_ms if total_client_ms is not None else round_trip_ms
     chunk_budget_ms = 1000.0 * action_seq_len / max(1, args.frame_rate)
 
     message = f"[Timing] mode={args.inference_mode} chunk={chunk_idx} horizon={action_seq_len} budget={chunk_budget_ms:.1f}ms"
     if infer_ms is not None:
         message += f" server_infer={float(infer_ms):.1f}ms"
+    if pack_ms is not None:
+        message += f" pack={float(pack_ms):.1f}ms"
     if round_trip_ms is not None:
         message += f" round_trip={float(round_trip_ms):.1f}ms"
-        if float(round_trip_ms) > chunk_budget_ms:
-            message += "  <- slower than chunk budget, likely to cause stop-go motion"
+    if total_client_ms is not None:
+        message += f" total_client={float(total_client_ms):.1f}ms"
+    if effective_client_ms is not None and float(effective_client_ms) > chunk_budget_ms:
+        message += "  <- slower than chunk budget, likely to cause stop-go motion"
+    if payload_bytes is not None:
+        message += f" payload={float(payload_bytes) / (1024.0 * 1024.0):.2f}MB"
     print(message)
 
 
@@ -370,6 +380,8 @@ class AsyncChunkPrefetcher:
 def inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_command):
     ws_url = args.ws_url or os.getenv("REAL_LIFT2_WS_URL", "ws://127.0.0.1:8000")
     action_dim = config["policy_config"]["action_dim"]
+    send_image_height = args.send_image_height if args.send_image_height > 0 else None
+    send_image_width = args.send_image_width if args.send_image_width > 0 else None
     action = np.zeros((action_dim,), dtype=np.float32)
     robot_action(action, shm_dict)
     first_inference = True
@@ -383,10 +395,19 @@ def inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_comm
             image_history_interval=args.image_history_interval,
             state_dim=args.state_dim,
             max_history=args.image_history_interval + 1,
+            send_image_height=send_image_height,
+            send_image_width=send_image_width,
         )
 
     metadata_client = build_client()
     print(f"[MagicBot] WebSocket inference enabled: {ws_url}")
+    if send_image_height is not None and send_image_width is not None:
+        print(
+            f"[MagicBot] Robot-side request images will be downsampled to "
+            f"{send_image_height}x{send_image_width} before websocket transfer."
+        )
+    else:
+        print("[MagicBot] Robot-side request images use the native camera resolution.")
     try:
         print(f"[MagicBot] server metadata keys: {list(metadata_client.metadata.keys())}")
     except Exception:
@@ -485,7 +506,10 @@ def inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_comm
                     if isinstance(response, dict):
                         client_timing = response.get("client_timing", {})
                         if client_timing is not None:
-                            last_round_trip_ms = client_timing.get("round_trip_ms", last_round_trip_ms)
+                            last_round_trip_ms = client_timing.get(
+                                "total_client_ms",
+                                client_timing.get("round_trip_ms", last_round_trip_ms),
+                            )
 
                     print_timing_log(args, chunk_idx=chunk_idx, action_seq_len=len(action_seq), response=response)
 
@@ -664,6 +688,18 @@ def parse_args(known=False):
     parser.add_argument("--prompt", type=str, default="Clear the junk and items off the desktop.")
     parser.add_argument("--ws_url", type=str, default="", help="MagicBot websocket URL.")
     parser.add_argument("--image_history_interval", type=int, default=15, help="History interval in frames.")
+    parser.add_argument(
+        "--send_image_height",
+        type=int,
+        default=0,
+        help="Optional robot-side send height for websocket images. Set together with --send_image_width.",
+    )
+    parser.add_argument(
+        "--send_image_width",
+        type=int,
+        default=0,
+        help="Optional robot-side send width for websocket images. Set together with --send_image_height.",
+    )
     parser.add_argument("--state_dim", type=int, default=14, help="State dimension.")
     parser.add_argument("--action_dim", type=int, default=14, help="Action dimension.")
     parser.add_argument(
@@ -712,6 +748,13 @@ def parse_args(known=False):
 
 
 def main(args):
+    has_send_height = args.send_image_height > 0
+    has_send_width = args.send_image_width > 0
+    if has_send_height != has_send_width:
+        raise ValueError(
+            "--send_image_height and --send_image_width must either both be set to positive values or both stay unset."
+        )
+
     ensure_runtime_available()
     meta_queue = mp.Queue()
 

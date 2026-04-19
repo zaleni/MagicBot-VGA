@@ -27,6 +27,8 @@ WS_URL="${WS_URL:-ws://127.0.0.1:8000}"
 PROMPT="${PROMPT:-Clear the junk and items off the desktop.}"
 FRAME_RATE="${FRAME_RATE:-60}"
 IMAGE_HISTORY_INTERVAL="${IMAGE_HISTORY_INTERVAL:-15}"
+SEND_IMAGE_HEIGHT="${SEND_IMAGE_HEIGHT:-}"
+SEND_IMAGE_WIDTH="${SEND_IMAGE_WIDTH:-}"
 MAX_PUBLISH_STEP="${MAX_PUBLISH_STEP:-10000}"
 RECORD_MODE="${RECORD_MODE:-}"
 STATE_DIM="${STATE_DIM:-}"
@@ -48,6 +50,14 @@ ARGS=(
   --image_history_interval="${IMAGE_HISTORY_INTERVAL}"
   --max_publish_step="${MAX_PUBLISH_STEP}"
 )
+
+if [[ -n "${SEND_IMAGE_HEIGHT}" ]]; then
+  ARGS+=(--send_image_height="${SEND_IMAGE_HEIGHT}")
+fi
+
+if [[ -n "${SEND_IMAGE_WIDTH}" ]]; then
+  ARGS+=(--send_image_width="${SEND_IMAGE_WIDTH}")
+fi
 
 if [[ -n "${DATA_CONFIG:-}" ]]; then
   ARGS+=(--data="${DATA_CONFIG}")

@@ -32,6 +32,46 @@ def to_chw_uint8(image: Any) -> np.ndarray:
     return np.ascontiguousarray(image_np)
 
 
+def resize_chw_uint8_nearest(
+    image: np.ndarray,
+    *,
+    target_height: int | None = None,
+    target_width: int | None = None,
+) -> np.ndarray:
+    if target_height is None or target_width is None:
+        return np.ascontiguousarray(image)
+    if target_height <= 0 or target_width <= 0:
+        raise ValueError(
+            f"send_image_height/send_image_width must be positive when provided, got "
+            f"{target_height}x{target_width}."
+        )
+    if image.ndim != 3 or image.shape[0] != 3:
+        raise ValueError(f"Expected CHW image with 3 channels, got shape={image.shape}")
+
+    _, src_height, src_width = image.shape
+    if src_height == target_height and src_width == target_width:
+        return np.ascontiguousarray(image)
+
+    y_idx = np.rint(np.linspace(0, src_height - 1, target_height)).astype(np.int32)
+    x_idx = np.rint(np.linspace(0, src_width - 1, target_width)).astype(np.int32)
+    resized = image[:, y_idx[:, None], x_idx[None, :]]
+    return np.ascontiguousarray(resized)
+
+
+def prepare_history_frame(
+    image: Any,
+    *,
+    send_image_height: int | None = None,
+    send_image_width: int | None = None,
+) -> np.ndarray:
+    chw_image = to_chw_uint8(image)
+    return resize_chw_uint8_nearest(
+        chw_image,
+        target_height=send_image_height,
+        target_width=send_image_width,
+    )
+
+
 def build_history_stack(history_frames: list[np.ndarray], image_history_interval: int) -> np.ndarray:
     if not history_frames:
         raise ValueError("history_frames must contain at least one frame.")
@@ -51,6 +91,8 @@ def build_cubev2_request(
     image_history_interval: int = 15,
     state_dim: int = 14,
     camera_name_map: Mapping[str, str] | None = None,
+    send_image_height: int | None = None,
+    send_image_width: int | None = None,
 ) -> dict[str, Any]:
     if camera_name_map is None:
         camera_name_map = DEFAULT_CAMERA_MAP
@@ -60,14 +102,23 @@ def build_cubev2_request(
     state[: min(state_dim, qpos.size)] = qpos[:state_dim]
 
     images: dict[str, np.ndarray] = {}
+    blank_height = send_image_height or 480
+    blank_width = send_image_width or 640
     for local_name, remote_name in camera_name_map.items():
         history = image_histories.get(local_name, [])
         if not history:
-            blank = np.zeros((3, 480, 640), dtype=np.uint8)
+            blank = np.zeros((3, blank_height, blank_width), dtype=np.uint8)
             images[remote_name] = np.stack([blank, blank], axis=0)
             continue
 
-        chw_history = [to_chw_uint8(frame) for frame in history]
+        chw_history = [
+            prepare_history_frame(
+                frame,
+                send_image_height=send_image_height,
+                send_image_width=send_image_width,
+            )
+            for frame in history
+        ]
         images[remote_name] = build_history_stack(chw_history, image_history_interval=image_history_interval)
 
     return {
