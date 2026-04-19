@@ -18,6 +18,10 @@ DTYPE="${DTYPE:-bfloat16}"
 INFER_HORIZON="${INFER_HORIZON:-30}"
 RESIZE_SIZE="${RESIZE_SIZE:-224}"
 DEFAULT_PROMPT="${DEFAULT_PROMPT:-Clear the junk and items off the desktop.}"
+RTC_ENABLED="${RTC_ENABLED:-false}"
+RTC_EXECUTION_HORIZON="${RTC_EXECUTION_HORIZON:-10}"
+RTC_MAX_GUIDANCE_WEIGHT="${RTC_MAX_GUIDANCE_WEIGHT:-10.0}"
+RTC_PREFIX_ATTENTION_SCHEDULE="${RTC_PREFIX_ATTENTION_SCHEDULE:-exp}"
 DISABLE_3D_TEACHER_FOR_EVAL="${DISABLE_3D_TEACHER_FOR_EVAL:-true}"
 
 if [[ -z "${CHECKPOINT_DIR}" ]]; then
@@ -26,7 +30,7 @@ if [[ -z "${CHECKPOINT_DIR}" ]]; then
 fi
 
 ARGS=(
-  python evaluation/Real_Lift2/serve_magicbot_policy.py
+  python evaluation/Real_Lift2/model_server.py
   --ckpt_path="${CHECKPOINT_DIR}"
   --host="${HOST}"
   --port="${PORT}"
@@ -61,6 +65,13 @@ fi
 
 if [[ -n "${ACTION_MODE:-}" ]]; then
   ARGS+=(--action_mode="${ACTION_MODE}")
+fi
+
+if [[ "${RTC_ENABLED,,}" == "true" ]]; then
+  ARGS+=(--rtc_enabled)
+  ARGS+=(--rtc_execution_horizon="${RTC_EXECUTION_HORIZON}")
+  ARGS+=(--rtc_max_guidance_weight="${RTC_MAX_GUIDANCE_WEIGHT}")
+  ARGS+=(--rtc_prefix_attention_schedule="${RTC_PREFIX_ATTENTION_SCHEDULE}")
 fi
 
 if [[ -n "${LOAD_DEVICE:-}" ]]; then

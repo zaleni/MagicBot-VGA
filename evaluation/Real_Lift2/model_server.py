@@ -28,17 +28,20 @@ import torch
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.train import TrainPipelineConfig
+from lerobot.configs.types import RTCAttentionSchedule
 from lerobot.datasets.utils import load_json
+from lerobot.policies.cubev2.modeling_cubev2_rtc import CubeV2RTCPolicy
 from lerobot.policies.cubev2.transform_cubev2 import Qwen3_VLProcessorTransformFn
 from lerobot.policies.factory import get_policy_class
+from lerobot.policies.rtc import RTCConfig, RTCProcessor
 from lerobot.transforms.constants import get_mask_mapping
 from lerobot.transforms.core import NormalizeTransformFn, ResizeImagesWithPadFn, UnNormalizeTransformFn
 from lerobot.utils.constants import OBS_IMAGES, OBS_STATE
 
 try:
-    from .websocket_policy_server import WebsocketPolicyServer
+    from .websocket_server import WebsocketPolicyServer
 except ImportError:
-    from websocket_policy_server import WebsocketPolicyServer
+    from websocket_server import WebsocketPolicyServer
 
 
 CAMERA_ALIASES = {
@@ -70,6 +73,10 @@ class ServeArgs:
     da3_model_path_or_name: str | None = None
     da3_code_root: str | None = None
     action_mode: str | None = None
+    rtc_enabled: bool = False
+    rtc_execution_horizon: int = 10
+    rtc_max_guidance_weight: float = 10.0
+    rtc_prefix_attention_schedule: str = "linear"
     disable_3d_teacher_for_eval: bool = True
 
 
@@ -103,6 +110,20 @@ def parse_args() -> ServeArgs:
     parser.add_argument("--da3_model_path_or_name", default=None)
     parser.add_argument("--da3_code_root", default=None)
     parser.add_argument("--action_mode", choices=["abs", "delta"], default=None)
+    parser.add_argument(
+        "--rtc_enabled",
+        "--rtc-enabled",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Enable runtime-only Real-Time Chunking guidance for CubeV2 inference.",
+    )
+    parser.add_argument("--rtc_execution_horizon", type=int, default=10)
+    parser.add_argument("--rtc_max_guidance_weight", type=float, default=10.0)
+    parser.add_argument(
+        "--rtc_prefix_attention_schedule",
+        choices=["zeros", "ones", "linear", "exp"],
+        default="linear",
+    )
     parser.add_argument(
         "--disable_3d_teacher_for_eval",
         "--disable-3d-teacher-for-eval",
@@ -278,7 +299,7 @@ class MagicBotRemotePolicy:
             config.n_action_steps = min(args.infer_horizon, config.chunk_size)
         self.infer_horizon = int(args.infer_horizon or getattr(config, "n_action_steps", config.chunk_size))
 
-        policy_cls = get_policy_class(config.type)
+        policy_cls = CubeV2RTCPolicy if args.rtc_enabled else get_policy_class(config.type)
         self.policy = policy_cls.from_pretrained(config=config, pretrained_name_or_path=self.ckpt_dir)
         self.policy.config.device = self.device
         setattr(self.policy.config, "cosmos_device", self.cosmos_device)
@@ -297,6 +318,8 @@ class MagicBotRemotePolicy:
         self.action_stats = {
             "action": {key: np.asarray(stats["action"][key]) for key in stat_keys}
         }
+        self.action_mean = np.asarray(self.action_stats["action"]["mean"], dtype=np.float32)
+        self.action_std = np.asarray(self.action_stats["action"]["std"], dtype=np.float32)
         self.target_action_dim = int(self.action_stats["action"]["mean"].shape[0])
 
         self.resize_fn = ResizeImagesWithPadFn(height=args.resize_size, width=args.resize_size)
@@ -328,6 +351,17 @@ class MagicBotRemotePolicy:
         if self.action_mode not in {"abs", "delta"}:
             raise ValueError(f"Unsupported action_mode: {self.action_mode}")
 
+        self.rtc_config: RTCConfig | None = None
+        self.rtc_processor: RTCProcessor | None = None
+        if args.rtc_enabled:
+            self.rtc_config = RTCConfig(
+                enabled=True,
+                execution_horizon=int(args.rtc_execution_horizon),
+                max_guidance_weight=float(args.rtc_max_guidance_weight),
+                prefix_attention_schedule=RTCAttentionSchedule(args.rtc_prefix_attention_schedule.upper()),
+            )
+            self.rtc_processor = RTCProcessor(self.rtc_config)
+
         self.delta_mask = None
         if self.action_mode == "delta":
             self.delta_mask = get_mask_mapping(self.stats_key).detach().cpu().numpy().astype(np.float32)
@@ -341,6 +375,10 @@ class MagicBotRemotePolicy:
             "dtype": str(self.runtime_dtype),
             "infer_horizon": self.infer_horizon,
             "default_prompt": args.default_prompt,
+            "rtc_enabled": bool(args.rtc_enabled),
+            "rtc_execution_horizon": int(args.rtc_execution_horizon),
+            "rtc_max_guidance_weight": float(args.rtc_max_guidance_weight),
+            "rtc_prefix_attention_schedule": args.rtc_prefix_attention_schedule,
         }
 
     @property
@@ -420,18 +458,91 @@ class MagicBotRemotePolicy:
 
         return inputs, state
 
+    def _coerce_prev_chunk_array(self, prev_chunk_value: Any) -> np.ndarray:
+        prev_chunk_np = np.asarray(prev_chunk_value, dtype=np.float32)
+        if prev_chunk_np.ndim == 2:
+            prev_chunk_np = prev_chunk_np[None]
+        elif prev_chunk_np.ndim != 3:
+            raise ValueError(
+                "prev_chunk_left_over must be shaped as [T, A] or [B, T, A], "
+                f"got {prev_chunk_np.shape}."
+            )
+        return np.ascontiguousarray(prev_chunk_np)
+
+    def _normalize_action_array(self, action_array: np.ndarray) -> np.ndarray:
+        eps = 1e-6
+        action_array = np.asarray(action_array, dtype=np.float32).copy()
+        action_dim = action_array.shape[-1]
+
+        mean = np.zeros((action_dim,), dtype=np.float32)
+        std = np.ones((action_dim,), dtype=np.float32)
+        usable_dims = min(action_dim, self.action_mean.shape[0], self.action_std.shape[0])
+        mean[:usable_dims] = self.action_mean[:usable_dims]
+        std[:usable_dims] = self.action_std[:usable_dims]
+
+        return (action_array - mean.reshape((1,) * (action_array.ndim - 1) + (-1,))) / (
+            std.reshape((1,) * (action_array.ndim - 1) + (-1,)) + eps
+        )
+
+    def _prepare_rtc_prefix(self, obs: dict[str, Any], state: np.ndarray) -> torch.Tensor | None:
+        prev_chunk_processed_value = obs.get("prev_chunk_left_over_processed")
+        prev_chunk_value = obs.get("prev_chunk_left_over")
+        if prev_chunk_processed_value is None and prev_chunk_value is None:
+            return None
+
+        if prev_chunk_processed_value is not None:
+            prev_chunk_np = self._coerce_prev_chunk_array(prev_chunk_processed_value)
+            if self.action_mode == "delta":
+                action_dim = prev_chunk_np.shape[-1]
+                delta_mask = np.zeros((action_dim,), dtype=np.float32)
+                if self.delta_mask is not None:
+                    usable_mask_dims = min(action_dim, self.delta_mask.shape[0])
+                    delta_mask[:usable_mask_dims] = self.delta_mask[:usable_mask_dims]
+
+                state_pad = np.zeros((action_dim,), dtype=np.float32)
+                usable_state_dims = min(action_dim, state.shape[0])
+                state_pad[:usable_state_dims] = state[:usable_state_dims]
+                prev_chunk_np = prev_chunk_np - (state_pad * delta_mask).reshape(1, 1, -1)
+
+            prev_chunk_np = self._normalize_action_array(prev_chunk_np)
+        else:
+            prev_chunk_np = self._coerce_prev_chunk_array(prev_chunk_value)
+
+        return torch.from_numpy(prev_chunk_np).to(device=self.device, dtype=torch.float32)
+
     def infer(self, obs: dict[str, Any]) -> dict[str, Any]:
         if obs.get("reset") or obs.get("timestep") == 0:
             self.policy.reset()
 
         inputs, state = self._prepare_inputs(obs)
-        with torch.no_grad():
-            action_pred, _ = self.policy.predict_action_chunk(inputs, decode_image=False)
+        if self.rtc_processor is not None:
+            inference_delay = None
+            prev_chunk_left_over = None
+            if obs.get("inference_delay") is not None:
+                inference_delay = int(obs["inference_delay"])
+            prev_chunk_left_over = self._prepare_rtc_prefix(obs, state)
+
+            with torch.no_grad():
+                action_pred, _ = self.policy.predict_action_chunk(
+                    inputs,
+                    decode_image=False,
+                    inference_delay=inference_delay,
+                    prev_chunk_left_over=prev_chunk_left_over,
+                    rtc_processor=self.rtc_processor,
+                    execution_horizon=self.rtc_config.execution_horizon,
+                )
+        else:
+            with torch.no_grad():
+                action_pred, _ = self.policy.predict_action_chunk(
+                    inputs,
+                    decode_image=False,
+                )
 
         if action_pred.ndim != 3:
             raise RuntimeError(f"Unexpected action prediction shape: {tuple(action_pred.shape)}")
-        action_pred = action_pred[0, : self.infer_horizon, : self.target_action_dim]
-        action_pred = self.unnormalize_action_fn({"action": action_pred})["action"]
+        model_action_pred = action_pred[0, : self.infer_horizon, : self.target_action_dim]
+        action_pred = self.unnormalize_action_fn({"action": model_action_pred})["action"]
+        model_action_np = model_action_pred.detach().cpu().numpy().astype(np.float32)
         action_np = action_pred.detach().cpu().numpy().astype(np.float32)
 
         if self.action_mode == "delta":
@@ -446,6 +557,8 @@ class MagicBotRemotePolicy:
         return {
             "actions": action_np,
             "action": action_np[0],
+            "model_actions": model_action_np,
+            "model_action": model_action_np[0],
         }
 
 

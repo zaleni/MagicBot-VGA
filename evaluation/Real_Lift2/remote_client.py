@@ -8,10 +8,10 @@ import numpy as np
 
 try:
     from .request_builder import build_cubev2_request, prepare_history_frame
-    from .websocket_client_policy import WebsocketClientPolicy
+    from .websocket_client import WebsocketClientPolicy
 except ImportError:
     from request_builder import build_cubev2_request, prepare_history_frame
-    from websocket_client_policy import WebsocketClientPolicy
+    from websocket_client import WebsocketClientPolicy
 
 
 class RealLift2RemoteClient:
@@ -57,6 +57,9 @@ class RealLift2RemoteClient:
         qpos: np.ndarray,
         timestep: int,
         prompt: str | None = None,
+        inference_delay: int | None = None,
+        prev_chunk_left_over: np.ndarray | None = None,
+        prev_chunk_left_over_processed: np.ndarray | None = None,
     ) -> dict:
         for camera_name, image in images.items():
             prepared = prepare_history_frame(
@@ -77,6 +80,9 @@ class RealLift2RemoteClient:
             state_dim=self._state_dim,
             send_image_height=self._send_image_height,
             send_image_width=self._send_image_width,
+            inference_delay=inference_delay,
+            prev_chunk_left_over=prev_chunk_left_over,
+            prev_chunk_left_over_processed=prev_chunk_left_over_processed,
         )
         request["reset"] = bool(self._send_reset or request["reset"])
         self._send_reset = False

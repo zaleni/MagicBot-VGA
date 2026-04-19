@@ -50,7 +50,8 @@ else:
 
 _shutdown_in_progress = False
 _observation_warning_cache: set[str] = set()
-MANUAL_HOME_TOTAL_PUBLISH_STEPS = 180
+DEFAULT_MANUAL_HOME_DURATION_S = 1.0
+DEFAULT_MANUAL_HOME_RESUME_GUARD_STEPS = 12
 
 
 def ensure_compat_args(args) -> None:
@@ -60,6 +61,8 @@ def ensure_compat_args(args) -> None:
         "use_qvel": False,
         "use_effort": False,
         "use_eef_states": False,
+        "manual_home_publish_steps": 0,
+        "manual_home_resume_guard_steps": DEFAULT_MANUAL_HOME_RESUME_GUARD_STEPS,
     }
     for key, value in compat_defaults.items():
         if not hasattr(args, key):
@@ -227,8 +230,20 @@ def publish_staged_home_arms(
         eased_progress = progress * progress * (3.0 - 2.0 * progress)
         staged = (1.0 - eased_progress) * current_qpos
         left_action, right_action = split_bimanual_action(staged)
-        ros_operator.follow_arm_publish_continuous(left_action, right_action)
+        # Avoid the blocking "continuous" helper here. It tends to wait for each
+        # tiny sub-target to finish and can spam per-step done logs, which makes
+        # manual home look stop-and-go on the real robot.
+        ros_operator.follow_arm_publish(left_action, right_action)
         time.sleep(sleep_s)
+
+
+def resolve_manual_home_publish_steps(frame_rate: int, requested_steps: int) -> int:
+    requested_steps = int(requested_steps)
+    if requested_steps > 0:
+        return max(2, requested_steps)
+
+    auto_steps = int(round(max(1, frame_rate) * DEFAULT_MANUAL_HOME_DURATION_S))
+    return max(8, auto_steps)
 
 
 def publish_safe_stop_home_arms(
@@ -520,6 +535,7 @@ def ros_process(args, config, meta_queue, connected_event, start_event, shm_read
 
     rate = Rate(args.frame_rate)
     manual_home_active = False
+    manual_home_resume_guard_steps_remaining = 0
     while rclpy.ok():
         obs = get_observation_or_none(ros_operator)
         if not obs:
@@ -533,10 +549,14 @@ def ros_process(args, config, meta_queue, connected_event, start_event, shm_read
                     ros_operator=ros_operator,
                     current_qpos=current_qpos,
                     frame_rate=args.frame_rate,
-                    total_publish_steps=MANUAL_HOME_TOTAL_PUBLISH_STEPS,
+                    total_publish_steps=resolve_manual_home_publish_steps(
+                        frame_rate=args.frame_rate,
+                        requested_steps=args.manual_home_publish_steps,
+                    ),
                     log_prefix="[Manual Home]",
                 )
                 manual_home_active = True
+                manual_home_resume_guard_steps_remaining = 0
             if args.use_base and args.fixed_body_height >= 0:
                 fixed_h = float(args.fixed_body_height)
                 action_base = np.zeros((10,), dtype=np.float32)
@@ -546,6 +566,12 @@ def ros_process(args, config, meta_queue, connected_event, start_event, shm_read
             continue
         elif manual_home_active:
             manual_home_active = False
+            manual_home_resume_guard_steps_remaining = max(0, int(args.manual_home_resume_guard_steps))
+            if manual_home_resume_guard_steps_remaining > 0:
+                print(
+                    "[Manual Home] Resume requested. Holding zero actions for "
+                    f"{manual_home_resume_guard_steps_remaining} control steps to flush stale commands."
+                )
 
         for cam in args.camera_names:
             shm, shape, dtype = shm_dict[cam]
@@ -565,6 +591,16 @@ def ros_process(args, config, meta_queue, connected_event, start_event, shm_read
             action_base = np.zeros((10,), dtype=np.float32)
             action_base[3] = fixed_h
             ros_operator.set_robot_base_target(action_base)
+
+        if manual_home_resume_guard_steps_remaining > 0:
+            zero_action = np.zeros(shape, dtype=dtype)
+            robot_action(zero_action, shm_dict)
+            left_action = np.zeros((7,), dtype=np.float32)
+            right_action = np.zeros((7,), dtype=np.float32)
+            ros_operator.follow_arm_publish(left_action, right_action)
+            manual_home_resume_guard_steps_remaining -= 1
+            rate.sleep()
+            continue
 
         if np.any(action):
             left_action = action[: gripper_idx[0] + 1].copy()

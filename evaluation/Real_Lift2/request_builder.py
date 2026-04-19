@@ -93,6 +93,9 @@ def build_cubev2_request(
     camera_name_map: Mapping[str, str] | None = None,
     send_image_height: int | None = None,
     send_image_width: int | None = None,
+    inference_delay: int | None = None,
+    prev_chunk_left_over: np.ndarray | None = None,
+    prev_chunk_left_over_processed: np.ndarray | None = None,
 ) -> dict[str, Any]:
     if camera_name_map is None:
         camera_name_map = DEFAULT_CAMERA_MAP
@@ -121,10 +124,19 @@ def build_cubev2_request(
         ]
         images[remote_name] = build_history_stack(chw_history, image_history_interval=image_history_interval)
 
-    return {
+    request = {
         "images": images,
         "state": state,
         "prompt": prompt,
         "timestep": int(timestep),
         "reset": bool(timestep == 0),
     }
+    if inference_delay is not None:
+        request["inference_delay"] = int(inference_delay)
+    if prev_chunk_left_over is not None:
+        prev_chunk = np.asarray(prev_chunk_left_over, dtype=np.float32)
+        request["prev_chunk_left_over"] = np.ascontiguousarray(prev_chunk)
+    if prev_chunk_left_over_processed is not None:
+        prev_chunk_processed = np.asarray(prev_chunk_left_over_processed, dtype=np.float32)
+        request["prev_chunk_left_over_processed"] = np.ascontiguousarray(prev_chunk_processed)
+    return request

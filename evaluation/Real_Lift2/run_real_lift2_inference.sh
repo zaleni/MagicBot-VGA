@@ -4,8 +4,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJ_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 REAL_LIFT2_RUNTIME_ROOT="${REAL_LIFT2_RUNTIME_ROOT:-/home/arx/ROS2_LIFT_Play/act}"
-ENTRY_SCRIPT="${PROJ_ROOT}/evaluation/Real_Lift2/real_lift2_inference.py"
-RUNTIME_MODULE="${PROJ_ROOT}/evaluation/Real_Lift2/real_lift2_runtime.py"
+ENTRY_SCRIPT="${PROJ_ROOT}/evaluation/Real_Lift2/main.py"
+RUNTIME_MODULE="${PROJ_ROOT}/evaluation/Real_Lift2/runtime.py"
+INFERENCE_MODULE="${PROJ_ROOT}/evaluation/Real_Lift2/inference.py"
 
 export PYTHONUNBUFFERED=1
 export TOKENIZERS_PARALLELISM=false
@@ -14,7 +15,7 @@ export PYTHONPATH="${REAL_LIFT2_RUNTIME_ROOT}:${PROJ_ROOT}/src:${PROJ_ROOT}:${PY
 
 cd "${PROJ_ROOT}"
 
-for required_file in "${ENTRY_SCRIPT}" "${RUNTIME_MODULE}"; do
+for required_file in "${ENTRY_SCRIPT}" "${RUNTIME_MODULE}" "${INFERENCE_MODULE}"; do
   if [[ ! -f "${required_file}" ]]; then
     echo "Required deployment file is missing:"
     echo "  ${required_file}"
@@ -36,11 +37,17 @@ ACTION_DIM="${ACTION_DIM:-}"
 INFERENCE_MODE="${INFERENCE_MODE:-}"
 PREFETCH_LEAD_STEPS="${PREFETCH_LEAD_STEPS:-}"
 LOG_TIMING_EVERY="${LOG_TIMING_EVERY:-}"
+RTC_EXECUTION_HORIZON="${RTC_EXECUTION_HORIZON:-}"
+RTC_MAX_GUIDANCE_WEIGHT="${RTC_MAX_GUIDANCE_WEIGHT:-}"
+RTC_QUEUE_THRESHOLD="${RTC_QUEUE_THRESHOLD:-}"
+RTC_LATENCY_LOOKBACK="${RTC_LATENCY_LOOKBACK:-}"
 SEED="${SEED:-}"
 SAFE_STOP_BODY_HEIGHT="${SAFE_STOP_BODY_HEIGHT:-}"
 SAFE_STOP_PUBLISH_STEPS="${SAFE_STOP_PUBLISH_STEPS:-}"
 SAFE_STOP_HOME_ARMS="${SAFE_STOP_HOME_ARMS:-}"
 SAFE_STOP_HOME_PUBLISH_STEPS="${SAFE_STOP_HOME_PUBLISH_STEPS:-}"
+MANUAL_HOME_PUBLISH_STEPS="${MANUAL_HOME_PUBLISH_STEPS:-}"
+MANUAL_HOME_RESUME_GUARD_STEPS="${MANUAL_HOME_RESUME_GUARD_STEPS:-}"
 
 ARGS=(
   python "${ENTRY_SCRIPT}"
@@ -103,6 +110,22 @@ if [[ -n "${LOG_TIMING_EVERY}" ]]; then
   ARGS+=(--log_timing_every="${LOG_TIMING_EVERY}")
 fi
 
+if [[ -n "${RTC_EXECUTION_HORIZON}" ]]; then
+  ARGS+=(--rtc_execution_horizon="${RTC_EXECUTION_HORIZON}")
+fi
+
+if [[ -n "${RTC_MAX_GUIDANCE_WEIGHT}" ]]; then
+  ARGS+=(--rtc_max_guidance_weight="${RTC_MAX_GUIDANCE_WEIGHT}")
+fi
+
+if [[ -n "${RTC_QUEUE_THRESHOLD}" ]]; then
+  ARGS+=(--rtc_queue_threshold="${RTC_QUEUE_THRESHOLD}")
+fi
+
+if [[ -n "${RTC_LATENCY_LOOKBACK}" ]]; then
+  ARGS+=(--rtc_latency_lookback="${RTC_LATENCY_LOOKBACK}")
+fi
+
 if [[ -n "${SAFE_STOP_BODY_HEIGHT}" ]]; then
   ARGS+=(--safe_stop_body_height="${SAFE_STOP_BODY_HEIGHT}")
 fi
@@ -117,6 +140,14 @@ fi
 
 if [[ -n "${SAFE_STOP_HOME_PUBLISH_STEPS}" ]]; then
   ARGS+=(--safe_stop_home_publish_steps="${SAFE_STOP_HOME_PUBLISH_STEPS}")
+fi
+
+if [[ -n "${MANUAL_HOME_PUBLISH_STEPS}" ]]; then
+  ARGS+=(--manual_home_publish_steps="${MANUAL_HOME_PUBLISH_STEPS}")
+fi
+
+if [[ -n "${MANUAL_HOME_RESUME_GUARD_STEPS}" ]]; then
+  ARGS+=(--manual_home_resume_guard_steps="${MANUAL_HOME_RESUME_GUARD_STEPS}")
 fi
 
 "${ARGS[@]}"

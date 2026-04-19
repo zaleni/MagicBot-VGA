@@ -5,25 +5,37 @@ It does not depend on `openpi` or on the original PI deployment script.
 
 ## Files
 
-- `serve_magicbot_policy.py`
-  Starts the MagicBot websocket inference server.
+### Entrypoints
+
+- `model_server.py`
+  Starts the MagicBot websocket inference server on the GPU machine.
 - `01_serve_magicbot_real_lift2.sh`
   Shell wrapper for starting the server.
-- `real_lift2_inference.py`
-  The real-robot deployment entrypoint for MagicBot inference orchestration.
-- `real_lift2_runtime.py`
-  Robot-runtime helpers extracted from the entrypoint: ROS setup, shared memory, safe-stop, and low-level action publish logic.
+- `main.py`
+  Thin real-robot deployment entrypoint for MagicBot inference orchestration.
 - `run_real_lift2_inference.sh`
   Shell wrapper for the real-robot deployment loop.
-- `test_magicbot_remote_server.py`
-  Lightweight connectivity checker for validating that the robot-side machine can reach a remote MagicBot websocket server.
-- `real_lift2_remote_client.py`
+- `02_inference_lift2.sh`
+  Convenience launcher that starts the full robot-side stack and the Real_Lift2 inference window.
+
+### Robot-Side Runtime
+
+- `inference.py`
+  Robot-side inference session logic: sync/async/RTC loops, manual-home interaction, and first-chunk safety confirmation.
+- `runtime.py`
+  Robot-runtime helpers extracted from the entrypoint: ROS setup, shared memory, safe-stop, and low-level action publish logic.
+- `remote_client.py`
   Lightweight client helper for calling the websocket server from your own robot loop.
+- `test_remote_server.py`
+  Lightweight connectivity checker for validating that the robot-side machine can reach a remote MagicBot websocket server.
+
+### Transport Helpers
+
 - `request_builder.py`
   Builds `images + qpos + history` request payloads.
-- `websocket_policy_server.py`
+- `websocket_server.py`
   Local websocket server implementation.
-- `websocket_client_policy.py`
+- `websocket_client.py`
   Local websocket client implementation.
 - `msgpack_numpy.py`
   NumPy-aware msgpack serialization helpers.
@@ -111,7 +123,7 @@ bash evaluation/Real_Lift2/run_real_lift2_inference.sh
 
 If `sync` mode is stable but chunk boundaries still pause for too long, the safest first optimization is usually reducing the robot-side websocket image size, for example `240x320`. The server will still resize/pad again to the model input size.
 
-`real_lift2_inference.py` + `real_lift2_runtime.py` follow the same broad structure as the existing robot deployment loop:
+`main.py` + `inference.py` + `runtime.py` follow the same broad structure as the existing robot deployment loop:
 
 - a ROS/shared-memory process reads robot observations
 - an inference process sends camera/state data to the MagicBot websocket server
@@ -125,21 +137,21 @@ Typical `run`-machine checklist:
 - `utils.ros_operator`, `utils.setup_loader`, and related robot-side helpers
 - network access to the websocket server
 - no MagicBot checkpoint loading needed on this side
-- sync both `real_lift2_inference.py` and `real_lift2_runtime.py` to the robot machine together
+- sync `main.py`, `inference.py`, and `runtime.py` to the robot machine together
 
 ## Test Remote Server Connectivity
 
 Before launching the real robot loop, you can verify that the robot-side machine can reach a remote GPU server:
 
 ```bash
-python evaluation/Real_Lift2/test_magicbot_remote_server.py \
+python evaluation/Real_Lift2/test_remote_server.py \
   --ws_url ws://10.60.43.33:8101
 ```
 
 If you also want to send a dummy all-zero observation and validate the returned action chunk shape:
 
 ```bash
-python evaluation/Real_Lift2/test_magicbot_remote_server.py \
+python evaluation/Real_Lift2/test_remote_server.py \
   --ws_url ws://10.60.43.33:8101 \
   --smoke_infer
 ```
@@ -147,7 +159,7 @@ python evaluation/Real_Lift2/test_magicbot_remote_server.py \
 ## Minimal Client Usage
 
 ```python
-from evaluation.Real_Lift2.real_lift2_remote_client import RealLift2RemoteClient
+from evaluation.Real_Lift2.remote_client import RealLift2RemoteClient
 
 client = RealLift2RemoteClient(
     host="ws://127.0.0.1:8000",

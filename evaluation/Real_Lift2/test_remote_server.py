@@ -19,11 +19,11 @@ for candidate in [THIS_DIR, SRC_ROOT, REPO_ROOT]:
         sys.path.insert(0, candidate_str)
 
 try:
-    from .real_lift2_remote_client import RealLift2RemoteClient
-    from .websocket_client_policy import WebsocketClientPolicy
+    from .remote_client import RealLift2RemoteClient
+    from .websocket_client import WebsocketClientPolicy
 except ImportError:
-    from real_lift2_remote_client import RealLift2RemoteClient
-    from websocket_client_policy import WebsocketClientPolicy
+    from remote_client import RealLift2RemoteClient
+    from websocket_client import WebsocketClientPolicy
 
 
 def parse_args():
