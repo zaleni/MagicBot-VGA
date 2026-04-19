@@ -20,6 +20,7 @@ MAX_PUBLISH_STEP="${MAX_PUBLISH_STEP:-10000}"
 RECORD_MODE="${RECORD_MODE:-}"
 STATE_DIM="${STATE_DIM:-}"
 ACTION_DIM="${ACTION_DIM:-}"
+INFERENCE_MODE="${INFERENCE_MODE:-}"
 PREFETCH_LEAD_STEPS="${PREFETCH_LEAD_STEPS:-}"
 LOG_TIMING_EVERY="${LOG_TIMING_EVERY:-}"
 SEED="${SEED:-}"
@@ -65,6 +66,10 @@ fi
 
 if [[ -n "${ACTION_DIM}" ]]; then
   ARGS+=(--action_dim="${ACTION_DIM}")
+fi
+
+if [[ -n "${INFERENCE_MODE}" ]]; then
+  ARGS+=(--inference_mode="${INFERENCE_MODE}")
 fi
 
 if [[ -n "${PREFETCH_LEAD_STEPS}" ]]; then

@@ -24,6 +24,7 @@ cd /home/arx/MagicBot-VGA
 RUN_ENV=act \
 WS_URL=ws://10.60.43.33:8101 \
 PROMPT="Clear the junk and items off the desktop." \
+INFERENCE_MODE=sync \
 PREFETCH_LEAD_STEPS=10 \
 LOG_TIMING_EVERY=5 \
 bash evaluation/Real_Lift2/02_inference_lift2.sh
