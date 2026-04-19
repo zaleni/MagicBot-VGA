@@ -7,6 +7,7 @@ import collections
 import multiprocessing as mp
 import os
 import queue
+import select
 import signal
 import sys
 import threading
@@ -185,6 +186,21 @@ def init_robot(ros_operator, use_base, connected_event, start_event):
         ros_operator.start_base_control_thread()
 
 
+def publish_safe_stop_home_arms(ros_operator, frame_rate: int, publish_steps: int) -> None:
+    """Publish the same zero home pose used by home_arm.sh before lowering the base."""
+    try:
+        home_action = np.zeros((7,), dtype=np.float32)
+        print(
+            f"[SafeStop] Publishing arm-home target for {publish_steps} steps "
+            f"before lowering the base."
+        )
+        for _ in range(max(1, int(publish_steps))):
+            ros_operator.follow_arm_publish_continuous(home_action, home_action)
+            time.sleep(max(1.0 / max(1, int(frame_rate)), 0.01))
+    except Exception as exc:
+        print(f"[SafeStop] Failed to publish arm-home target: {exc}")
+
+
 def publish_safe_stop_base(ros_operator, safe_stop_body_height: float | None, frame_rate: int, publish_steps: int) -> None:
     if safe_stop_body_height is None:
         return
@@ -203,8 +219,24 @@ def publish_safe_stop_base(ros_operator, safe_stop_body_height: float | None, fr
         print(f"[SafeStop] Failed to publish safe-stop base target: {exc}")
 
 
-def signal_handler(_signal, _frame, ros_operator, use_base: bool, safe_stop_body_height: float | None, safe_stop_publish_steps: int, frame_rate: int):
+def signal_handler(
+    _signal,
+    _frame,
+    ros_operator,
+    use_base: bool,
+    safe_stop_home_arms: bool,
+    safe_stop_home_publish_steps: int,
+    safe_stop_body_height: float | None,
+    safe_stop_publish_steps: int,
+    frame_rate: int,
+):
     print("Caught shutdown signal")
+    if safe_stop_home_arms:
+        publish_safe_stop_home_arms(
+            ros_operator=ros_operator,
+            frame_rate=frame_rate,
+            publish_steps=safe_stop_home_publish_steps,
+        )
     if use_base:
         publish_safe_stop_base(
             ros_operator=ros_operator,
@@ -308,6 +340,66 @@ def print_timing_log(args, *, chunk_idx: int, action_seq_len: int, response: dic
         if float(round_trip_ms) > chunk_budget_ms:
             message += "  <- slower than chunk budget, likely to cause stop-go motion"
     print(message)
+
+
+def set_manual_home_command(manual_home_command, enabled: bool) -> None:
+    with manual_home_command.get_lock():
+        manual_home_command.value = 1 if enabled else 0
+
+
+def poll_manual_console_command(manual_home_active: bool) -> str | None:
+    if not sys.stdin or not sys.stdin.isatty():
+        return None
+
+    try:
+        ready, _, _ = select.select([sys.stdin], [], [], 0.0)
+    except Exception:
+        return None
+
+    if not ready:
+        return None
+
+    try:
+        line = sys.stdin.readline()
+    except Exception:
+        return None
+
+    if line == "":
+        return None
+
+    command = line.strip().lower()
+    if command == "h":
+        return "home"
+    if command == "" and manual_home_active:
+        return "resume"
+    return command or None
+
+
+def maybe_enter_manual_home_pause(args, ros_proc, shm_dict, manual_home_command, action_dim: int) -> bool:
+    command = poll_manual_console_command(manual_home_active=False)
+    if command != "home":
+        return False
+
+    set_manual_home_command(manual_home_command, True)
+    robot_action(np.zeros((action_dim,), dtype=np.float32), shm_dict)
+    print(
+        "\n[Manual Home] Homing both arms now while keeping the base height unchanged.\n"
+        "[Manual Home] Press Enter to resume with a fresh rollout.\n"
+    )
+
+    while ros_proc.is_alive():
+        resume_command = poll_manual_console_command(manual_home_active=True)
+        if resume_command == "resume":
+            set_manual_home_command(manual_home_command, False)
+            robot_action(np.zeros((action_dim,), dtype=np.float32), shm_dict)
+            print("[Manual Home] Resume confirmed. Starting a fresh rollout.\n")
+            return True
+        if resume_command not in (None, "home"):
+            print("[Manual Home] Currently paused at home pose. Press Enter to resume.")
+        time.sleep(0.05)
+
+    set_manual_home_command(manual_home_command, False)
+    return True
 
 
 def maybe_run_first_safety_check(args, response, obs_dict, action_dim):
@@ -459,7 +551,7 @@ class AsyncChunkPrefetcher:
         self._thread.join(timeout=1.0)
 
 
-def ros_process(args, config, meta_queue, connected_event, start_event, shm_ready_event):
+def ros_process(args, config, meta_queue, connected_event, start_event, shm_ready_event, manual_home_command):
     ensure_runtime_available()
     ensure_compat_args(args)
     setup_loader(ROBOT_RUNTIME_ROOT)
@@ -484,6 +576,8 @@ def ros_process(args, config, meta_queue, connected_event, start_event, shm_read
             signal_handler,
             ros_operator=ros_operator,
             use_base=args.use_base,
+            safe_stop_home_arms=args.safe_stop_home_arms,
+            safe_stop_home_publish_steps=args.safe_stop_home_publish_steps,
             safe_stop_body_height=args.safe_stop_body_height,
             safe_stop_publish_steps=args.safe_stop_publish_steps,
             frame_rate=args.frame_rate,
@@ -495,6 +589,8 @@ def ros_process(args, config, meta_queue, connected_event, start_event, shm_read
             signal_handler,
             ros_operator=ros_operator,
             use_base=args.use_base,
+            safe_stop_home_arms=args.safe_stop_home_arms,
+            safe_stop_home_publish_steps=args.safe_stop_home_publish_steps,
             safe_stop_body_height=args.safe_stop_body_height,
             safe_stop_publish_steps=args.safe_stop_publish_steps,
             frame_rate=args.frame_rate,
@@ -530,6 +626,12 @@ def ros_process(args, config, meta_queue, connected_event, start_event, shm_read
     while rclpy.ok():
         obs = ros_operator.get_observation()
         if not obs:
+            rate.sleep()
+            continue
+
+        if manual_home_command.value == 1:
+            home_action = np.zeros((7,), dtype=np.float32)
+            ros_operator.follow_arm_publish_continuous(home_action, home_action)
             rate.sleep()
             continue
 
@@ -580,7 +682,7 @@ def ros_process(args, config, meta_queue, connected_event, start_event, shm_read
         shm.unlink()
 
 
-def inference_process(args, config, shm_dict, shapes, ros_proc):
+def inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_command):
     ws_url = args.ws_url or os.getenv("REAL_LIFT2_WS_URL", "ws://127.0.0.1:8000")
     action_dim = config["policy_config"]["action_dim"]
     action = np.zeros((action_dim,), dtype=np.float32)
@@ -605,9 +707,11 @@ def inference_process(args, config, shm_dict, shapes, ros_proc):
         pass
     finally:
         metadata_client.close()
+    print("[Manual Home] Type 'h' then Enter to home both arms without changing base height. Press Enter again to resume.")
 
     while ros_proc.is_alive():
         timestep = 0
+        episode_restart_requested = False
         if args.inference_mode == "async":
             prefetcher = AsyncChunkPrefetcher(build_client)
             current_response = None
@@ -617,6 +721,10 @@ def inference_process(args, config, shm_dict, shapes, ros_proc):
 
             try:
                 while timestep < args.max_publish_step and ros_proc.is_alive():
+                    if maybe_enter_manual_home_pause(args, ros_proc, shm_dict, manual_home_command, action_dim):
+                        episode_restart_requested = True
+                        break
+
                     if current_response is None:
                         if next_response is not None:
                             current_response = next_response
@@ -689,6 +797,10 @@ def inference_process(args, config, shm_dict, shapes, ros_proc):
                         if timestep >= args.max_publish_step or (not ros_proc.is_alive()):
                             break
 
+                        if maybe_enter_manual_home_pause(args, ros_proc, shm_dict, manual_home_command, action_dim):
+                            episode_restart_requested = True
+                            break
+
                         remaining_steps = len(action_seq) - step_idx - 1
                         if (
                             next_response is None
@@ -724,6 +836,10 @@ def inference_process(args, config, shm_dict, shapes, ros_proc):
             client = build_client()
             client.reset()
             while timestep < args.max_publish_step and ros_proc.is_alive():
+                if maybe_enter_manual_home_pause(args, ros_proc, shm_dict, manual_home_command, action_dim):
+                    episode_restart_requested = True
+                    break
+
                 obs_dict = read_observation_snapshot(args, shm_dict, shapes)
 
                 try:
@@ -770,12 +886,19 @@ def inference_process(args, config, shm_dict, shapes, ros_proc):
                     if timestep >= args.max_publish_step or (not ros_proc.is_alive()):
                         break
 
+                    if maybe_enter_manual_home_pause(args, ros_proc, shm_dict, manual_home_command, action_dim):
+                        episode_restart_requested = True
+                        break
+
                     action = step_action
                     robot_action(action, shm_dict)
                     timestep += 1
                     exec_rate.sleep()
 
             client.close()
+
+        if episode_restart_requested:
+            action = np.zeros((action_dim,), dtype=np.float32)
 
         if args.use_base and action_dim > 19:
             action[16] = 0
@@ -839,6 +962,17 @@ def parse_args(known=False):
         help="Print server/client timing every N chunks. The first 3 chunks are always logged.",
     )
     parser.add_argument(
+        "--safe_stop_home_arms",
+        action="store_true",
+        help="Before lowering the base on shutdown, first publish an all-zero home pose to both arms.",
+    )
+    parser.add_argument(
+        "--safe_stop_home_publish_steps",
+        type=int,
+        default=180,
+        help="Number of cycles to publish the arm-home pose before lowering the base.",
+    )
+    parser.add_argument(
         "--safe_stop_body_height",
         type=float,
         default=None,
@@ -863,10 +997,11 @@ def main(args):
     shm_ready_event = mp.Event()
 
     config = get_model_config(args)
+    manual_home_command = mp.Value("i", 0)
 
     ros_proc = mp.Process(
         target=ros_process,
-        args=(args, config, meta_queue, connected_event, start_event, shm_ready_event),
+        args=(args, config, meta_queue, connected_event, start_event, shm_ready_event, manual_home_command),
     )
     ros_proc.start()
 
@@ -882,7 +1017,7 @@ def main(args):
     shm_dict = connect_shm_dict(shm_name_dict, shapes, shapes["dtypes"], config)
 
     try:
-        inference_process(args, config, shm_dict, shapes, ros_proc)
+        inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_command)
     except KeyboardInterrupt:
         pass
     finally:

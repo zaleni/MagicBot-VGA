@@ -26,6 +26,8 @@ LOG_TIMING_EVERY="${LOG_TIMING_EVERY:-}"
 SEED="${SEED:-}"
 SAFE_STOP_BODY_HEIGHT="${SAFE_STOP_BODY_HEIGHT:-}"
 SAFE_STOP_PUBLISH_STEPS="${SAFE_STOP_PUBLISH_STEPS:-}"
+SAFE_STOP_HOME_ARMS="${SAFE_STOP_HOME_ARMS:-}"
+SAFE_STOP_HOME_PUBLISH_STEPS="${SAFE_STOP_HOME_PUBLISH_STEPS:-}"
 
 ARGS=(
   python evaluation/Real_Lift2/real_lift2_inference.py
@@ -86,6 +88,14 @@ fi
 
 if [[ -n "${SAFE_STOP_PUBLISH_STEPS}" ]]; then
   ARGS+=(--safe_stop_publish_steps="${SAFE_STOP_PUBLISH_STEPS}")
+fi
+
+if [[ "${SAFE_STOP_HOME_ARMS:-false}" == "true" ]]; then
+  ARGS+=(--safe_stop_home_arms)
+fi
+
+if [[ -n "${SAFE_STOP_HOME_PUBLISH_STEPS}" ]]; then
+  ARGS+=(--safe_stop_home_publish_steps="${SAFE_STOP_HOME_PUBLISH_STEPS}")
 fi
 
 "${ARGS[@]}"
