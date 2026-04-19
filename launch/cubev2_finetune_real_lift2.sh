@@ -58,10 +58,10 @@ USE_EXTERNAL_STATS="${USE_EXTERNAL_STATS:-true}"
 NORM_STATS_ROOT="${NORM_STATS_ROOT:-/inspire/qb-ilm/project/embodied-basic-model/zhangjianing-253108140206/zhenji/norm_stats}"
 DATASET_EXTERNAL_STATS_PATH="${DATASET_EXTERNAL_STATS_PATH:-${NORM_STATS_ROOT}/${ACTION_TYPE}/${DATASET_NAME}/stats.json}"
 
-BATCH_SIZE="${BATCH_SIZE:-16}"
+BATCH_SIZE="${BATCH_SIZE:-12}"
 STEPS="${STEPS:-60000}"
 SAVE_FREQ="${SAVE_FREQ:-10000}"
-LOG_FREQ="${LOG_FREQ:-25}"
+LOG_FREQ="${LOG_FREQ:-50}"
 
 if [[ -z "${POLICY_INIT_PATH}" ]]; then
   echo "Please set POLICY_INIT_PATH to the CubeV2 bootstrap checkpoint."
@@ -140,7 +140,7 @@ ARGS=(
     --policy.push_to_hub=false
     --policy.gradient_checkpointing=false
     --policy.dtype=bfloat16
-    --policy.optimizer_lr=5.0e-5
+    --policy.optimizer_lr=3.5e-5
     --policy.scheduler_warmup_steps=2000
     --policy.scheduler_decay_steps="${STEPS}"
     --policy.scheduler_decay_lr=5.0e-6
