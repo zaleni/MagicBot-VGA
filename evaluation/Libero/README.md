@@ -1,251 +1,153 @@
 # LIBERO Evaluation for CubeV2
 
-This directory contains the local LIBERO evaluation entrypoint for a fine-tuned `CubeV2` checkpoint:
+This repo recommends one setup for LIBERO evaluation:
 
-- `inference.py`: runs LIBERO rollouts with a local checkpoint
-- `eval.sh`: thin launcher wrapper around `inference.py`
+- one machine
+- two Python environments
+- two processes
+- the `MagicBot` environment serves policy inference
+- the `LIBERO` environment runs benchmark rollouts
+- both sides talk over a local websocket such as `ws://127.0.0.1:8000`
 
-## What You Need
+Relevant files:
 
-You do need a few extra runtime dependencies and local resources for LIBERO evaluation.
+- `evaluation/Libero/01_serve_magicbot_libero.sh`: start the policy server in the `MagicBot` env
+- `evaluation/Libero/eval.sh`: start the LIBERO evaluator in the `LIBERO` env
+- `evaluation/Libero/inference.py`: main LIBERO evaluation logic
+- `evaluation/Libero/libero_remote_client.py`: websocket client used by the evaluator
 
-Recommended environment:
+## Install
 
-- Use your existing `MagicBot` / `CubeV2` Python environment as the base
-- Install the LIBERO-specific evaluation dependencies into that same environment
-- A separate conda env is optional, but it is not the default recommendation for this repo
+Recommended layout: keep `LIBERO` at `third_party/LIBERO`.
 
-Required software:
-
-- `mujoco`
-- `LIBERO` installed from source with `pip install -e .`
-- Python packages used by the eval script: `tyro`, `imageio`
-
-Required local model resources:
-
-- Your fine-tuned `CubeV2` checkpoint directory
-- Local `Qwen3-VL` weights
-- Local `Cosmos-Tokenizer-CI8x8` weights
-
-Not required by default:
-
-- `DA3` weights are not needed for eval, because `eval.sh` disables the 3D teacher by default
-
-## Install LIBERO
-
-Recommended setup:
+Install the LIBERO eval environment:
 
 ```bash
-conda activate <your_magicbot_env>
-
-pip install mujoco tyro imageio
-
-git clone https://github.com/Lifelong-Robot-Learning/LIBERO.git
-cd LIBERO
+conda activate <your_libero_eval_env>
+cd third_party/LIBERO
+pip install mujoco tyro imageio pyyaml matplotlib bddl robosuite websockets msgpack
 pip install -e .
 ```
 
-Or use the helper script in this repo after activating your existing MagicBot env:
+Or use the helper script:
 
 ```bash
-conda activate <your_magicbot_env>
+conda activate <your_libero_eval_env>
 bash evaluation/Libero/install_libero.sh
 ```
 
-If you really want an isolated env for LIBERO-only debugging, that is still possible:
+Notes:
+
+- Do not install `third_party/LIBERO/requirements.txt` by default.
+- The upstream pins are old and can downgrade packages you already need elsewhere.
+- For this repo's benchmark path, the minimal dependency set above is usually enough.
+
+Quick checks:
 
 ```bash
-conda create -n libero_eval python=3.10 -y
-conda activate libero_eval
-bash evaluation/Libero/install_libero.sh
+python -c "from libero.libero import benchmark; print('LIBERO OK')"
+python -c "from libero.libero.envs import OffScreenRenderEnv; import robosuite, bddl; print('LIBERO eval deps OK')"
+python -c "import websockets.sync.client, msgpack; print('Split websocket deps OK')"
 ```
 
-Or let the helper script activate a target conda env first:
-
-```bash
-CONDA_ENV=libero_eval bash evaluation/Libero/install_libero.sh
-```
-
-Optional but commonly needed on headless servers:
+For headless machines, you may also need:
 
 ```bash
 export MUJOCO_GL=egl
 export PYOPENGL_PLATFORM=egl
 ```
 
-Quick verification:
+## Run
+
+1. Start the policy server in the `MagicBot` environment:
 
 ```bash
-python -c "from libero.libero import benchmark; print('LIBERO OK')"
-python -c "import mujoco; print('MuJoCo OK')"
-```
+conda activate <your_magicbot_env>
 
-## Do You Need Extra LIBERO Assets?
-
-Usually, installing `LIBERO` from source is enough for evaluation, because the script reads task definitions via:
-
-- `libero.libero.benchmark`
-- `get_libero_path("bddl_files")`
-
-So in the normal setup, you do not need to separately download LIBERO training datasets just to run evaluation.
-
-## Do You Need Extra Model Files?
-
-Yes, besides the fine-tuned checkpoint itself:
-
-- `Qwen3-VL` is required at eval time
-- `Cosmos tokenizer` is required at eval time
-
-Why:
-
-- `CubeV2` always reconstructs the Qwen3-VL backbone from `config.qwen3_vl_pretrained_path`
-- `CubeV2` also instantiates the Cosmos tokenizer from `config.cosmos_tokenizer_path_or_name`
-
-By default, `DA3` is disabled for eval in `eval.sh`, so you do not need `DA3` weights unless you intentionally turn that back on.
-
-## Checkpoint Expectations
-
-The eval script expects a checkpoint directory that contains:
-
-```text
-pretrained_model/
-  config.json
-  model.safetensors
-  train_config.json
-  stats.json
-```
-
-In practice, pass either:
-
-- the `pretrained_model` directory directly, or
-- a parent checkpoint directory that contains `pretrained_model/`
-
-The script will resolve both forms automatically.
-
-## Basic Usage
-
-Evaluate one full suite:
-
-```bash
-PRETRAINED_CKPT=/path/to/checkpoints/last/pretrained_model \
-TASK_SUITE_NAME=libero_goal \
+CHECKPOINT_DIR=/path/to/checkpoints/last/pretrained_model \
 QWEN3_VL_PRETRAINED_PATH=/path/to/Qwen3-VL-2B-Instruct \
 COSMOS_TOKENIZER_PATH_OR_NAME=/path/to/Cosmos-Tokenizer-CI8x8 \
-bash evaluation/Libero/eval.sh
+INFER_HORIZON=10 \
+bash evaluation/Libero/01_serve_magicbot_libero.sh
 ```
 
-Evaluate a single task:
+2. Start the LIBERO benchmark in the `LIBERO` environment:
 
 ```bash
-PRETRAINED_CKPT=/path/to/checkpoints/last/pretrained_model \
-TASK_SUITE_NAME=libero_goal \
-TASK_ID=0 \
-QWEN3_VL_PRETRAINED_PATH=/path/to/Qwen3-VL-2B-Instruct \
-COSMOS_TOKENIZER_PATH_OR_NAME=/path/to/Cosmos-Tokenizer-CI8x8 \
-bash evaluation/Libero/eval.sh
-```
+conda activate <your_libero_eval_env>
 
-Choose a rollout horizon explicitly:
-
-```bash
-PRETRAINED_CKPT=/path/to/checkpoints/last/pretrained_model \
+WS_URL=ws://127.0.0.1:8000 \
 TASK_SUITE_NAME=libero_goal \
 INFER_HORIZON=10 \
-QWEN3_VL_PRETRAINED_PATH=/path/to/Qwen3-VL-2B-Instruct \
-COSMOS_TOKENIZER_PATH_OR_NAME=/path/to/Cosmos-Tokenizer-CI8x8 \
 bash evaluation/Libero/eval.sh
 ```
 
-If `INFER_HORIZON` is not set, the script defaults to:
-
-- `config.n_action_steps`, or
-- `config.chunk_size`
-
-which matches chunk-style execution.
-
-## Important Runtime Arguments
-
-Environment variables supported by `eval.sh`:
-
-- `PRETRAINED_CKPT`: checkpoint path
-- `TASK_SUITE_NAME`: one of `libero_spatial`, `libero_object`, `libero_goal`, `libero_10`, `libero_90`
-- `TASK_ID`: optional single-task evaluation
-- `NUM_TRIALS_PER_TASK`: default `50`
-- `INFER_HORIZON`: optional action chunk execution length
-- `VIDEO_DIR`: where rollout videos and summaries are written
-- `STATS_KEY`: default `franka`
-- `QWEN3_VL_PRETRAINED_PATH`: override Qwen weights path
-- `QWEN3_VL_PROCESSOR_PATH`: optional separate processor path
-- `COSMOS_TOKENIZER_PATH_OR_NAME`: override Cosmos tokenizer path
-- `DA3_MODEL_PATH_OR_NAME`: only needed if you intentionally re-enable DA3 teacher for eval
-- `DISABLE_3D_TEACHER_FOR_EVAL`: default `true`
-
-## State / Action Convention
-
-This eval path assumes the LIBERO convention already used in this repo:
-
-- input state: 8D absolute state
-  - `eef_pos(3) + axis_angle(3) + gripper_qpos(2)`
-- output action: 7D action
-  - `delta_xyz(3) + delta_rot(3) + gripper(1)`
-
-The script normalizes `observation.state` and unnormalizes `action` using `stats.json` from the checkpoint.
-
-## Gripper Note
-
-Default:
+3. Evaluate a single task:
 
 ```bash
-gripper_mode=libero_open_prob
+conda activate <your_libero_eval_env>
+
+WS_URL=ws://127.0.0.1:8000 \
+TASK_SUITE_NAME=libero_goal \
+TASK_ID=0 \
+INFER_HORIZON=10 \
+bash evaluation/Libero/eval.sh
 ```
 
-That means the 7th model output dimension is treated like an open/close probability and converted to LIBERO env control.
+## Key Args
 
-If your checkpoint was trained with a different gripper convention, the relevant logic is in:
+Serve side:
 
-- `evaluation/Libero/inference.py`
+- `CHECKPOINT_DIR`: checkpoint or `pretrained_model` directory
+- `QWEN3_VL_PRETRAINED_PATH`: local Qwen3-VL weights
+- `COSMOS_TOKENIZER_PATH_OR_NAME`: local Cosmos tokenizer
+- `INFER_HORIZON`: action chunk length
+- `PORT`: defaults to `8000`
+- `ACTION_MODE`: keep this aligned with training, for example `abs`
+
+Eval side:
+
+- `WS_URL`: local websocket address, usually `ws://127.0.0.1:8000`
+- `TASK_SUITE_NAME`: `libero_spatial`, `libero_object`, `libero_goal`, `libero_10`, or `libero_90`
+- `TASK_ID`: optional single-task evaluation
+- `NUM_TRIALS_PER_TASK`: defaults to `50`
+- `INFER_HORIZON`: optional, otherwise follows the server
+- `VIDEO_DIR`: output directory
 
 ## Outputs
 
-By default, outputs are written under:
+Default output path:
 
 ```text
 evaluation/Libero/output/<task_suite_name>/
 ```
 
-Per-task directories contain:
+Each task directory contains:
 
 - rollout videos
 - optional action arrays
 - `summary.json`
 
-## Common Failure Modes
+## Common Issues
 
 `ImportError: LIBERO is not available`
 
-- install LIBERO from source in the active environment
-- if LIBERO is only cloned locally, set `LIBERO_HOME=/path/to/LIBERO` before running `eval.sh`
-- equivalently, add the LIBERO checkout root to `PYTHONPATH`
+- Make sure the current env already ran `pip install -e third_party/LIBERO`.
+- Or set `LIBERO_HOME=/path/to/LIBERO`.
+
+`ModuleNotFoundError: No module named 'robosuite'` or `No module named 'bddl'`
+
+- Install the minimal eval deps: `pip install pyyaml matplotlib bddl robosuite`
+
+`ModuleNotFoundError: No module named 'websockets'` or `No module named 'msgpack'`
+
+- Install the websocket deps: `pip install websockets msgpack`
 
 `stats.json not found` or wrong `STATS_KEY`
 
-- check that your checkpoint saved `pretrained_model/stats.json`
-- for current LIBERO runs in this repo, `STATS_KEY=franka` is the expected default
+- Check that the checkpoint contains `pretrained_model/stats.json`
+- Current LIBERO eval in this repo expects `STATS_KEY=franka`
 
-Model path errors for Qwen or Cosmos
+Qwen or Cosmos path errors
 
-- pass explicit overrides through `eval.sh`
-
-Headless rendering issues
-
-- set `MUJOCO_GL=egl`
-- set `PYOPENGL_PLATFORM=egl`
-
-## Recommended Minimal Setup
-
-If you already have a trained checkpoint, the minimum extra setup is usually:
-
-1. Install `mujoco`
-2. Clone and `pip install -e` LIBERO
-3. Make sure local `Qwen3-VL` and `Cosmos` paths exist
-4. Run `bash evaluation/Libero/eval.sh`
+- Pass `QWEN3_VL_PRETRAINED_PATH` and `COSMOS_TOKENIZER_PATH_OR_NAME` on the serve side

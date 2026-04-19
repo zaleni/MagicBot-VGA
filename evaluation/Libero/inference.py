@@ -11,7 +11,7 @@ import sys
 from collections import deque
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Union
+from typing import Any, Union
 
 ROOT_PATH = Path(__file__).resolve().parents[2]
 SRC_ROOT = ROOT_PATH / "src"
@@ -25,20 +25,9 @@ import imageio
 import numpy as np
 import torch
 import tyro
-from huggingface_hub import snapshot_download
 
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.datasets.utils import load_json
-from lerobot.policies.cubev2.transform_cubev2 import (
-    Qwen3_VLProcessorTransformFn as CubeV2ProcessorTransformFn,
-)
-from lerobot.policies.factory import get_policy_class
-from lerobot.transforms.core import (
-    NormalizeTransformFn,
-    ResizeImagesWithPadFn,
-    UnNormalizeTransformFn,
-)
-from lerobot.utils.constants import OBS_IMAGES, OBS_STATE
+OBS_IMAGES = "observation.images"
+OBS_STATE = "observation.state"
 
 
 def _get_libero_search_roots() -> list[Path]:
@@ -110,7 +99,7 @@ LIBERO_ACTION_DIM = 7
 
 @dataclass
 class EvalArgs:
-    ckpt_path: Union[str, Path]
+    ckpt_path: Union[str, Path] = ""
     task_suite_name: str = "libero_goal"
     stats_key: str = "franka"
     task_id: int | None = None
@@ -134,6 +123,7 @@ class EvalArgs:
     decode_image_flag: bool = False
     log_level: str = "INFO"  # DEBUG | INFO | WARNING | ERROR
     debug: bool = False
+    ws_url: str = ""
 
     policy_type: str | None = None
     qwen3_vl_pretrained_path: str | None = None
@@ -159,6 +149,14 @@ def ensure_libero_available() -> None:
 
 def resolve_ckpt_dir(ckpt_path: Union[str, Path]) -> Path:
     ckpt_str = str(ckpt_path)
+    if not ckpt_str.strip():
+        raise ValueError(
+            "ckpt_path is required for local LIBERO evaluation. "
+            "Pass --args.ws_url for split websocket mode."
+        )
+
+    from huggingface_hub import snapshot_download
+
     local_dir = Path(ckpt_str).expanduser()
     if local_dir.exists():
         if (local_dir / "config.json").exists():
@@ -182,7 +180,7 @@ def resolve_runtime_dtype(dtype_name: str, device: str) -> torch.dtype:
     raise ValueError(f"Unsupported dtype: {dtype_name}")
 
 
-def apply_runtime_config_overrides(config: PreTrainedConfig, args: EvalArgs) -> None:
+def apply_runtime_config_overrides(config, args: EvalArgs) -> None:
     if args.policy_type is not None:
         config.type = args.policy_type
 
@@ -269,6 +267,18 @@ def action_to_env(action: np.ndarray, gripper_mode: str, gripper_threshold: floa
 
 
 def build_policy_and_transforms(args: EvalArgs):
+    from lerobot.configs.policies import PreTrainedConfig
+    from lerobot.datasets.utils import load_json
+    from lerobot.policies.cubev2.transform_cubev2 import (
+        Qwen3_VLProcessorTransformFn as CubeV2ProcessorTransformFn,
+    )
+    from lerobot.policies.factory import get_policy_class
+    from lerobot.transforms.core import (
+        NormalizeTransformFn,
+        ResizeImagesWithPadFn,
+        UnNormalizeTransformFn,
+    )
+
     ckpt_dir = resolve_ckpt_dir(args.ckpt_path)
     config = PreTrainedConfig.from_pretrained(ckpt_dir)
     apply_runtime_config_overrides(config, args)
@@ -317,6 +327,20 @@ def build_policy_and_transforms(args: EvalArgs):
     return policy, config, dtype, resize_fn, normalize_state_fn, unnormalize_action_fn, processor_fn
 
 
+def build_remote_policy_client(args: EvalArgs):
+    from evaluation.Libero.libero_remote_client import LiberoRemoteClient
+
+    client = LiberoRemoteClient(ws_url=args.ws_url, image_history_interval=args.image_history_interval)
+    metadata = client.metadata
+    infer_horizon = int(args.infer_horizon or metadata.get("infer_horizon") or 1)
+    if infer_horizon <= 0:
+        raise ValueError(f"infer_horizon must be positive, got {infer_horizon}")
+
+    logging.info("Connected to split policy server at %s", args.ws_url)
+    logging.info("Policy server metadata:\n%s", json.dumps(metadata, indent=2, ensure_ascii=False, default=str))
+    return client, metadata, infer_horizon
+
+
 def get_libero_env(task, resolution: int, seed: int):
     task_description = task.language
     task_bddl_file = Path(get_libero_path("bddl_files")) / task.problem_folder / task.bddl_file
@@ -330,29 +354,52 @@ def get_libero_env(task, resolution: int, seed: int):
     return env, task_description
 
 
-def maybe_append_history(
+def update_image_history(
     action_plan: deque[np.ndarray],
-    head_history: list[torch.Tensor],
-    wrist_history: list[torch.Tensor],
+    head_history: list[np.ndarray],
+    wrist_history: list[np.ndarray],
     head_img: np.ndarray,
     wrist_img: np.ndarray,
     interval: int,
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> None:
     if len(action_plan) <= interval:
-        head_history.append(torch.as_tensor(head_img, dtype=torch.float32) / 255.0)
-        wrist_history.append(torch.as_tensor(wrist_img, dtype=torch.float32) / 255.0)
+        head_history.append(np.ascontiguousarray(head_img))
+        wrist_history.append(np.ascontiguousarray(wrist_img))
 
         while len(head_history) > interval + 1:
             head_history.pop(0)
             wrist_history.pop(0)
 
     if not head_history:
-        head_history.append(torch.as_tensor(head_img, dtype=torch.float32) / 255.0)
-        wrist_history.append(torch.as_tensor(wrist_img, dtype=torch.float32) / 255.0)
+        head_history.append(np.ascontiguousarray(head_img))
+        wrist_history.append(np.ascontiguousarray(wrist_img))
 
-    past_idx = max(len(head_history) - interval - 1, 0)
-    image_head_with_history = torch.stack([head_history[past_idx], head_history[-1]], dim=0)
-    image_wrist_with_history = torch.stack([wrist_history[past_idx], wrist_history[-1]], dim=0)
+
+def build_image_history_pair(history: list[np.ndarray], interval: int) -> np.ndarray:
+    past_idx = max(len(history) - interval - 1, 0)
+    return np.stack([history[past_idx], history[-1]], axis=0)
+
+
+def maybe_append_history(
+    action_plan: deque[np.ndarray],
+    head_history: list[np.ndarray],
+    wrist_history: list[np.ndarray],
+    head_img: np.ndarray,
+    wrist_img: np.ndarray,
+    interval: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    update_image_history(
+        action_plan=action_plan,
+        head_history=head_history,
+        wrist_history=wrist_history,
+        head_img=head_img,
+        wrist_img=wrist_img,
+        interval=interval,
+    )
+    image_head_with_history = torch.as_tensor(build_image_history_pair(head_history, interval), dtype=torch.float32) / 255.0
+    image_wrist_with_history = (
+        torch.as_tensor(build_image_history_pair(wrist_history, interval), dtype=torch.float32) / 255.0
+    )
     return image_head_with_history, image_wrist_with_history
 
 
@@ -361,9 +408,9 @@ def prepare_policy_inputs(
     wrist_history: torch.Tensor,
     state: np.ndarray,
     task_description: str,
-    resize_fn: ResizeImagesWithPadFn,
-    normalize_state_fn: NormalizeTransformFn,
-    processor_fn: CubeV2ProcessorTransformFn,
+    resize_fn,
+    normalize_state_fn,
+    processor_fn,
     device: str,
     dtype: torch.dtype,
 ) -> dict[str, torch.Tensor]:
@@ -404,7 +451,7 @@ def prepare_policy_inputs(
 def predict_action_chunk(
     policy,
     inputs: dict[str, torch.Tensor],
-    unnormalize_action_fn: UnNormalizeTransformFn,
+    unnormalize_action_fn,
     infer_horizon: int,
     decode_image_flag: bool,
 ) -> np.ndarray:
@@ -429,10 +476,10 @@ def run_single_episode(
     max_steps: int,
     infer_horizon: int,
     policy,
-    resize_fn: ResizeImagesWithPadFn,
-    normalize_state_fn: NormalizeTransformFn,
-    unnormalize_action_fn: UnNormalizeTransformFn,
-    processor_fn: CubeV2ProcessorTransformFn,
+    resize_fn,
+    normalize_state_fn,
+    unnormalize_action_fn,
+    processor_fn,
     device: str,
     dtype: torch.dtype,
 ) -> tuple[bool, list[np.ndarray], np.ndarray]:
@@ -443,8 +490,8 @@ def run_single_episode(
     action_plan: deque[np.ndarray] = deque()
     replay_images: list[np.ndarray] = []
     executed_actions: list[np.ndarray] = []
-    head_history: list[torch.Tensor] = []
-    wrist_history: list[torch.Tensor] = []
+    head_history: list[np.ndarray] = []
+    wrist_history: list[np.ndarray] = []
 
     done = False
     t = 0
@@ -505,6 +552,78 @@ def run_single_episode(
     return bool(done), replay_images, action_array
 
 
+def run_single_episode_remote(
+    *,
+    args: EvalArgs,
+    env,
+    initial_state,
+    task_description: str,
+    max_steps: int,
+    infer_horizon: int,
+    remote_client,
+) -> tuple[bool, list[np.ndarray], np.ndarray]:
+    env.reset()
+    obs = env.set_init_state(initial_state)
+
+    action_plan: deque[np.ndarray] = deque()
+    replay_images: list[np.ndarray] = []
+    executed_actions: list[np.ndarray] = []
+    head_history: list[np.ndarray] = []
+    wrist_history: list[np.ndarray] = []
+
+    done = False
+    t = 0
+    while t < max_steps + args.num_steps_wait:
+        if t < args.num_steps_wait:
+            obs, _, done, _ = env.step(LIBERO_DUMMY_ACTION)
+            t += 1
+            continue
+
+        head_img, wrist_img = preprocess_env_images(obs, rotate_images_180=args.rotate_images_180)
+        replay_images.append(head_img.copy())
+        update_image_history(
+            action_plan=action_plan,
+            head_history=head_history,
+            wrist_history=wrist_history,
+            head_img=head_img,
+            wrist_img=wrist_img,
+            interval=args.image_history_interval,
+        )
+
+        if not action_plan:
+            state = build_state(obs)
+            response = remote_client.infer_step(
+                head_history=head_history,
+                wrist_history=wrist_history,
+                state=state,
+                prompt=task_description,
+                timestep=len(executed_actions),
+            )
+            predicted_chunk = np.asarray(response["actions"], dtype=np.float32)
+            if predicted_chunk.ndim == 1:
+                predicted_chunk = predicted_chunk[None]
+            predicted_chunk = predicted_chunk[:infer_horizon]
+            if predicted_chunk.size == 0:
+                raise RuntimeError("Remote policy server returned an empty action chunk.")
+            action_plan.extend(predicted_chunk)
+
+        model_action = np.asarray(action_plan.popleft(), dtype=np.float32)
+        env_action = action_to_env(
+            model_action,
+            gripper_mode=args.gripper_mode,
+            gripper_threshold=args.gripper_threshold,
+        )
+        executed_actions.append(env_action.copy())
+
+        obs, _, done, _ = env.step(env_action.tolist())
+        t += 1
+        if done:
+            break
+
+    action_array = np.stack(executed_actions) if executed_actions else np.zeros((0, LIBERO_ACTION_DIM), dtype=np.float32)
+    return bool(done), replay_images, action_array
+
+
 def evaluate_suite(args: EvalArgs) -> None:
     ensure_libero_available()
 
@@ -513,121 +632,155 @@ def evaluate_suite(args: EvalArgs) -> None:
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
-    policy, config, dtype, resize_fn, normalize_state_fn, unnormalize_action_fn, processor_fn = (
-        build_policy_and_transforms(args)
-    )
-    device = str(config.device)
-    infer_horizon = int(args.infer_horizon or getattr(config, "n_action_steps", getattr(config, "chunk_size", 1)))
-    if infer_horizon <= 0:
-        raise ValueError(f"infer_horizon must be positive, got {infer_horizon}")
-
-    benchmark_dict = benchmark.get_benchmark_dict()
-    task_suite = benchmark_dict[args.task_suite_name]()
-    max_steps = get_max_steps(args.task_suite_name)
-
-    task_indices = [args.task_id] if args.task_id is not None else list(range(task_suite.n_tasks))
-    if args.task_id is not None and not (0 <= args.task_id < task_suite.n_tasks):
-        raise ValueError(f"task_id must be in [0, {task_suite.n_tasks}), got {args.task_id}")
-
-    args.video_dir.mkdir(parents=True, exist_ok=True)
-
-    task_summaries: list[dict] = []
-    total_episodes = 0
-    total_successes = 0
-
-    for task_id in task_indices:
-        task = task_suite.get_task(task_id)
-        initial_states = task_suite.get_task_init_states(task_id)
-        num_trials = min(args.num_trials_per_task, len(initial_states))
-        if num_trials < args.num_trials_per_task:
-            logging.warning(
-                "Task %s only provides %s initial states; clamping num_trials_per_task from %s to %s.",
-                task_id,
-                len(initial_states),
-                args.num_trials_per_task,
-                num_trials,
+    remote_client = None
+    remote_metadata = None
+    policy = None
+    config = None
+    dtype = None
+    resize_fn = None
+    normalize_state_fn = None
+    unnormalize_action_fn = None
+    processor_fn = None
+    device = "remote"
+    try:
+        if args.ws_url.strip():
+            remote_client, remote_metadata, infer_horizon = build_remote_policy_client(args)
+        else:
+            policy, config, dtype, resize_fn, normalize_state_fn, unnormalize_action_fn, processor_fn = (
+                build_policy_and_transforms(args)
             )
+            device = str(config.device)
+            infer_horizon = int(args.infer_horizon or getattr(config, "n_action_steps", getattr(config, "chunk_size", 1)))
+            if infer_horizon <= 0:
+                raise ValueError(f"infer_horizon must be positive, got {infer_horizon}")
 
-        env, task_description = get_libero_env(task, args.render_resolution, args.seed)
-        try:
-            task_name = sanitize_name(task_description) or f"task_{task_id:02d}"
-            task_dir = args.video_dir / f"{task_id:02d}_{task_name}"
-            task_dir.mkdir(parents=True, exist_ok=True)
+        benchmark_dict = benchmark.get_benchmark_dict()
+        task_suite = benchmark_dict[args.task_suite_name]()
+        max_steps = get_max_steps(args.task_suite_name)
 
-            logging.info("Evaluating task %s/%s: %s", task_id + 1, task_suite.n_tasks, task_description)
+        task_indices = [args.task_id] if args.task_id is not None else list(range(task_suite.n_tasks))
+        if args.task_id is not None and not (0 <= args.task_id < task_suite.n_tasks):
+            raise ValueError(f"task_id must be in [0, {task_suite.n_tasks}), got {args.task_id}")
 
-            task_successes = 0
-            for episode_idx in range(num_trials):
-                success, replay_images, action_array = run_single_episode(
-                    args=args,
-                    env=env,
-                    initial_state=initial_states[episode_idx],
-                    task_description=task_description,
-                    max_steps=max_steps,
-                    infer_horizon=infer_horizon,
-                    policy=policy,
-                    resize_fn=resize_fn,
-                    normalize_state_fn=normalize_state_fn,
-                    unnormalize_action_fn=unnormalize_action_fn,
-                    processor_fn=processor_fn,
-                    device=device,
-                    dtype=dtype,
-                )
+        args.video_dir.mkdir(parents=True, exist_ok=True)
 
-                task_successes += int(success)
-                total_successes += int(success)
-                total_episodes += 1
+        task_summaries: list[dict] = []
+        total_episodes = 0
+        total_successes = 0
 
-                suffix = "success" if success else "failure"
-                if args.save_videos and replay_images:
-                    imageio.mimwrite(
-                        task_dir / f"episode_{episode_idx:03d}_{suffix}.mp4",
-                        [np.asarray(frame) for frame in replay_images],
-                        fps=args.fps,
-                    )
-                if args.save_actions:
-                    np.save(task_dir / f"episode_{episode_idx:03d}_{suffix}.npy", action_array)
-
-                logging.info(
-                    "[task %02d episode %03d] %s | running success rate: %.2f%%",
+        for task_id in task_indices:
+            task = task_suite.get_task(task_id)
+            initial_states = task_suite.get_task_init_states(task_id)
+            num_trials = min(args.num_trials_per_task, len(initial_states))
+            if num_trials < args.num_trials_per_task:
+                logging.warning(
+                    "Task %s only provides %s initial states; clamping num_trials_per_task from %s to %s.",
                     task_id,
-                    episode_idx,
-                    suffix,
-                    100.0 * total_successes / max(total_episodes, 1),
+                    len(initial_states),
+                    args.num_trials_per_task,
+                    num_trials,
                 )
-        finally:
-            env.close()
 
-        task_summary = {
-            "task_id": int(task_id),
-            "task_description": task_description,
-            "num_trials": int(num_trials),
-            "successes": int(task_successes),
-            "success_rate": float(task_successes / max(num_trials, 1)),
-            "task_dir": str(task_dir),
+            env, task_description = get_libero_env(task, args.render_resolution, args.seed)
+            try:
+                task_name = sanitize_name(task_description) or f"task_{task_id:02d}"
+                task_dir = args.video_dir / f"{task_id:02d}_{task_name}"
+                task_dir.mkdir(parents=True, exist_ok=True)
+
+                logging.info("Evaluating task %s/%s: %s", task_id + 1, task_suite.n_tasks, task_description)
+
+                task_successes = 0
+                for episode_idx in range(num_trials):
+                    if remote_client is not None:
+                        success, replay_images, action_array = run_single_episode_remote(
+                            args=args,
+                            env=env,
+                            initial_state=initial_states[episode_idx],
+                            task_description=task_description,
+                            max_steps=max_steps,
+                            infer_horizon=infer_horizon,
+                            remote_client=remote_client,
+                        )
+                    else:
+                        success, replay_images, action_array = run_single_episode(
+                            args=args,
+                            env=env,
+                            initial_state=initial_states[episode_idx],
+                            task_description=task_description,
+                            max_steps=max_steps,
+                            infer_horizon=infer_horizon,
+                            policy=policy,
+                            resize_fn=resize_fn,
+                            normalize_state_fn=normalize_state_fn,
+                            unnormalize_action_fn=unnormalize_action_fn,
+                            processor_fn=processor_fn,
+                            device=device,
+                            dtype=dtype,
+                        )
+
+                    task_successes += int(success)
+                    total_successes += int(success)
+                    total_episodes += 1
+
+                    suffix = "success" if success else "failure"
+                    if args.save_videos and replay_images:
+                        imageio.mimwrite(
+                            task_dir / f"episode_{episode_idx:03d}_{suffix}.mp4",
+                            [np.asarray(frame) for frame in replay_images],
+                            fps=args.fps,
+                        )
+                    if args.save_actions:
+                        np.save(task_dir / f"episode_{episode_idx:03d}_{suffix}.npy", action_array)
+
+                    logging.info(
+                        "[task %02d episode %03d] %s | running success rate: %.2f%%",
+                        task_id,
+                        episode_idx,
+                        suffix,
+                        100.0 * total_successes / max(total_episodes, 1),
+                    )
+            finally:
+                env.close()
+
+            task_summary = {
+                "task_id": int(task_id),
+                "task_description": task_description,
+                "num_trials": int(num_trials),
+                "successes": int(task_successes),
+                "success_rate": float(task_successes / max(num_trials, 1)),
+                "task_dir": str(task_dir),
+            }
+            task_summaries.append(task_summary)
+            write_json(task_dir / "summary.json", task_summary)
+
+        overall_summary = {
+            "task_suite_name": args.task_suite_name,
+            "task_id": args.task_id,
+            "seed": int(args.seed),
+            "ckpt_path": str(args.ckpt_path),
+            "inference_mode": "remote" if remote_client is not None else "local",
+            "deployment_mode": "split_ws" if remote_client is not None else "local",
+            "ws_url": args.ws_url,
+            "stats_key": args.stats_key,
+            "infer_horizon": int(infer_horizon),
+            "total_episodes": int(total_episodes),
+            "total_successes": int(total_successes),
+            "success_rate": float(total_successes / max(total_episodes, 1)),
+            "task_summaries": task_summaries,
         }
-        task_summaries.append(task_summary)
-        write_json(task_dir / "summary.json", task_summary)
-
-    overall_summary = {
-        "task_suite_name": args.task_suite_name,
-        "task_id": args.task_id,
-        "seed": int(args.seed),
-        "ckpt_path": str(args.ckpt_path),
-        "stats_key": args.stats_key,
-        "infer_horizon": int(infer_horizon),
-        "total_episodes": int(total_episodes),
-        "total_successes": int(total_successes),
-        "success_rate": float(total_successes / max(total_episodes, 1)),
-        "task_summaries": task_summaries,
-    }
-    write_json(args.video_dir / "summary.json", overall_summary)
-    logging.info(
-        "Finished LIBERO evaluation. Success rate: %.2f%% (%s/%s)",
-        100.0 * overall_summary["success_rate"],
-        total_successes,
-        total_episodes,
-    )
+        if remote_metadata is not None:
+            overall_summary["remote_server_metadata"] = remote_metadata
+        write_json(args.video_dir / "summary.json", overall_summary)
+        logging.info(
+            "Finished LIBERO evaluation (%s). Success rate: %.2f%% (%s/%s)",
+            "split websocket mode" if remote_client is not None else "local mode",
+            100.0 * overall_summary["success_rate"],
+            total_successes,
+            total_episodes,
+        )
+    finally:
+        if remote_client is not None:
+            remote_client.close()
 
 
 def main(args: EvalArgs) -> None:

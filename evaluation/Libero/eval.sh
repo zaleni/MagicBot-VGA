@@ -15,13 +15,14 @@ fi
 
 cd "${PROJ_ROOT}"
 
-PRETRAINED_CKPT="${PRETRAINED_CKPT:-outputs/cubev2/your_libero_run/checkpoints/last/pretrained_model}"
+PRETRAINED_CKPT="${PRETRAINED_CKPT:-}"
 TASK_SUITE_NAME="${TASK_SUITE_NAME:-libero_goal}"
 TASK_ID="${TASK_ID:-}"
 STATS_KEY="${STATS_KEY:-franka}"
 NUM_TRIALS_PER_TASK="${NUM_TRIALS_PER_TASK:-50}"
 INFER_HORIZON="${INFER_HORIZON:-}"
 VIDEO_DIR="${VIDEO_DIR:-${PROJ_ROOT}/evaluation/Libero/output/${TASK_SUITE_NAME}}"
+WS_URL="${WS_URL:-}"
 
 QWEN3_VL_PRETRAINED_PATH="${QWEN3_VL_PRETRAINED_PATH:-}"
 QWEN3_VL_PROCESSOR_PATH="${QWEN3_VL_PROCESSOR_PATH:-}"
@@ -31,12 +32,19 @@ DA3_CODE_ROOT="${DA3_CODE_ROOT:-}"
 DISABLE_3D_TEACHER_FOR_EVAL="${DISABLE_3D_TEACHER_FOR_EVAL:-true}"
 
 ARGS=(
-  --args.ckpt_path "${PRETRAINED_CKPT}"
   --args.task_suite_name "${TASK_SUITE_NAME}"
   --args.stats_key "${STATS_KEY}"
   --args.num_trials_per_task "${NUM_TRIALS_PER_TASK}"
   --args.video_dir "${VIDEO_DIR}"
 )
+
+if [[ -n "${PRETRAINED_CKPT}" ]]; then
+  ARGS+=(--args.ckpt_path "${PRETRAINED_CKPT}")
+fi
+
+if [[ -n "${WS_URL}" ]]; then
+  ARGS+=(--args.ws_url "${WS_URL}")
+fi
 
 case "${DISABLE_3D_TEACHER_FOR_EVAL,,}" in
   true|1|yes|y|on)
@@ -78,6 +86,11 @@ fi
 
 if [[ -n "${DA3_CODE_ROOT}" ]]; then
   ARGS+=(--args.da3_code_root "${DA3_CODE_ROOT}")
+fi
+
+if [[ -z "${PRETRAINED_CKPT}" && -z "${WS_URL}" ]]; then
+  echo "Please set either PRETRAINED_CKPT for local evaluation or WS_URL for split websocket policy serving."
+  exit 1
 fi
 
 python evaluation/Libero/inference.py "${ARGS[@]}"
