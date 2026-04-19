@@ -61,6 +61,7 @@ except ImportError:
 
 obs_dict = collections.OrderedDict()
 np.set_printoptions(linewidth=200, suppress=True)
+_shutdown_in_progress = False
 
 
 def ensure_compat_args(args) -> None:
@@ -230,6 +231,11 @@ def signal_handler(
     safe_stop_publish_steps: int,
     frame_rate: int,
 ):
+    global _shutdown_in_progress
+    if _shutdown_in_progress:
+        print("Shutdown already in progress, ignoring duplicate signal.")
+        return
+    _shutdown_in_progress = True
     print("Caught shutdown signal")
     if safe_stop_home_arms:
         publish_safe_stop_home_arms(
@@ -250,6 +256,27 @@ def signal_handler(
     if base_thread is not None:
         base_thread.join(timeout=2.0)
     sys.exit(0)
+
+
+def request_graceful_ros_shutdown(ros_proc, args) -> None:
+    if ros_proc is None or not ros_proc.is_alive():
+        return
+
+    graceful_timeout = 3.0
+    graceful_timeout += max(0, float(args.safe_stop_home_publish_steps)) / max(1, float(args.frame_rate))
+    graceful_timeout += max(0, float(args.safe_stop_publish_steps)) / max(1, float(args.frame_rate))
+
+    try:
+        if ros_proc.pid is not None:
+            os.kill(ros_proc.pid, signal.SIGINT)
+    except Exception as exc:
+        print(f"[Shutdown] Failed to send SIGINT to ROS process: {exc}")
+
+    ros_proc.join(timeout=graceful_timeout)
+    if ros_proc.is_alive():
+        print("[Shutdown] ROS process did not exit gracefully in time, forcing terminate().")
+        ros_proc.terminate()
+        ros_proc.join(timeout=2.0)
 
 
 def cleanup_shm(names):
@@ -1024,13 +1051,18 @@ def main(args):
     try:
         inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_command)
     except KeyboardInterrupt:
-        pass
+        print("[Shutdown] KeyboardInterrupt received in parent process, requesting graceful ROS shutdown...")
     finally:
+        request_graceful_ros_shutdown(ros_proc, args)
         for shm, _, _ in shm_dict.values():
-            shm.close()
-            shm.unlink()
-        ros_proc.terminate()
-        ros_proc.join()
+            try:
+                shm.close()
+            except FileNotFoundError:
+                pass
+            try:
+                shm.unlink()
+            except FileNotFoundError:
+                pass
 
 
 if __name__ == "__main__":
