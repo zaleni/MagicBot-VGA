@@ -13,6 +13,8 @@ It does not depend on `openpi` or on the original PI deployment script.
   An independent real-robot deployment loop for MagicBot.
 - `run_real_lift2_inference.sh`
   Shell wrapper for the real-robot deployment loop.
+- `test_magicbot_remote_server.py`
+  Lightweight connectivity checker for validating that the robot-side machine can reach a remote MagicBot websocket server.
 - `real_lift2_remote_client.py`
   Lightweight client helper for calling the websocket server from your own robot loop.
 - `request_builder.py`
@@ -117,6 +119,23 @@ Typical `run`-machine checklist:
 - `utils.ros_operator`, `utils.setup_loader`, and related robot-side helpers
 - network access to the websocket server
 - no MagicBot checkpoint loading needed on this side
+
+## Test Remote Server Connectivity
+
+Before launching the real robot loop, you can verify that the robot-side machine can reach a remote GPU server:
+
+```bash
+python evaluation/Real_Lift2/test_magicbot_remote_server.py \
+  --ws_url ws://10.60.43.33:8101
+```
+
+If you also want to send a dummy all-zero observation and validate the returned action chunk shape:
+
+```bash
+python evaluation/Real_Lift2/test_magicbot_remote_server.py \
+  --ws_url ws://10.60.43.33:8101 \
+  --smoke_infer
+```
 
 ## Minimal Client Usage
 
