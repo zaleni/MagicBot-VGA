@@ -395,9 +395,11 @@ def poll_manual_console_command(manual_home_active: bool) -> str | None:
         return None
 
     command = line.strip().lower()
-    if command == "h":
+    if command == "":
+        if manual_home_active:
+            return "resume"
         return "home"
-    if command == "" and manual_home_active:
+    if manual_home_active and command == "h":
         return "resume"
     return command or None
 
@@ -411,7 +413,7 @@ def maybe_enter_manual_home_pause(args, ros_proc, shm_dict, manual_home_command,
     robot_action(np.zeros((action_dim,), dtype=np.float32), shm_dict)
     print(
         "\n[Manual Home] Homing both arms now while keeping the base height unchanged.\n"
-        "[Manual Home] Press Enter to resume with a fresh rollout.\n"
+        "[Manual Home] Press Enter again to resume with a fresh rollout.\n"
     )
 
     while ros_proc.is_alive():
@@ -739,7 +741,7 @@ def inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_comm
         pass
     finally:
         metadata_client.close()
-    print("[Manual Home] Type 'h' then Enter to home both arms without changing base height. Press Enter again to resume.")
+    print("[Manual Home] Press Enter to home both arms without changing base height. Press Enter again to resume.")
 
     while ros_proc.is_alive():
         timestep = 0
