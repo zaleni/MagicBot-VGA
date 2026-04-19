@@ -36,8 +36,8 @@ class WebsocketClientPolicy:
                 conn = websockets.sync.client.connect(self._uri, compression=None, max_size=None)
                 metadata = unpackb(conn.recv())
                 return conn, metadata
-            except ConnectionRefusedError:
-                logging.info("Still waiting for server...")
+            except OSError as exc:
+                logging.info("Still waiting for server (%s)...", exc)
                 time.sleep(5)
 
     def infer(self, obs: dict) -> dict:

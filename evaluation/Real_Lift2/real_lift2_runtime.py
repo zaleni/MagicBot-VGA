@@ -49,6 +49,7 @@ else:
     REAL_ROBOT_IMPORT_ERROR = None
 
 _shutdown_in_progress = False
+_observation_warning_cache: set[str] = set()
 ARM_HOME_SLOWDOWN_FACTOR = 3
 MANUAL_HOME_TOTAL_PUBLISH_STEPS = 180
 
@@ -88,6 +89,13 @@ def load_yaml(yaml_file: str | Path) -> dict[str, Any] | None:
     except yaml.YAMLError as exc:
         print(f"Error: failed to parse YAML file - {exc}")
         return None
+
+
+def log_once(message: str) -> None:
+    if message in _observation_warning_cache:
+        return
+    _observation_warning_cache.add(message)
+    print(message)
 
 
 def make_shm_name_dict(args, shapes):
@@ -187,10 +195,7 @@ def split_bimanual_action(action: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 
 def read_current_arm_qpos(ros_operator) -> np.ndarray:
-    try:
-        obs = ros_operator.get_observation()
-    except Exception:
-        obs = None
+    obs = get_observation_or_none(ros_operator, log_prefix="[SafeStop]")
 
     if not obs or "qpos" not in obs:
         return np.zeros((14,), dtype=np.float32)
@@ -352,6 +357,21 @@ def cleanup_shm(names):
             pass
 
 
+def get_observation_or_none(ros_operator, log_prefix: str = "[ROS]"):
+    try:
+        return ros_operator.get_observation()
+    except AttributeError as exc:
+        message = str(exc)
+        if "_deque" in message:
+            log_once(f"[ROS Warmup] Observation buffers are not ready yet: {message}")
+            return None
+        log_once(f"{log_prefix} get_observation raised AttributeError: {message}")
+        return None
+    except Exception as exc:
+        log_once(f"{log_prefix} get_observation failed: {exc}")
+        return None
+
+
 def wait_for_camera_deques(
     ros_operator,
     camera_names,
@@ -384,17 +404,16 @@ def wait_for_camera_deques(
             except TypeError:
                 still_pending.add(cam)
 
-        if not still_pending:
-            if use_base:
-                base_pose_deque = getattr(ros_operator, "base_pose_deque", None)
-                if base_pose_deque is None:
-                    still_pending.add("base_pose")
-                else:
-                    try:
-                        if len(base_pose_deque) <= 0:
-                            still_pending.add("base_pose")
-                    except TypeError:
+        if not still_pending and use_base:
+            # Some runtime variants don't expose `base_pose_deque` immediately or
+            # at all, so only treat it as pending when the attribute exists but is empty.
+            base_pose_deque = getattr(ros_operator, "base_pose_deque", None)
+            if base_pose_deque is not None:
+                try:
+                    if len(base_pose_deque) <= 0:
                         still_pending.add("base_pose")
+                except TypeError:
+                    still_pending.add("base_pose")
 
         if not still_pending:
             if has_logged_wait:
@@ -469,10 +488,15 @@ def ros_process(args, config, meta_queue, connected_event, start_event, shm_read
     )
 
     init_robot(ros_operator, args.use_base, connected_event, start_event)
+    wait_for_camera_deques(
+        ros_operator=ros_operator,
+        camera_names=args.camera_names,
+        use_base=args.use_base,
+    )
 
     rate = Rate(args.frame_rate)
     while rclpy.ok():
-        obs = ros_operator.get_observation()
+        obs = get_observation_or_none(ros_operator)
         if obs:
             shapes = {"images": {}, "states": {}, "dtypes": {}}
             for cam in args.camera_names:
@@ -496,7 +520,7 @@ def ros_process(args, config, meta_queue, connected_event, start_event, shm_read
     rate = Rate(args.frame_rate)
     manual_home_active = False
     while rclpy.ok():
-        obs = ros_operator.get_observation()
+        obs = get_observation_or_none(ros_operator)
         if not obs:
             rate.sleep()
             continue

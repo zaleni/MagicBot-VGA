@@ -454,7 +454,11 @@ def main(args: ServeArgs) -> None:
     policy = MagicBotRemotePolicy(args)
 
     hostname = socket.gethostname()
-    local_ip = socket.gethostbyname(hostname)
+    try:
+        local_ip = socket.gethostbyname(hostname)
+    except OSError as exc:
+        local_ip = "unknown"
+        logging.warning("Failed to resolve hostname %s to an IP address: %s", hostname, exc)
     logging.info("Creating MagicBot server (host=%s, ip=%s, port=%s)", hostname, local_ip, args.port)
     logging.info("Server metadata: %s", json.dumps(policy.metadata, indent=2, ensure_ascii=False))
 

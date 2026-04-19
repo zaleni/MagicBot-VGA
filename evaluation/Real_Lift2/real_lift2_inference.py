@@ -134,6 +134,14 @@ def print_timing_log(args, *, chunk_idx: int, action_seq_len: int, response: dic
     print(message)
 
 
+def write_zero_action(shm_dict, action_dim: int, reason: str | None = None) -> np.ndarray:
+    action = np.zeros((action_dim,), dtype=np.float32)
+    robot_action(action, shm_dict)
+    if reason:
+        print(reason)
+    return action
+
+
 def set_manual_home_command(manual_home_command, enabled: bool) -> None:
     with manual_home_command.get_lock():
         manual_home_command.value = 1 if enabled else 0
@@ -363,6 +371,7 @@ def inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_comm
     ws_url = args.ws_url or os.getenv("REAL_LIFT2_WS_URL", "ws://127.0.0.1:8000")
     action_dim = config["policy_config"]["action_dim"]
     action = np.zeros((action_dim,), dtype=np.float32)
+    robot_action(action, shm_dict)
     first_inference = True
     exec_rate = Rate(args.frame_rate)
     chunk_idx = 0
@@ -421,11 +430,19 @@ def inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_comm
 
                             result = prefetcher.wait(timeout=5.0)
                             if result is None:
-                                print("[MagicBot] waiting for prefetched chunk timed out, retrying...")
+                                action = write_zero_action(
+                                    shm_dict,
+                                    action_dim,
+                                    "[SafeGuard] Waiting for prefetched chunk timed out, forcing zero action for this cycle.",
+                                )
                                 continue
 
                             if not result.get("ok", False):
-                                print(f"[MagicBot] remote inference failed: {result['error']}")
+                                action = write_zero_action(
+                                    shm_dict,
+                                    action_dim,
+                                    f"[SafeGuard] Remote inference failed, forcing zero action for this cycle: {result['error']}",
+                                )
                                 reconnect_exc = result.get("reconnect_error")
                                 if reconnect_exc is not None:
                                     print(f"[MagicBot] reconnect failed: {reconnect_exc}")
@@ -438,7 +455,11 @@ def inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_comm
                     current_response = None
 
                     if response is None:
-                        print("[SafeGuard] MagicBot server returned nothing, skip this cycle.")
+                        action = write_zero_action(
+                            shm_dict,
+                            action_dim,
+                            "[SafeGuard] MagicBot server returned nothing, forcing zero action for this cycle.",
+                        )
                         timestep += 1
                         continue
 
@@ -446,12 +467,17 @@ def inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_comm
                         if current_obs is None:
                             current_obs = read_observation_snapshot(args, shm_dict, shapes)
                         if not maybe_run_first_safety_check(args, response, current_obs, action_dim):
+                            write_zero_action(shm_dict, action_dim, "[SafeGuard] First safety check failed, zeroing action buffer.")
                             return
                         first_inference = False
 
                     action_seq = extract_action_sequence(response, action_dim)
                     if len(action_seq) == 0:
-                        print("[SafeGuard] MagicBot returned an empty action sequence, skip this cycle.")
+                        action = write_zero_action(
+                            shm_dict,
+                            action_dim,
+                            "[SafeGuard] MagicBot returned an empty action sequence, forcing zero action for this cycle.",
+                        )
                         timestep += 1
                         continue
 
@@ -527,7 +553,11 @@ def inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_comm
                         prompt=args.prompt,
                     )
                 except Exception as exc:
-                    print(f"[MagicBot] remote inference failed: {exc}")
+                    action = write_zero_action(
+                        shm_dict,
+                        action_dim,
+                        f"[SafeGuard] Remote inference failed, forcing zero action for this cycle: {exc}",
+                    )
                     try:
                         client.close()
                     except Exception:
@@ -541,18 +571,27 @@ def inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_comm
                     continue
 
                 if response is None:
-                    print("[SafeGuard] MagicBot server returned nothing, skip this cycle.")
+                    action = write_zero_action(
+                        shm_dict,
+                        action_dim,
+                        "[SafeGuard] MagicBot server returned nothing, forcing zero action for this cycle.",
+                    )
                     timestep += 1
                     continue
 
                 if first_inference:
                     if not maybe_run_first_safety_check(args, response, obs_dict, action_dim):
+                        write_zero_action(shm_dict, action_dim, "[SafeGuard] First safety check failed, zeroing action buffer.")
                         return
                     first_inference = False
 
                 action_seq = extract_action_sequence(response, action_dim)
                 if len(action_seq) == 0:
-                    print("[SafeGuard] MagicBot returned an empty action sequence, skip this cycle.")
+                    action = write_zero_action(
+                        shm_dict,
+                        action_dim,
+                        "[SafeGuard] MagicBot returned an empty action sequence, forcing zero action for this cycle.",
+                    )
                     timestep += 1
                     continue
 
