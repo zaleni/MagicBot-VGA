@@ -50,7 +50,6 @@ else:
 
 _shutdown_in_progress = False
 _observation_warning_cache: set[str] = set()
-ARM_HOME_SLOWDOWN_FACTOR = 3
 MANUAL_HOME_TOTAL_PUBLISH_STEPS = 180
 
 
@@ -215,19 +214,21 @@ def publish_staged_home_arms(
 ) -> None:
     current_qpos = np.asarray(current_qpos, dtype=np.float32).reshape(-1)
     current_qpos = current_qpos[:14] if current_qpos.size >= 14 else np.pad(current_qpos, (0, 14 - current_qpos.size))
-    stages = ARM_HOME_SLOWDOWN_FACTOR
-    hold_steps = max(1, int(total_publish_steps) // stages)
+    publish_steps = max(2, int(total_publish_steps))
+    sleep_s = max(1.0 / max(1, int(frame_rate)), 0.01)
 
     print(
-        f"{log_prefix} Publishing slower staged arm-home targets over {stages} stages."
+        f"{log_prefix} Publishing smooth interpolated arm-home targets over {publish_steps} control steps."
     )
 
-    for stage_idx in range(1, stages + 1):
-        alpha = stage_idx / stages
-        staged = (1.0 - alpha) * current_qpos
+    for step_idx in range(1, publish_steps + 1):
+        progress = step_idx / publish_steps
+        # Smoothstep avoids large jumps at the beginning/end of the home motion.
+        eased_progress = progress * progress * (3.0 - 2.0 * progress)
+        staged = (1.0 - eased_progress) * current_qpos
         left_action, right_action = split_bimanual_action(staged)
         ros_operator.follow_arm_publish_continuous(left_action, right_action)
-        time.sleep(hold_steps / max(1, float(frame_rate)))
+        time.sleep(sleep_s)
 
 
 def publish_safe_stop_home_arms(
