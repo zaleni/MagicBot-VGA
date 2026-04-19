@@ -26,7 +26,7 @@ cd /home/arx/MagicBot-VGA
 RUN_ENV=act \
 WS_URL=ws://10.60.43.33:8101 \
 PROMPT="Clear the junk and items off the desktop." \
-FRAME_RATE=20 \
+FRAME_RATE=24 \
 SEND_IMAGE_HEIGHT=240 \
 SEND_IMAGE_WIDTH=320 \
 INFERENCE_MODE=sync \
@@ -49,7 +49,7 @@ conda activate act
 REAL_LIFT2_RUNTIME_ROOT=/home/arx/ROS2_LIFT_Play/act \
 WS_URL=ws://10.60.43.33:8101 \
 PROMPT="Clear the junk and items off the desktop." \
-FRAME_RATE=20 \
+FRAME_RATE=24 \
 IMAGE_HISTORY_INTERVAL=15 \
 SEND_IMAGE_HEIGHT=240 \
 SEND_IMAGE_WIDTH=320 \
