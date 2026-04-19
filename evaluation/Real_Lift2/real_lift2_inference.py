@@ -630,6 +630,11 @@ def ros_process(args, config, meta_queue, connected_event, start_event, shm_read
             continue
 
         if manual_home_command.value == 1:
+            if args.use_base and args.fixed_body_height >= 0:
+                fixed_h = float(args.fixed_body_height)
+                action_base = np.zeros((10,), dtype=np.float32)
+                action_base[3] = fixed_h
+                ros_operator.set_robot_base_target(action_base)
             home_action = np.zeros((7,), dtype=np.float32)
             ros_operator.follow_arm_publish_continuous(home_action, home_action)
             rate.sleep()
