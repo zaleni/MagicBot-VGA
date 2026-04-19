@@ -29,7 +29,7 @@ Required local model resources:
 
 Not required by default:
 
-- `DA3` weights are not needed for eval, because `eval.sh` passes `--args.disable_3d_teacher_for_eval true`
+- `DA3` weights are not needed for eval, because `eval.sh` disables the 3D teacher by default
 
 ## Install LIBERO
 
@@ -178,6 +178,7 @@ Environment variables supported by `eval.sh`:
 - `QWEN3_VL_PROCESSOR_PATH`: optional separate processor path
 - `COSMOS_TOKENIZER_PATH_OR_NAME`: override Cosmos tokenizer path
 - `DA3_MODEL_PATH_OR_NAME`: only needed if you intentionally re-enable DA3 teacher for eval
+- `DISABLE_3D_TEACHER_FOR_EVAL`: default `true`
 
 ## State / Action Convention
 

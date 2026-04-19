@@ -19,6 +19,7 @@ QWEN3_VL_PROCESSOR_PATH="${QWEN3_VL_PROCESSOR_PATH:-}"
 COSMOS_TOKENIZER_PATH_OR_NAME="${COSMOS_TOKENIZER_PATH_OR_NAME:-}"
 DA3_MODEL_PATH_OR_NAME="${DA3_MODEL_PATH_OR_NAME:-}"
 DA3_CODE_ROOT="${DA3_CODE_ROOT:-}"
+DISABLE_3D_TEACHER_FOR_EVAL="${DISABLE_3D_TEACHER_FOR_EVAL:-true}"
 
 ARGS=(
   --args.ckpt_path "${PRETRAINED_CKPT}"
@@ -26,8 +27,21 @@ ARGS=(
   --args.stats_key "${STATS_KEY}"
   --args.num_trials_per_task "${NUM_TRIALS_PER_TASK}"
   --args.video_dir "${VIDEO_DIR}"
-  --args.disable_3d_teacher_for_eval true
 )
+
+case "${DISABLE_3D_TEACHER_FOR_EVAL,,}" in
+  true|1|yes|y|on)
+    ARGS+=(--args.disable_3d_teacher_for_eval)
+    ;;
+  false|0|no|n|off)
+    ARGS+=(--no-args.disable_3d_teacher_for_eval)
+    ;;
+  *)
+    echo "Invalid DISABLE_3D_TEACHER_FOR_EVAL=${DISABLE_3D_TEACHER_FOR_EVAL}"
+    echo "Expected one of: true/false, 1/0, yes/no, on/off"
+    exit 1
+    ;;
+esac
 
 if [[ -n "${TASK_ID}" ]]; then
   ARGS+=(--args.task_id "${TASK_ID}")
