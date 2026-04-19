@@ -10,7 +10,9 @@ It does not depend on `openpi` or on the original PI deployment script.
 - `01_serve_magicbot_real_lift2.sh`
   Shell wrapper for starting the server.
 - `real_lift2_inference.py`
-  An independent real-robot deployment loop for MagicBot.
+  The real-robot deployment entrypoint for MagicBot inference orchestration.
+- `real_lift2_runtime.py`
+  Robot-runtime helpers extracted from the entrypoint: ROS setup, shared memory, safe-stop, and low-level action publish logic.
 - `run_real_lift2_inference.sh`
   Shell wrapper for the real-robot deployment loop.
 - `test_magicbot_remote_server.py`
@@ -105,7 +107,7 @@ PROMPT="Clear the junk and items off the desktop." \
 bash evaluation/Real_Lift2/run_real_lift2_inference.sh
 ```
 
-`real_lift2_inference.py` follows the same broad structure as the existing robot deployment loop:
+`real_lift2_inference.py` + `real_lift2_runtime.py` follow the same broad structure as the existing robot deployment loop:
 
 - a ROS/shared-memory process reads robot observations
 - an inference process sends camera/state data to the MagicBot websocket server
@@ -119,6 +121,7 @@ Typical `run`-machine checklist:
 - `utils.ros_operator`, `utils.setup_loader`, and related robot-side helpers
 - network access to the websocket server
 - no MagicBot checkpoint loading needed on this side
+- sync both `real_lift2_inference.py` and `real_lift2_runtime.py` to the robot machine together
 
 ## Test Remote Server Connectivity
 

@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJ_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 REAL_LIFT2_RUNTIME_ROOT="${REAL_LIFT2_RUNTIME_ROOT:-/home/arx/ROS2_LIFT_Play/act}"
+ENTRY_SCRIPT="${PROJ_ROOT}/evaluation/Real_Lift2/real_lift2_inference.py"
+RUNTIME_MODULE="${PROJ_ROOT}/evaluation/Real_Lift2/real_lift2_runtime.py"
 
 export PYTHONUNBUFFERED=1
 export TOKENIZERS_PARALLELISM=false
@@ -11,6 +13,15 @@ export REAL_LIFT2_RUNTIME_ROOT
 export PYTHONPATH="${REAL_LIFT2_RUNTIME_ROOT}:${PROJ_ROOT}/src:${PROJ_ROOT}:${PYTHONPATH:-}"
 
 cd "${PROJ_ROOT}"
+
+for required_file in "${ENTRY_SCRIPT}" "${RUNTIME_MODULE}"; do
+  if [[ ! -f "${required_file}" ]]; then
+    echo "Required deployment file is missing:"
+    echo "  ${required_file}"
+    echo "Please sync the full evaluation/Real_Lift2 directory to the target machine."
+    exit 1
+  fi
+done
 
 WS_URL="${WS_URL:-ws://127.0.0.1:8000}"
 PROMPT="${PROMPT:-Clear the junk and items off the desktop.}"
@@ -30,7 +41,7 @@ SAFE_STOP_HOME_ARMS="${SAFE_STOP_HOME_ARMS:-}"
 SAFE_STOP_HOME_PUBLISH_STEPS="${SAFE_STOP_HOME_PUBLISH_STEPS:-}"
 
 ARGS=(
-  python evaluation/Real_Lift2/real_lift2_inference.py
+  python "${ENTRY_SCRIPT}"
   --ws_url="${WS_URL}"
   --prompt="${PROMPT}"
   --frame_rate="${FRAME_RATE}"
