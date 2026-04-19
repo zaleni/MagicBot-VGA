@@ -33,6 +33,10 @@ bash evaluation/Real_Lift2/02_inference_lift2.sh
 ### 3. If you already started CAN/body/lift/realsense and only Ctrl+C'd the final
 ###    `magicbot-real-lift2` terminal, do NOT rerun 02_inference_lift2.sh.
 ###    Restart only the last robot inference window with:
+###    After restart, give the camera streams a few seconds to warm up. The
+###    robot-side process now waits for camera deque buffers before normal
+###    observation polling. If camera deque warnings still never recover, then
+###    the camera/ROS stack itself needs restarting instead of only this window.
 cd /home/arx/MagicBot-VGA
 source ~/.bashrc
 conda activate act

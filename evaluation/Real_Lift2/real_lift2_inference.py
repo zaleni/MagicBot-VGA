@@ -289,6 +289,58 @@ def cleanup_shm(names):
             pass
 
 
+def wait_for_camera_deques(ros_operator, camera_names, timeout_s: float = 8.0, poll_interval_s: float = 0.05) -> bool:
+    """Wait until ROS camera callbacks create and fill the expected deque buffers.
+
+    On a fresh restart of only the final inference window, the camera nodes may
+    still be alive but the newly created RosOperator instance can need a short
+    warmup before `get_observation()` stops complaining about missing
+    `<camera>_deque` attributes.
+    """
+    pending = set(camera_names)
+    deadline = time.time() + max(0.1, float(timeout_s))
+    has_logged_wait = False
+
+    while pending and time.time() < deadline:
+        still_pending = set()
+        for cam in pending:
+            deque_obj = getattr(ros_operator, f"{cam}_deque", None)
+            if deque_obj is None:
+                still_pending.add(cam)
+                continue
+
+            try:
+                if len(deque_obj) <= 0:
+                    still_pending.add(cam)
+            except TypeError:
+                still_pending.add(cam)
+
+        if not still_pending:
+            if has_logged_wait:
+                print("[ROS Warmup] Camera deques are ready.")
+            return True
+
+        if not has_logged_wait:
+            print(
+                "[ROS Warmup] Waiting for camera streams to populate deque buffers: "
+                + ", ".join(sorted(still_pending))
+            )
+            has_logged_wait = True
+
+        pending = still_pending
+        time.sleep(max(0.01, float(poll_interval_s)))
+
+    if pending:
+        print(
+            "[ROS Warmup] Timed out waiting for camera deque buffers: "
+            + ", ".join(sorted(pending))
+            + ". Will keep trying through normal observation polling."
+        )
+        return False
+
+    return True
+
+
 def extract_action_sequence(response, action_dim):
     if not isinstance(response, dict):
         return []
@@ -627,6 +679,7 @@ def ros_process(args, config, meta_queue, connected_event, start_event, shm_read
     )
 
     init_robot(ros_operator, args.use_base, connected_event, start_event)
+    wait_for_camera_deques(ros_operator, args.camera_names)
 
     rate = Rate(args.frame_rate)
     while rclpy.ok():
