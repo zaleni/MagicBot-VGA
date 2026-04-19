@@ -103,6 +103,7 @@ conda activate <your_libero_eval_env>
 WS_URL=ws://127.0.0.1:8000 \
 TASK_SUITE_NAME=libero_goal \
 INFER_HORIZON=10 \
+VIDEO_ROOT=$PWD/evaluation/Libero/outputs \
 bash evaluation/Libero/eval.sh
 ```
 
@@ -136,6 +137,7 @@ Eval side:
 - `TASK_ID`: optional single-task evaluation
 - `NUM_TRIALS_PER_TASK`: defaults to `50`
 - `INFER_HORIZON`: optional, otherwise follows the server
+- `VIDEO_ROOT`: optional output root, final path becomes `<VIDEO_ROOT>/<TASK_SUITE_NAME>`
 - `VIDEO_DIR`: output directory
 
 ## Outputs
@@ -144,6 +146,24 @@ Default output path:
 
 ```text
 evaluation/Libero/output/<task_suite_name>/
+```
+
+If you only want to switch the outer folder, for example from `output` to `output_0420`, use `VIDEO_ROOT`:
+
+```bash
+conda activate <your_libero_eval_env>
+
+WS_URL=ws://127.0.0.1:8000 \
+TASK_SUITE_NAME=libero_goal \
+INFER_HORIZON=10 \
+VIDEO_ROOT=$PWD/evaluation/Libero/output_0420 \
+bash evaluation/Libero/eval.sh
+```
+
+This writes to:
+
+```text
+evaluation/Libero/output_0420/libero_goal/
 ```
 
 Each task directory contains:

@@ -21,8 +21,13 @@ TASK_ID="${TASK_ID:-}"
 STATS_KEY="${STATS_KEY:-franka}"
 NUM_TRIALS_PER_TASK="${NUM_TRIALS_PER_TASK:-50}"
 INFER_HORIZON="${INFER_HORIZON:-}"
-VIDEO_DIR="${VIDEO_DIR:-${PROJ_ROOT}/evaluation/Libero/output/${TASK_SUITE_NAME}}"
 WS_URL="${WS_URL:-}"
+MODE_TAG="local"
+if [[ -n "${WS_URL}" ]]; then
+  MODE_TAG="split_ws"
+fi
+VIDEO_ROOT="${VIDEO_ROOT:-${PROJ_ROOT}/evaluation/Libero/output}"
+VIDEO_DIR="${VIDEO_DIR:-${VIDEO_ROOT}/${TASK_SUITE_NAME}}"
 
 QWEN3_VL_PRETRAINED_PATH="${QWEN3_VL_PRETRAINED_PATH:-}"
 QWEN3_VL_PROCESSOR_PATH="${QWEN3_VL_PROCESSOR_PATH:-}"
@@ -92,5 +97,11 @@ if [[ -z "${PRETRAINED_CKPT}" && -z "${WS_URL}" ]]; then
   echo "Please set either PRETRAINED_CKPT for local evaluation or WS_URL for split websocket policy serving."
   exit 1
 fi
+
+echo "LIBERO task suite: ${TASK_SUITE_NAME}"
+echo "LIBERO task id   : ${TASK_ID:-all}"
+echo "Eval mode        : ${MODE_TAG}"
+echo "Output root      : ${VIDEO_ROOT}"
+echo "Output dir       : ${VIDEO_DIR}"
 
 python evaluation/Libero/inference.py "${ARGS[@]}"

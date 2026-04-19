@@ -663,6 +663,12 @@ def evaluate_suite(args: EvalArgs) -> None:
             raise ValueError(f"task_id must be in [0, {task_suite.n_tasks}), got {args.task_id}")
 
         args.video_dir.mkdir(parents=True, exist_ok=True)
+        logging.info(
+            "Starting LIBERO evaluation for suite=%s, task_id=%s. Results will be saved to %s",
+            args.task_suite_name,
+            args.task_id if args.task_id is not None else "all",
+            args.video_dir,
+        )
 
         task_summaries: list[dict] = []
         total_episodes = 0
@@ -687,7 +693,15 @@ def evaluate_suite(args: EvalArgs) -> None:
                 task_dir = args.video_dir / f"{task_id:02d}_{task_name}"
                 task_dir.mkdir(parents=True, exist_ok=True)
 
-                logging.info("Evaluating task %s/%s: %s", task_id + 1, task_suite.n_tasks, task_description)
+                logging.info(
+                    "Evaluating suite=%s task %s/%s (task_id=%s, task_name=%s): %s",
+                    args.task_suite_name,
+                    task_id + 1,
+                    task_suite.n_tasks,
+                    task_id,
+                    task_name,
+                    task_description,
+                )
 
                 task_successes = 0
                 for episode_idx in range(num_trials):
@@ -733,17 +747,22 @@ def evaluate_suite(args: EvalArgs) -> None:
                         np.save(task_dir / f"episode_{episode_idx:03d}_{suffix}.npy", action_array)
 
                     logging.info(
-                        "[task %02d episode %03d] %s | running success rate: %.2f%%",
+                        "[suite=%s task=%02d (%s) episode=%03d] %s | task success rate: %.2f%% | overall success rate: %.2f%%",
+                        args.task_suite_name,
                         task_id,
+                        task_name,
                         episode_idx,
                         suffix,
+                        100.0 * task_successes / max(episode_idx + 1, 1),
                         100.0 * total_successes / max(total_episodes, 1),
                     )
             finally:
                 env.close()
 
             task_summary = {
+                "task_suite_name": args.task_suite_name,
                 "task_id": int(task_id),
+                "task_name": task_name,
                 "task_description": task_description,
                 "num_trials": int(num_trials),
                 "successes": int(task_successes),
@@ -751,7 +770,15 @@ def evaluate_suite(args: EvalArgs) -> None:
                 "task_dir": str(task_dir),
             }
             task_summaries.append(task_summary)
-            write_json(task_dir / "summary.json", task_summary)
+            task_summary_path = task_dir / "summary.json"
+            write_json(task_summary_path, task_summary)
+            logging.info(
+                "Saved task summary for suite=%s task=%02d (%s) to %s",
+                args.task_suite_name,
+                task_id,
+                task_name,
+                task_summary_path,
+            )
 
         overall_summary = {
             "task_suite_name": args.task_suite_name,
@@ -770,13 +797,17 @@ def evaluate_suite(args: EvalArgs) -> None:
         }
         if remote_metadata is not None:
             overall_summary["remote_server_metadata"] = remote_metadata
-        write_json(args.video_dir / "summary.json", overall_summary)
+        overall_summary_path = args.video_dir / "summary.json"
+        write_json(overall_summary_path, overall_summary)
         logging.info(
-            "Finished LIBERO evaluation (%s). Success rate: %.2f%% (%s/%s)",
+            "Finished LIBERO evaluation for suite=%s task_id=%s (%s). Success rate: %.2f%% (%s/%s). Summary saved to %s",
+            args.task_suite_name,
+            args.task_id if args.task_id is not None else "all",
             "split websocket mode" if remote_client is not None else "local mode",
             100.0 * overall_summary["success_rate"],
             total_successes,
             total_episodes,
+            overall_summary_path,
         )
     finally:
         if remote_client is not None:
