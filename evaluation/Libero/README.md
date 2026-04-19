@@ -9,6 +9,12 @@ This directory contains the local LIBERO evaluation entrypoint for a fine-tuned 
 
 You do need a few extra runtime dependencies and local resources for LIBERO evaluation.
 
+Recommended environment:
+
+- Use your existing `MagicBot` / `CubeV2` Python environment as the base
+- Install the LIBERO-specific evaluation dependencies into that same environment
+- A separate conda env is optional, but it is not the default recommendation for this repo
+
 Required software:
 
 - `mujoco`
@@ -27,11 +33,10 @@ Not required by default:
 
 ## Install LIBERO
 
-Example setup:
+Recommended setup:
 
 ```bash
-conda create -n libero_eval python=3.10 -y
-conda activate libero_eval
+conda activate <your_magicbot_env>
 
 pip install mujoco tyro imageio
 
@@ -40,13 +45,22 @@ cd LIBERO
 pip install -e .
 ```
 
-Or use the helper script in this repo:
+Or use the helper script in this repo after activating your existing MagicBot env:
 
 ```bash
+conda activate <your_magicbot_env>
 bash evaluation/Libero/install_libero.sh
 ```
 
-If you want the script to activate a conda env first:
+If you really want an isolated env for LIBERO-only debugging, that is still possible:
+
+```bash
+conda create -n libero_eval python=3.10 -y
+conda activate libero_eval
+bash evaluation/Libero/install_libero.sh
+```
+
+Or let the helper script activate a target conda env first:
 
 ```bash
 CONDA_ENV=libero_eval bash evaluation/Libero/install_libero.sh
