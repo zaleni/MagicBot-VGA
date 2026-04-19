@@ -19,6 +19,9 @@ bash evaluation/Real_Lift2/01_serve_magicbot_real_lift2.sh
 
 
 ### 2. On the robot inference machine, only connect to the remote MagicBot Serve
+###    If you see persistent missing `*_deque` / `base_pose_deque` errors, the
+###    robot-side camera/base ROS stack is not ready yet. In that case, rerun
+###    this whole step 2 instead of only restarting the final inference window.
 cd /home/arx/MagicBot-VGA
 
 RUN_ENV=act \

@@ -183,12 +183,16 @@ def init_robot(ros_operator, use_base, connected_event, start_event):
     start_event.wait()
 
     ros_operator.follow_arm_publish_continuous(init1, init1)
-    if use_base:
-        ros_operator.start_base_control_thread()
+    # Delay starting the base-control thread until runtime deque buffers are
+    # ready. Otherwise a freshly restarted inference window may immediately hit
+    # missing `base_pose_deque` warnings before the ROS subscriptions warm up.
 
 
 def publish_safe_stop_home_arms(ros_operator, frame_rate: int, publish_steps: int) -> None:
     """Publish the same zero home pose used by home_arm.sh before lowering the base."""
+    if rclpy is not None and not rclpy.ok():
+        print("[SafeStop] ROS context is already closed, skip arm-home publish.")
+        return
     try:
         home_action = np.zeros((7,), dtype=np.float32)
         print(
@@ -204,6 +208,9 @@ def publish_safe_stop_home_arms(ros_operator, frame_rate: int, publish_steps: in
 
 def publish_safe_stop_base(ros_operator, safe_stop_body_height: float | None, frame_rate: int, publish_steps: int) -> None:
     if safe_stop_body_height is None:
+        return
+    if rclpy is not None and not rclpy.ok():
+        print("[SafeStop] ROS context is already closed, skip base safe-stop publish.")
         return
 
     try:
@@ -237,6 +244,9 @@ def signal_handler(
         return
     _shutdown_in_progress = True
     print("Caught shutdown signal")
+    if rclpy is not None and not rclpy.ok():
+        print("[Shutdown] ROS context is already stopped, skip safe-stop commands.")
+        sys.exit(0)
     if safe_stop_home_arms:
         publish_safe_stop_home_arms(
             ros_operator=ros_operator,
@@ -251,7 +261,10 @@ def signal_handler(
             publish_steps=safe_stop_publish_steps,
         )
     ros_operator.base_enable = False
-    ros_operator.robot_base_shutdown()
+    try:
+        ros_operator.robot_base_shutdown()
+    except Exception as exc:
+        print(f"[Shutdown] robot_base_shutdown failed: {exc}")
     base_thread = getattr(ros_operator, "base_control_thread", None)
     if base_thread is not None:
         base_thread.join(timeout=2.0)
@@ -289,8 +302,14 @@ def cleanup_shm(names):
             pass
 
 
-def wait_for_camera_deques(ros_operator, camera_names, timeout_s: float = 8.0, poll_interval_s: float = 0.05) -> bool:
-    """Wait until ROS camera callbacks create and fill the expected deque buffers.
+def wait_for_camera_deques(
+    ros_operator,
+    camera_names,
+    use_base: bool = False,
+    timeout_s: float = 8.0,
+    poll_interval_s: float = 0.05,
+) -> bool:
+    """Wait until ROS callbacks create and fill the expected deque buffers.
 
     On a fresh restart of only the final inference window, the camera nodes may
     still be alive but the newly created RosOperator instance can need a short
@@ -314,6 +333,18 @@ def wait_for_camera_deques(ros_operator, camera_names, timeout_s: float = 8.0, p
                     still_pending.add(cam)
             except TypeError:
                 still_pending.add(cam)
+
+        if not still_pending:
+            if use_base:
+                base_pose_deque = getattr(ros_operator, "base_pose_deque", None)
+                if base_pose_deque is None:
+                    still_pending.add("base_pose")
+                else:
+                    try:
+                        if len(base_pose_deque) <= 0:
+                            still_pending.add("base_pose")
+                    except TypeError:
+                        still_pending.add("base_pose")
 
         if not still_pending:
             if has_logged_wait:
@@ -679,13 +710,13 @@ def ros_process(args, config, meta_queue, connected_event, start_event, shm_read
     )
 
     init_robot(ros_operator, args.use_base, connected_event, start_event)
-    deques_ready = wait_for_camera_deques(ros_operator, args.camera_names)
+    deques_ready = wait_for_camera_deques(ros_operator, args.camera_names, use_base=args.use_base)
     if not deques_ready:
         meta_queue.put(
             {
                 "error": (
-                    "Camera deque warmup failed. If you still see missing *_deque warnings, "
-                    "the camera/ROS stack did not recover cleanly. Restart realsense or rerun "
+                    "Runtime deque warmup failed. If you still see missing *_deque warnings, "
+                    "the camera/base ROS stack did not recover cleanly. Restart realsense or rerun "
                     "02_inference_lift2.sh instead of only restarting the final inference window."
                 )
             }
@@ -697,6 +728,26 @@ def ros_process(args, config, meta_queue, connected_event, start_event, shm_read
             pass
         spin_thread.join(timeout=0.2)
         return
+
+    if args.use_base:
+        try:
+            ros_operator.start_base_control_thread()
+        except Exception as exc:
+            meta_queue.put(
+                {
+                    "error": (
+                        "Base control thread failed to start after runtime warmup: "
+                        f"{exc}"
+                    )
+                }
+            )
+            try:
+                if rclpy.ok():
+                    rclpy.shutdown()
+            except Exception:
+                pass
+            spin_thread.join(timeout=0.2)
+            return
 
     rate = Rate(args.frame_rate)
     while rclpy.ok():
