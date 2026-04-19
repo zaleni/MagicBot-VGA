@@ -13,9 +13,9 @@ fi
 LIBERO_HOME="${LIBERO_HOME:-${LIBERO_HOME_DEFAULT}}"
 LIBERO_GIT_URL="${LIBERO_GIT_URL:-https://github.com/Lifelong-Robot-Learning/LIBERO.git}"
 INSTALL_EXTRA_EVAL_DEPS="${INSTALL_EXTRA_EVAL_DEPS:-true}"
-INSTALL_MINIMAL_LIBERO_EVAL_DEPS="${INSTALL_MINIMAL_LIBERO_EVAL_DEPS:-true}"
+INSTALL_MINIMAL_LIBERO_EVAL_DEPS="${INSTALL_MINIMAL_LIBERO_EVAL_DEPS:-false}"
 PIN_LIBERO_COMPAT_DEPS="${PIN_LIBERO_COMPAT_DEPS:-false}"
-INSTALL_LIBERO_REQUIREMENTS="${INSTALL_LIBERO_REQUIREMENTS:-false}"
+INSTALL_LIBERO_REQUIREMENTS="${INSTALL_LIBERO_REQUIREMENTS:-true}"
 CHECK_IMPORTS="${CHECK_IMPORTS:-true}"
 
 if [[ -n "${CONDA_ENV}" ]]; then
@@ -36,7 +36,7 @@ echo "Installing base evaluation dependencies..."
 "${PYTHON_BIN}" -m pip install mujoco tyro imageio imageio-ffmpeg
 
 if [[ "${INSTALL_EXTRA_EVAL_DEPS}" == "true" ]]; then
-  echo "Installing optional helper dependencies..."
+  echo "Installing evaluator helper dependencies..."
   "${PYTHON_BIN}" -m pip install matplotlib mediapy websockets msgpack
 fi
 
@@ -54,20 +54,19 @@ if [[ ! -f "${LIBERO_HOME}/setup.py" && ! -f "${LIBERO_HOME}/pyproject.toml" ]];
   exit 1
 fi
 
+if [[ "${INSTALL_LIBERO_REQUIREMENTS}" == "true" && -f "${LIBERO_HOME}/requirements.txt" ]]; then
+  echo "Installing official LIBERO requirements from ${LIBERO_HOME}/requirements.txt..."
+  "${PYTHON_BIN}" -m pip install -r "${LIBERO_HOME}/requirements.txt"
+fi
+
 if [[ "${INSTALL_MINIMAL_LIBERO_EVAL_DEPS}" == "true" ]]; then
   if [[ "${PIN_LIBERO_COMPAT_DEPS}" == "true" ]]; then
     echo "Installing minimal LIBERO eval dependencies with conservative compatibility pins..."
     "${PYTHON_BIN}" -m pip install pyyaml "bddl==1.0.1" "robosuite==1.4.0"
   else
-    echo "Installing minimal LIBERO eval dependencies without forcing the full upstream requirements set..."
+    echo "Installing minimal LIBERO eval dependencies without the full upstream requirements set..."
     "${PYTHON_BIN}" -m pip install pyyaml bddl robosuite
   fi
-fi
-
-if [[ "${INSTALL_LIBERO_REQUIREMENTS}" == "true" && -f "${LIBERO_HOME}/requirements.txt" ]]; then
-  echo "Installing full LIBERO requirements from ${LIBERO_HOME}/requirements.txt..."
-  echo "Warning: upstream LIBERO pins many package versions and may downgrade an existing MagicBot environment."
-  "${PYTHON_BIN}" -m pip install -r "${LIBERO_HOME}/requirements.txt"
 fi
 
 echo "Installing LIBERO in editable mode..."
@@ -100,6 +99,16 @@ fi
 cat <<'EOF'
 
 Installation finished.
+
+Default mode for this helper script:
+
+  - install official LIBERO requirements
+  - install extra deps needed by this repo's evaluator
+  - install LIBERO in editable mode
+
+If you intentionally want a lighter non-official install, rerun with:
+
+  INSTALL_LIBERO_REQUIREMENTS=false INSTALL_MINIMAL_LIBERO_EVAL_DEPS=true bash evaluation/Libero/install_libero.sh
 
 If you are on a headless server, these environment variables are commonly needed before evaluation:
 

@@ -20,13 +20,27 @@ Relevant files:
 
 Recommended layout: keep `LIBERO` at `third_party/LIBERO`.
 
-Install the LIBERO eval environment:
+You need dependencies on both sides:
+
+- `LIBERO` eval env: official LIBERO stack plus this repo's evaluator extras
+- `MagicBot` serve env: the original model-serving stack plus `websockets` and `msgpack`
+
+Because this is now a separate LIBERO eval environment, it is fine to follow the official LIBERO install flow.
+
+Recommended install:
 
 ```bash
 conda activate <your_libero_eval_env>
 cd third_party/LIBERO
-pip install mujoco tyro imageio pyyaml matplotlib bddl robosuite websockets msgpack
+pip install -r requirements.txt
+pip install tyro imageio websockets msgpack
 pip install -e .
+```
+
+If you want the exact upstream stack, follow `third_party/LIBERO/README.md` first, then add:
+
+```bash
+pip install tyro imageio websockets msgpack
 ```
 
 Or use the helper script:
@@ -36,11 +50,20 @@ conda activate <your_libero_eval_env>
 bash evaluation/Libero/install_libero.sh
 ```
 
+If the `MagicBot` environment does not already have websocket serving deps, install:
+
+```bash
+conda activate <your_magicbot_env>
+pip install websockets msgpack
+```
+
 Notes:
 
-- Do not install `third_party/LIBERO/requirements.txt` by default.
-- The upstream pins are old and can downgrade packages you already need elsewhere.
-- For this repo's benchmark path, the minimal dependency set above is usually enough.
+- In the split two-environment setup, installing the official `third_party/LIBERO/requirements.txt` is the recommended default.
+- The old warning about avoiding upstream requirements only applies if you try to merge LIBERO into the `MagicBot` environment.
+- `tyro`, `imageio`, `websockets`, and `msgpack` are extra deps used by this repo's evaluator path and are not part of upstream LIBERO requirements.
+- `websockets` and `msgpack` are also required on the `MagicBot` serve side, because `01_serve_magicbot_libero.sh` reuses the websocket server from `evaluation/Real_Lift2`.
+- If you intentionally want a lighter install instead of the official stack, use `bash evaluation/Libero/install_libero.sh` with `INSTALL_LIBERO_REQUIREMENTS=false INSTALL_MINIMAL_LIBERO_EVAL_DEPS=true`.
 
 Quick checks:
 
@@ -64,6 +87,7 @@ export PYOPENGL_PLATFORM=egl
 ```bash
 conda activate <your_magicbot_env>
 
+PORT=8000 \
 CHECKPOINT_DIR=/path/to/checkpoints/last/pretrained_model \
 QWEN3_VL_PRETRAINED_PATH=/path/to/Qwen3-VL-2B-Instruct \
 COSMOS_TOKENIZER_PATH_OR_NAME=/path/to/Cosmos-Tokenizer-CI8x8 \
@@ -137,11 +161,13 @@ Each task directory contains:
 
 `ModuleNotFoundError: No module named 'robosuite'` or `No module named 'bddl'`
 
-- Install the minimal eval deps: `pip install pyyaml matplotlib bddl robosuite`
+- Install the official LIBERO requirements: `pip install -r third_party/LIBERO/requirements.txt`
+- Or use the lighter fallback install: `pip install pyyaml matplotlib bddl robosuite`
 
 `ModuleNotFoundError: No module named 'websockets'` or `No module named 'msgpack'`
 
 - Install the websocket deps: `pip install websockets msgpack`
+- This can happen on either side: the `LIBERO` evaluator or the `MagicBot` policy server.
 
 `stats.json not found` or wrong `STATS_KEY`
 
