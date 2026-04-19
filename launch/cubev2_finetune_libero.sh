@@ -64,6 +64,7 @@ DATASET_EXTERNAL_STATS_PATH="/home/jiangjiahao/research/MagicBot-VGA/outputs/nor
 DATASET_EXTERNAL_STATS_ROOT="${DATASET_EXTERNAL_STATS_ROOT:-}"
 
 BATCH_SIZE="${BATCH_SIZE:-8}"
+GRAD_ACCUM_STEPS="${GRAD_ACCUM_STEPS:-1}"
 STEPS="${STEPS:-80000}"
 SAVE_FREQ="${SAVE_FREQ:-10000}"
 LOG_FREQ="${LOG_FREQ:-25}"
@@ -201,6 +202,7 @@ ARGS=(
 
     --seed=42
     --batch_size="${BATCH_SIZE}"
+    --gradient_accumulation_steps="${GRAD_ACCUM_STEPS}"
     --steps="${STEPS}"
     --save_freq="${SAVE_FREQ}"
     --log_freq="${LOG_FREQ}"

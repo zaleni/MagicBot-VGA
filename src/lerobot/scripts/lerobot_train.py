@@ -64,7 +64,7 @@ def update_policy(
     accelerator: Accelerator,
     lr_scheduler=None,
     lock=None,
-) -> tuple[MetricsTracker, dict]:
+) -> tuple[MetricsTracker, dict, bool, float]:
     """
     Performs a single training step to update the policy's weights.
 
@@ -89,43 +89,55 @@ def update_policy(
     start_time = time.perf_counter()
     policy.train()
 
-    # Let accelerator handle mixed precision
-    with accelerator.autocast():
-        loss, output_dict = policy.forward(batch)
+    with accelerator.accumulate(policy):
+        # Let accelerator handle mixed precision
+        with accelerator.autocast():
+            loss, output_dict = policy.forward(batch)
 
-    # Use accelerator's backward method
-    accelerator.backward(loss)
+        # Use accelerator's backward method. This also scales by
+        # gradient_accumulation_steps when appropriate.
+        accelerator.backward(loss)
 
-    # Clip gradients if specified
-    if grad_clip_norm > 0:
-        grad_norm = accelerator.clip_grad_norm_(policy.parameters(), grad_clip_norm)
-    else:
-        grad_norm = torch.nn.utils.clip_grad_norm_(
-            policy.parameters(), float("inf"), error_if_nonfinite=False
-        )
+        grad_norm = None
+        if accelerator.sync_gradients:
+            if grad_clip_norm > 0:
+                grad_norm = accelerator.clip_grad_norm_(policy.parameters(), grad_clip_norm)
+            else:
+                grad_norm = torch.nn.utils.clip_grad_norm_(
+                    policy.parameters(), float("inf"), error_if_nonfinite=False
+                )
 
-    # Optimizer step
-    with lock if lock is not None else nullcontext():
-        optimizer.step()
+        # Optimizer step: Accelerate will turn this into a no-op on
+        # non-sync micro-steps when gradient accumulation is enabled.
+        with lock if lock is not None else nullcontext():
+            optimizer.step()
 
-    optimizer.zero_grad()
+        # This project initializes Accelerator with
+        # step_scheduler_with_optimizer=False, so the prepared scheduler will
+        # still advance whenever .step() is called. Gate it on sync steps so
+        # gradient accumulation keeps the scheduler aligned with real optimizer
+        # updates.
+        if lr_scheduler is not None and accelerator.sync_gradients:
+            lr_scheduler.step()
 
-    # Step through pytorch scheduler at every batch instead of epoch
-    if lr_scheduler is not None:
-        lr_scheduler.step()
+        optimizer.zero_grad()
 
-    # Update internal buffers if policy has update method
-    if has_method(accelerator.unwrap_model(policy, keep_fp32_wrapper=True), "update"):
-        accelerator.unwrap_model(policy, keep_fp32_wrapper=True).update()
+        # Update internal buffers if policy has update method only when an
+        # optimizer step actually happened.
+        if accelerator.sync_gradients and has_method(
+            accelerator.unwrap_model(policy, keep_fp32_wrapper=True), "update"
+        ):
+            accelerator.unwrap_model(policy, keep_fp32_wrapper=True).update()
 
     train_metrics.loss = loss.item()
     for metric_name in ("loss_action", "loss_gen", "loss_3d", "time_3d_teacher_forward_s"):
         if metric_name in output_dict and metric_name in train_metrics.metrics:
             setattr(train_metrics, metric_name, output_dict[metric_name])
-    train_metrics.grad_norm = grad_norm.item()
-    train_metrics.lr = optimizer.param_groups[0]["lr"]
-    train_metrics.update_s = time.perf_counter() - start_time
-    return train_metrics, output_dict
+    if accelerator.sync_gradients and grad_norm is not None:
+        train_metrics.grad_norm = grad_norm.item()
+        train_metrics.lr = optimizer.param_groups[0]["lr"]
+
+    return train_metrics, output_dict, accelerator.sync_gradients, time.perf_counter() - start_time
 
 
 def _sync_scalar_metrics(accelerator: Accelerator, metrics: dict[str, float]) -> dict[str, float]:
@@ -245,6 +257,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         init_pg_kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=ddp_timeout_s))
         accelerator = Accelerator(
             step_scheduler_with_optimizer=False,
+            gradient_accumulation_steps=cfg.gradient_accumulation_steps,
             kwargs_handlers=[ddp_kwargs, init_pg_kwargs],
         )
 
@@ -330,14 +343,17 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         num_frames = dataset.num_frames
         num_episodes = dataset.num_episodes
     num_processes = accelerator.num_processes
-    effective_bs = cfg.batch_size * num_processes
+    effective_bs = cfg.batch_size * num_processes * cfg.gradient_accumulation_steps
 
     if is_main_process:
         logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")
         logging.info(f"{cfg.steps=} ({format_big_number(cfg.steps)})")
         logging.info(f"\033[91m\033[1mnum_frames={num_frames} ({format_big_number(num_frames)})\033[0m")
         logging.info(f"\033[91m\033[1mnum_episodes={num_episodes} ({format_big_number(num_episodes)})\033[0m")
-        logging.info(f"Effective batch size: {cfg.batch_size} x {num_processes} = {effective_bs}")
+        logging.info(
+            "Effective batch size: "
+            f"{cfg.batch_size} x {num_processes} x {cfg.gradient_accumulation_steps} = {effective_bs}"
+        )
         logging.info(f"policy info:\n{policy}")
 
     # create dataloader for offline training
@@ -407,7 +423,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         
 
     # Use effective batch size for proper epoch calculation in distributed training
-    effective_batch_size = cfg.batch_size * accelerator.num_processes
+    effective_batch_size = cfg.batch_size * accelerator.num_processes * cfg.gradient_accumulation_steps
     train_tracker = MetricsTracker(
         effective_batch_size,
         num_frames,
@@ -421,14 +437,16 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         logging.info("Start offline training on a fixed dataset")
         training_start_time = time.perf_counter()
     
-    for _ in range(step, cfg.steps):
+    accumulated_update_time = 0.0
+    accumulated_dataloading_time = 0.0
+    while step < cfg.steps:
         start_time = time.perf_counter()
         batch = next(dl_iter)
         if cfg.dataset.dist_loading:
             batch = send_to_device(batch, accelerator.device, non_blocking=True)
-        train_tracker.dataloading_s = time.perf_counter() - start_time
+        accumulated_dataloading_time += time.perf_counter() - start_time
 
-        train_tracker, output_dict = update_policy(
+        train_tracker, output_dict, did_step, update_time_s = update_policy(
             train_tracker,
             policy,
             batch,
@@ -437,10 +455,18 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             accelerator=accelerator,
             lr_scheduler=lr_scheduler,
         )
+        accumulated_update_time += update_time_s
+
+        if not did_step:
+            continue
 
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
         # increment `step` here.
         step += 1
+        train_tracker.dataloading_s = accumulated_dataloading_time
+        train_tracker.update_s = accumulated_update_time
+        accumulated_dataloading_time = 0.0
+        accumulated_update_time = 0.0
         train_tracker.step()
         is_log_step = cfg.log_freq > 0 and step % cfg.log_freq == 0
         should_log = is_log_step and is_main_process
@@ -451,10 +477,10 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             log_scalar_metrics = {
                 name: value
                 for name, value in {
-                    "loss": output_dict.get("loss", train_tracker.loss.val),
-                    "loss_action": output_dict.get("loss_action"),
-                    "loss_gen": output_dict.get("loss_gen"),
-                    "loss_3d": output_dict.get("loss_3d"),
+                    "loss": _meter_avg_or_val(train_tracker.loss) if "loss" in train_tracker.metrics else None,
+                    "loss_action": _meter_avg_or_val(train_tracker.loss_action) if "loss_action" in train_tracker.metrics else None,
+                    "loss_gen": _meter_avg_or_val(train_tracker.loss_gen) if "loss_gen" in train_tracker.metrics else None,
+                    "loss_3d": _meter_avg_or_val(train_tracker.loss_3d) if "loss_3d" in train_tracker.metrics else None,
                 }.items()
                 if value is not None
             }
