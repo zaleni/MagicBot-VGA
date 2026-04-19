@@ -137,7 +137,7 @@ Typical `run`-machine checklist:
 - `utils.ros_operator`, `utils.setup_loader`, and related robot-side helpers
 - network access to the websocket server
 - no MagicBot checkpoint loading needed on this side
-- sync `main.py`, `inference.py`, and `runtime.py` to the robot machine together
+- sync the robot-side module set together: `main.py`, `inference.py`, `runtime.py`, `remote_client.py`, `request_builder.py`, `websocket_client.py`, and `msgpack_numpy.py`
 
 ## Test Remote Server Connectivity
 

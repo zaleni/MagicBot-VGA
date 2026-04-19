@@ -216,14 +216,17 @@ class RTCActionQueue:
         real_delay: int,
         action_index_before_inference: int | None = None,
     ) -> None:
-        effective_delay = max(0, int(real_delay))
+        reported_delay = max(0, int(real_delay))
+        effective_delay = reported_delay
         if action_index_before_inference is not None and self.queue is not None:
             indexes_diff = max(0, self.last_index - int(action_index_before_inference))
-            if indexes_diff != effective_delay:
+            if indexes_diff != reported_delay:
                 print(
                     "[MagicBot] RTC queue observed consumed steps do not match reported delay: "
-                    f"observed={indexes_diff}, reported={effective_delay}."
+                    f"observed={indexes_diff}, reported={reported_delay}. "
+                    "Using the observed queue consumption for prefix alignment."
                 )
+            effective_delay = indexes_diff
 
         clamped_delay = max(0, min(effective_delay, len(original_actions), len(processed_actions)))
         self.original_queue = np.asarray(original_actions[clamped_delay:], dtype=np.float32).copy()

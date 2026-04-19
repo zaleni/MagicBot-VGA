@@ -7,6 +7,10 @@ REAL_LIFT2_RUNTIME_ROOT="${REAL_LIFT2_RUNTIME_ROOT:-/home/arx/ROS2_LIFT_Play/act
 ENTRY_SCRIPT="${PROJ_ROOT}/evaluation/Real_Lift2/main.py"
 RUNTIME_MODULE="${PROJ_ROOT}/evaluation/Real_Lift2/runtime.py"
 INFERENCE_MODULE="${PROJ_ROOT}/evaluation/Real_Lift2/inference.py"
+REMOTE_CLIENT_MODULE="${PROJ_ROOT}/evaluation/Real_Lift2/remote_client.py"
+REQUEST_BUILDER_MODULE="${PROJ_ROOT}/evaluation/Real_Lift2/request_builder.py"
+WEBSOCKET_CLIENT_MODULE="${PROJ_ROOT}/evaluation/Real_Lift2/websocket_client.py"
+MSGPACK_NUMPY_MODULE="${PROJ_ROOT}/evaluation/Real_Lift2/msgpack_numpy.py"
 
 export PYTHONUNBUFFERED=1
 export TOKENIZERS_PARALLELISM=false
@@ -15,7 +19,14 @@ export PYTHONPATH="${REAL_LIFT2_RUNTIME_ROOT}:${PROJ_ROOT}/src:${PROJ_ROOT}:${PY
 
 cd "${PROJ_ROOT}"
 
-for required_file in "${ENTRY_SCRIPT}" "${RUNTIME_MODULE}" "${INFERENCE_MODULE}"; do
+for required_file in \
+  "${ENTRY_SCRIPT}" \
+  "${RUNTIME_MODULE}" \
+  "${INFERENCE_MODULE}" \
+  "${REMOTE_CLIENT_MODULE}" \
+  "${REQUEST_BUILDER_MODULE}" \
+  "${WEBSOCKET_CLIENT_MODULE}" \
+  "${MSGPACK_NUMPY_MODULE}"; do
   if [[ ! -f "${required_file}" ]]; then
     echo "Required deployment file is missing:"
     echo "  ${required_file}"
