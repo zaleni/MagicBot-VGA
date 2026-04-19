@@ -183,9 +183,8 @@ def init_robot(ros_operator, use_base, connected_event, start_event):
     start_event.wait()
 
     ros_operator.follow_arm_publish_continuous(init1, init1)
-    # Delay starting the base-control thread until runtime deque buffers are
-    # ready. Otherwise a freshly restarted inference window may immediately hit
-    # missing `base_pose_deque` warnings before the ROS subscriptions warm up.
+    if use_base:
+        ros_operator.start_base_control_thread()
 
 
 def publish_safe_stop_home_arms(ros_operator, frame_rate: int, publish_steps: int) -> None:
@@ -710,44 +709,6 @@ def ros_process(args, config, meta_queue, connected_event, start_event, shm_read
     )
 
     init_robot(ros_operator, args.use_base, connected_event, start_event)
-    deques_ready = wait_for_camera_deques(ros_operator, args.camera_names, use_base=args.use_base)
-    if not deques_ready:
-        meta_queue.put(
-            {
-                "error": (
-                    "Runtime deque warmup failed. If you still see missing *_deque warnings, "
-                    "the camera/base ROS stack did not recover cleanly. Restart realsense or rerun "
-                    "02_inference_lift2.sh instead of only restarting the final inference window."
-                )
-            }
-        )
-        try:
-            if rclpy.ok():
-                rclpy.shutdown()
-        except Exception:
-            pass
-        spin_thread.join(timeout=0.2)
-        return
-
-    if args.use_base:
-        try:
-            ros_operator.start_base_control_thread()
-        except Exception as exc:
-            meta_queue.put(
-                {
-                    "error": (
-                        "Base control thread failed to start after runtime warmup: "
-                        f"{exc}"
-                    )
-                }
-            )
-            try:
-                if rclpy.ok():
-                    rclpy.shutdown()
-            except Exception:
-                pass
-            spin_thread.join(timeout=0.2)
-            return
 
     rate = Rate(args.frame_rate)
     while rclpy.ok():

@@ -19,9 +19,8 @@ bash evaluation/Real_Lift2/01_serve_magicbot_real_lift2.sh
 
 
 ### 2. On the robot inference machine, only connect to the remote MagicBot Serve
-###    If you see persistent missing `*_deque` / `base_pose_deque` errors, the
-###    robot-side camera/base ROS stack is not ready yet. In that case, rerun
-###    this whole step 2 instead of only restarting the final inference window.
+###    This is the normal full startup path and should be the preferred way to
+###    launch robot-side inference.
 cd /home/arx/MagicBot-VGA
 
 RUN_ENV=act \
@@ -38,9 +37,8 @@ bash evaluation/Real_Lift2/02_inference_lift2.sh
 ###    `magicbot-real-lift2` terminal, do NOT rerun 02_inference_lift2.sh.
 ###    Restart only the last robot inference window with:
 ###    After restart, give the camera streams a few seconds to warm up. The
-###    robot-side process now waits for camera deque buffers before normal
-###    observation polling. If camera deque warnings still never recover, then
-###    the camera/ROS stack itself needs restarting instead of only this window.
+###    If camera deque warnings still never recover, then the camera/ROS stack
+###    itself needs restarting instead of only this window.
 ###    In that case, rerun step 2 / 02_inference_lift2.sh rather than this step 3.
 cd /home/arx/MagicBot-VGA
 source ~/.bashrc
