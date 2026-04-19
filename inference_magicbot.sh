@@ -24,6 +24,7 @@ cd /home/arx/MagicBot-VGA
 RUN_ENV=act \
 WS_URL=ws://10.60.43.33:8101 \
 PROMPT="Clear the junk and items off the desktop." \
+FRAME_RATE=30 \
 INFERENCE_MODE=sync \
 PREFETCH_LEAD_STEPS=10 \
 LOG_TIMING_EVERY=5 \
@@ -37,6 +38,7 @@ bash evaluation/Real_Lift2/02_inference_lift2.sh
 ###    robot-side process now waits for camera deque buffers before normal
 ###    observation polling. If camera deque warnings still never recover, then
 ###    the camera/ROS stack itself needs restarting instead of only this window.
+###    In that case, rerun step 2 / 02_inference_lift2.sh rather than this step 3.
 cd /home/arx/MagicBot-VGA
 source ~/.bashrc
 conda activate act

@@ -679,7 +679,24 @@ def ros_process(args, config, meta_queue, connected_event, start_event, shm_read
     )
 
     init_robot(ros_operator, args.use_base, connected_event, start_event)
-    wait_for_camera_deques(ros_operator, args.camera_names)
+    deques_ready = wait_for_camera_deques(ros_operator, args.camera_names)
+    if not deques_ready:
+        meta_queue.put(
+            {
+                "error": (
+                    "Camera deque warmup failed. If you still see missing *_deque warnings, "
+                    "the camera/ROS stack did not recover cleanly. Restart realsense or rerun "
+                    "02_inference_lift2.sh instead of only restarting the final inference window."
+                )
+            }
+        )
+        try:
+            if rclpy.ok():
+                rclpy.shutdown()
+        except Exception:
+            pass
+        spin_thread.join(timeout=0.2)
+        return
 
     rate = Rate(args.frame_rate)
     while rclpy.ok():
@@ -1092,14 +1109,28 @@ def main(args):
     )
     ros_proc.start()
 
-    connected_event.wait()
+    if not connected_event.wait(timeout=15.0):
+        request_graceful_ros_shutdown(ros_proc, args)
+        raise RuntimeError("ROS process did not reach the connected state in time.")
+
     input("Enter any key to continue :")
     start_event.set()
 
-    shapes = meta_queue.get()
+    try:
+        shapes = meta_queue.get(timeout=20.0)
+    except queue.Empty as exc:
+        request_graceful_ros_shutdown(ros_proc, args)
+        raise RuntimeError("Timed out waiting for ROS observation metadata.") from exc
+
+    if isinstance(shapes, dict) and "error" in shapes:
+        request_graceful_ros_shutdown(ros_proc, args)
+        raise RuntimeError(str(shapes["error"]))
+
     shm_name_dict = make_shm_name_dict(args, shapes)
     meta_queue.put(shm_name_dict)
-    shm_ready_event.wait()
+    if not shm_ready_event.wait(timeout=10.0):
+        request_graceful_ros_shutdown(ros_proc, args)
+        raise RuntimeError("Timed out waiting for shared-memory setup.")
 
     shm_dict = connect_shm_dict(shm_name_dict, shapes, shapes["dtypes"], config)
 
