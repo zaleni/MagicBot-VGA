@@ -62,6 +62,8 @@ except ImportError:
 obs_dict = collections.OrderedDict()
 np.set_printoptions(linewidth=200, suppress=True)
 _shutdown_in_progress = False
+ARM_HOME_SLOWDOWN_FACTOR = 3
+MANUAL_HOME_TOTAL_PUBLISH_STEPS = 180
 
 
 def ensure_compat_args(args) -> None:
@@ -187,20 +189,73 @@ def init_robot(ros_operator, use_base, connected_event, start_event):
         ros_operator.start_base_control_thread()
 
 
-def publish_safe_stop_home_arms(ros_operator, frame_rate: int, publish_steps: int) -> None:
-    """Publish the same zero home pose used by home_arm.sh before lowering the base."""
+def split_bimanual_action(action: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    action = np.asarray(action, dtype=np.float32).reshape(-1)
+    left = np.zeros((7,), dtype=np.float32)
+    right = np.zeros((7,), dtype=np.float32)
+    left[: min(7, action.size)] = action[: min(7, action.size)]
+    if action.size > 7:
+        right[: min(7, action.size - 7)] = action[7 : 7 + min(7, action.size - 7)]
+    return left, right
+
+
+def read_current_arm_qpos(ros_operator) -> np.ndarray:
+    try:
+        obs = ros_operator.get_observation()
+    except Exception:
+        obs = None
+
+    if not obs or "qpos" not in obs:
+        return np.zeros((14,), dtype=np.float32)
+
+    qpos = np.asarray(obs["qpos"], dtype=np.float32).reshape(-1)
+    out = np.zeros((14,), dtype=np.float32)
+    out[: min(14, qpos.size)] = qpos[: min(14, qpos.size)]
+    return out
+
+
+def publish_staged_home_arms(
+    ros_operator,
+    current_qpos: np.ndarray,
+    frame_rate: int,
+    total_publish_steps: int,
+    log_prefix: str,
+) -> None:
+    current_qpos = np.asarray(current_qpos, dtype=np.float32).reshape(-1)
+    current_qpos = current_qpos[:14] if current_qpos.size >= 14 else np.pad(current_qpos, (0, 14 - current_qpos.size))
+    stages = ARM_HOME_SLOWDOWN_FACTOR
+    hold_steps = max(1, int(total_publish_steps) // stages)
+
+    print(
+        f"{log_prefix} Publishing slower staged arm-home targets over {stages} stages."
+    )
+
+    for stage_idx in range(1, stages + 1):
+        alpha = stage_idx / stages
+        staged = (1.0 - alpha) * current_qpos
+        left_action, right_action = split_bimanual_action(staged)
+        ros_operator.follow_arm_publish_continuous(left_action, right_action)
+        time.sleep(hold_steps / max(1, float(frame_rate)))
+
+
+def publish_safe_stop_home_arms(
+    ros_operator,
+    frame_rate: int,
+    publish_steps: int,
+) -> None:
+    """Publish a staged home pose before lowering the base."""
     if rclpy is not None and not rclpy.ok():
         print("[SafeStop] ROS context is already closed, skip arm-home publish.")
         return
     try:
-        home_action = np.zeros((7,), dtype=np.float32)
-        print(
-            f"[SafeStop] Publishing arm-home target for {publish_steps} steps "
-            f"before lowering the base."
+        current_qpos = read_current_arm_qpos(ros_operator)
+        publish_staged_home_arms(
+            ros_operator=ros_operator,
+            current_qpos=current_qpos,
+            frame_rate=frame_rate,
+            total_publish_steps=publish_steps,
+            log_prefix="[SafeStop]",
         )
-        for _ in range(max(1, int(publish_steps))):
-            ros_operator.follow_arm_publish_continuous(home_action, home_action)
-            time.sleep(max(1.0 / max(1, int(frame_rate)), 0.01))
     except Exception as exc:
         print(f"[SafeStop] Failed to publish arm-home target: {exc}")
 
@@ -246,6 +301,19 @@ def signal_handler(
     if rclpy is not None and not rclpy.ok():
         print("[Shutdown] ROS context is already stopped, skip safe-stop commands.")
         sys.exit(0)
+
+    base_thread = getattr(ros_operator, "base_control_thread", None)
+    if use_base:
+        # Stop the background base-hold loop first, otherwise it can keep
+        # re-publishing the fixed body height (for example 16) and cause the
+        # chassis to rebound after we send the safe-stop target height 0.
+        ros_operator.base_enable = False
+        if base_thread is not None:
+            try:
+                base_thread.join(timeout=2.0)
+            except Exception as exc:
+                print(f"[Shutdown] Failed to join base control thread cleanly: {exc}")
+
     if safe_stop_home_arms:
         publish_safe_stop_home_arms(
             ros_operator=ros_operator,
@@ -259,14 +327,10 @@ def signal_handler(
             frame_rate=frame_rate,
             publish_steps=safe_stop_publish_steps,
         )
-    ros_operator.base_enable = False
     try:
         ros_operator.robot_base_shutdown()
     except Exception as exc:
         print(f"[Shutdown] robot_base_shutdown failed: {exc}")
-    base_thread = getattr(ros_operator, "base_control_thread", None)
-    if base_thread is not None:
-        base_thread.join(timeout=2.0)
     sys.exit(0)
 
 
@@ -734,6 +798,7 @@ def ros_process(args, config, meta_queue, connected_event, start_event, shm_read
     shm_ready_event.set()
 
     rate = Rate(args.frame_rate)
+    manual_home_active = False
     while rclpy.ok():
         obs = ros_operator.get_observation()
         if not obs:
@@ -741,15 +806,25 @@ def ros_process(args, config, meta_queue, connected_event, start_event, shm_read
             continue
 
         if manual_home_command.value == 1:
+            if not manual_home_active:
+                current_qpos = np.asarray(obs.get("qpos", np.zeros((14,), dtype=np.float32)), dtype=np.float32)
+                publish_staged_home_arms(
+                    ros_operator=ros_operator,
+                    current_qpos=current_qpos,
+                    frame_rate=args.frame_rate,
+                    total_publish_steps=MANUAL_HOME_TOTAL_PUBLISH_STEPS,
+                    log_prefix="[Manual Home]",
+                )
+                manual_home_active = True
             if args.use_base and args.fixed_body_height >= 0:
                 fixed_h = float(args.fixed_body_height)
                 action_base = np.zeros((10,), dtype=np.float32)
                 action_base[3] = fixed_h
                 ros_operator.set_robot_base_target(action_base)
-            home_action = np.zeros((7,), dtype=np.float32)
-            ros_operator.follow_arm_publish_continuous(home_action, home_action)
             rate.sleep()
             continue
+        elif manual_home_active:
+            manual_home_active = False
 
         for cam in args.camera_names:
             shm, shape, dtype = shm_dict[cam]

@@ -47,7 +47,7 @@ conda activate act
 REAL_LIFT2_RUNTIME_ROOT=/home/arx/ROS2_LIFT_Play/act \
 WS_URL=ws://10.60.43.33:8101 \
 PROMPT="Clear the junk and items off the desktop." \
-FRAME_RATE=60 \
+FRAME_RATE=30 \
 IMAGE_HISTORY_INTERVAL=15 \
 MAX_PUBLISH_STEP=10000 \
 RECORD_MODE=Speed \
