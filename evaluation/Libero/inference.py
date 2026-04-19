@@ -40,16 +40,67 @@ from lerobot.transforms.core import (
 )
 from lerobot.utils.constants import OBS_IMAGES, OBS_STATE
 
+
+def _get_libero_search_roots() -> list[Path]:
+    candidates: list[Path] = []
+
+    libero_home = os.environ.get("LIBERO_HOME", "").strip()
+    if libero_home:
+        candidates.append(Path(libero_home).expanduser())
+
+    candidates.extend(
+        [
+            ROOT_PATH / "LIBERO",
+            ROOT_PATH / "third_party" / "LIBERO",
+        ]
+    )
+
+    unique_candidates: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        try:
+            normalized = str(candidate.resolve())
+        except OSError:
+            normalized = str(candidate)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        unique_candidates.append(candidate)
+    return unique_candidates
+
+
+def _import_libero_runtime():
+    from libero.libero import benchmark as libero_benchmark, get_libero_path as libero_get_libero_path
+    from libero.libero.envs import OffScreenRenderEnv as libero_offscreen_render_env
+
+    return libero_benchmark, libero_get_libero_path, libero_offscreen_render_env
+
+
+LIBERO_SEARCH_ROOTS = _get_libero_search_roots()
+LIBERO_IMPORT_ERROR = None
+benchmark = None
+get_libero_path = None
+OffScreenRenderEnv = None
+
 try:
-    from libero.libero import benchmark, get_libero_path
-    from libero.libero.envs import OffScreenRenderEnv
+    benchmark, get_libero_path, OffScreenRenderEnv = _import_libero_runtime()
 except ImportError as exc:  # pragma: no cover - depends on LIBERO runtime setup
-    benchmark = None
-    get_libero_path = None
-    OffScreenRenderEnv = None
     LIBERO_IMPORT_ERROR = exc
-else:
-    LIBERO_IMPORT_ERROR = None
+
+    for search_root in LIBERO_SEARCH_ROOTS:
+        if not (search_root / "libero").exists():
+            continue
+
+        search_root_str = str(search_root)
+        if search_root_str not in sys.path:
+            sys.path.insert(0, search_root_str)
+
+        try:
+            benchmark, get_libero_path, OffScreenRenderEnv = _import_libero_runtime()
+            LIBERO_IMPORT_ERROR = None
+            break
+        except ImportError as retry_exc:
+            LIBERO_IMPORT_ERROR = retry_exc
 
 
 LIBERO_DUMMY_ACTION = [0.0] * 6 + [-1.0]
@@ -95,9 +146,14 @@ class EvalArgs:
 
 def ensure_libero_available() -> None:
     if benchmark is None or get_libero_path is None or OffScreenRenderEnv is None:
+        search_hint = ", ".join(str(path) for path in LIBERO_SEARCH_ROOTS)
         raise ImportError(
             "LIBERO is not available in the current environment. "
-            "Please install LIBERO and its simulator dependencies before running evaluation."
+            "Please install LIBERO and its simulator dependencies before running evaluation. "
+            f"Python executable: {sys.executable}. "
+            f"Search roots checked: {search_hint or '(none)'}. "
+            "If LIBERO is already checked out locally, set LIBERO_HOME=/path/to/LIBERO "
+            "or add that checkout root to PYTHONPATH."
         ) from LIBERO_IMPORT_ERROR
 
 

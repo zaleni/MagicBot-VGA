@@ -4,6 +4,15 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJ_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
+LIBERO_HOME="${LIBERO_HOME:-}"
+if [[ -n "${LIBERO_HOME}" ]]; then
+  export PYTHONPATH="${LIBERO_HOME}:${PYTHONPATH:-}"
+elif [[ -d "${PROJ_ROOT}/LIBERO" ]]; then
+  export PYTHONPATH="${PROJ_ROOT}/LIBERO:${PYTHONPATH:-}"
+elif [[ -d "${PROJ_ROOT}/third_party/LIBERO" ]]; then
+  export PYTHONPATH="${PROJ_ROOT}/third_party/LIBERO:${PYTHONPATH:-}"
+fi
+
 cd "${PROJ_ROOT}"
 
 PRETRAINED_CKPT="${PRETRAINED_CKPT:-outputs/cubev2/your_libero_run/checkpoints/last/pretrained_model}"

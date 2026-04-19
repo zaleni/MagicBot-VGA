@@ -224,6 +224,8 @@ Per-task directories contain:
 `ImportError: LIBERO is not available`
 
 - install LIBERO from source in the active environment
+- if LIBERO is only cloned locally, set `LIBERO_HOME=/path/to/LIBERO` before running `eval.sh`
+- equivalently, add the LIBERO checkout root to `PYTHONPATH`
 
 `stats.json not found` or wrong `STATS_KEY`
 
