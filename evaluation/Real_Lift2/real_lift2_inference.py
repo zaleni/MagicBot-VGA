@@ -1090,6 +1090,8 @@ def inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_comm
 
         if episode_restart_requested:
             action = np.zeros((action_dim,), dtype=np.float32)
+            first_inference = True
+            print("[Manual Home] Rollout state has been reset. The next chunk will be treated as a fresh start.")
 
         if args.use_base and action_dim > 19:
             action[16] = 0
