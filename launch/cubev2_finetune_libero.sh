@@ -57,6 +57,7 @@ N_ACTION_STEPS="${N_ACTION_STEPS:-${CHUNK_SIZE}}"
 
 ENABLE_3D_QUERIES="${ENABLE_3D_QUERIES:-true}"
 LAMBDA_3D="${LAMBDA_3D:-0.01}"
+GEN_LAMBDA="${GEN_LAMBDA:-0.002}"
 NUM_3D_QUERY_TOKENS="${NUM_3D_QUERY_TOKENS:-432}"
 
 USE_EXTERNAL_STATS="${USE_EXTERNAL_STATS:-true}"
@@ -153,6 +154,13 @@ mkdir -p "${REPO_ID_FILE_DIR}"
 REPO_ID_FILE="${REPO_ID_FILE_DIR}/${JOB_NAME}.txt"
 printf '%s\n' "${DATASET_REPO_IDS[@]}" > "${REPO_ID_FILE}"
 
+echo "ACTION_TYPE=${ACTION_TYPE}"
+echo "CHUNK_SIZE=${CHUNK_SIZE}"
+echo "N_ACTION_STEPS=${N_ACTION_STEPS}"
+echo "GEN_LAMBDA=${GEN_LAMBDA}"
+echo "LAMBDA_3D=${LAMBDA_3D}"
+echo "OUTPUT_DIR=${OUTPUT_DIR}"
+
 ARGS=(
     --multi_gpu
     --num_processes="${NUM_PROCESSES}"
@@ -187,6 +195,7 @@ ARGS=(
     --policy.n_action_steps="${N_ACTION_STEPS}"
     --policy.enable_3d_queries="${ENABLE_3D_QUERIES}"
     --policy.num_3d_query_tokens="${NUM_3D_QUERY_TOKENS}"
+    --policy.lambda_gen="${GEN_LAMBDA}"
     --policy.lambda_3d="${LAMBDA_3D}"
     --policy.da3_model_path_or_name="${DA3_MODEL_PATH_OR_NAME}"
     --policy.da3_variant="${DA3_VARIANT}"
