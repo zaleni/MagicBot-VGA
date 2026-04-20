@@ -60,6 +60,7 @@ class ServeArgs:
     stats_key: str | None = None
     stats_path: str | None = None
     infer_horizon: int | None = None
+    num_inference_steps: int | None = None
     resize_size: int = 224
     request_image_height: int = 480
     request_image_width: int = 640
@@ -97,6 +98,7 @@ def parse_args() -> ServeArgs:
     parser.add_argument("--stats_key", default=None)
     parser.add_argument("--stats_path", default=None)
     parser.add_argument("--infer_horizon", type=int, default=None)
+    parser.add_argument("--num_inference_steps", type=int, default=None)
     parser.add_argument("--resize_size", type=int, default=224)
     parser.add_argument("--request_image_height", type=int, default=480)
     parser.add_argument("--request_image_width", type=int, default=640)
@@ -199,6 +201,8 @@ def apply_runtime_config_overrides(config: PreTrainedConfig, args: ServeArgs) ->
         config.da3_code_root = args.da3_code_root
     if args.disable_3d_teacher_for_eval and hasattr(config, "lambda_3d"):
         config.lambda_3d = 0.0
+    if args.num_inference_steps is not None and hasattr(config, "num_inference_steps"):
+        config.num_inference_steps = int(args.num_inference_steps)
 
 
 def resolve_stats(stats_path: Path, requested_key: str | None) -> tuple[str, dict[str, Any]]:
@@ -304,6 +308,7 @@ class MagicBotRemotePolicy:
         self.policy.config.device = self.device
         setattr(self.policy.config, "cosmos_device", self.cosmos_device)
         self.policy.to(device=self.device, dtype=self.runtime_dtype).eval()
+        self.policy.requires_grad_(False)
 
         stats_path = Path(args.stats_path).expanduser() if args.stats_path else self.ckpt_dir / "stats.json"
         if not stats_path.exists():
@@ -347,7 +352,21 @@ class MagicBotRemotePolicy:
         )
 
         train_action_mode = None if self.train_cfg is None else getattr(self.train_cfg.dataset, "action_mode", None)
-        self.action_mode = args.action_mode or train_action_mode or "abs"
+        if train_action_mode is not None:
+            train_action_mode = str(train_action_mode).lower()
+        requested_action_mode = None if args.action_mode is None else str(args.action_mode).lower()
+        if (
+            requested_action_mode is not None
+            and train_action_mode is not None
+            and requested_action_mode != train_action_mode
+        ):
+            raise RuntimeError(
+                "Requested action_mode does not match the checkpoint training config: "
+                f"requested={requested_action_mode!r}, checkpoint={train_action_mode!r}. "
+                "Update ACTION_MODE/--action_mode to match the checkpoint, or omit it to follow train_config."
+            )
+
+        self.action_mode = requested_action_mode or train_action_mode or "abs"
         if self.action_mode not in {"abs", "delta"}:
             raise ValueError(f"Unsupported action_mode: {self.action_mode}")
 
@@ -374,6 +393,7 @@ class MagicBotRemotePolicy:
             "device": self.device,
             "dtype": str(self.runtime_dtype),
             "infer_horizon": self.infer_horizon,
+            "num_inference_steps": int(getattr(self.policy.config, "num_inference_steps", -1)),
             "default_prompt": args.default_prompt,
             "rtc_enabled": bool(args.rtc_enabled),
             "rtc_execution_horizon": int(args.rtc_execution_horizon),

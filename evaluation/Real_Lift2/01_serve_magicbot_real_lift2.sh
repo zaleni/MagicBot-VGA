@@ -16,6 +16,7 @@ PORT="${PORT:-8000}"
 DEVICE="${DEVICE:-auto}"
 DTYPE="${DTYPE:-bfloat16}"
 INFER_HORIZON="${INFER_HORIZON:-30}"
+NUM_INFERENCE_STEPS="${NUM_INFERENCE_STEPS:-}"
 RESIZE_SIZE="${RESIZE_SIZE:-224}"
 DEFAULT_PROMPT="${DEFAULT_PROMPT:-Clear the junk and items off the desktop.}"
 RTC_ENABLED="${RTC_ENABLED:-false}"
@@ -40,6 +41,10 @@ ARGS=(
   --resize_size="${RESIZE_SIZE}"
   --default_prompt="${DEFAULT_PROMPT}"
 )
+
+if [[ -n "${NUM_INFERENCE_STEPS}" ]]; then
+  ARGS+=(--num_inference_steps="${NUM_INFERENCE_STEPS}")
+fi
 
 case "${DISABLE_3D_TEACHER_FOR_EVAL,,}" in
   true|1|yes|y|on)
