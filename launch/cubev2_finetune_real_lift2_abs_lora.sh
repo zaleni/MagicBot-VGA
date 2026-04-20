@@ -64,6 +64,28 @@ STEPS="${STEPS:-60000}"
 SAVE_FREQ="${SAVE_FREQ:-10000}"
 LOG_FREQ="${LOG_FREQ:-50}"
 
+###############################################################################
+################################ LoRA config ##################################
+
+# JSON array strings are expected here because draccus parses list/tuple CLI
+# overrides reliably from JSON-like syntax.
+# Default behavior keeps LoRA disabled so this launch script falls back to
+# standard full-parameter finetuning unless LORA_MODULES is set explicitly.
+LORA_MODULES="${LORA_MODULES:-[]}"
+LORA_UNSELECTED_MODE="${LORA_UNSELECTED_MODE:-full}"
+LORA_TARGETS="${LORA_TARGETS:-[\"attn\",\"ffn\"]}"
+LORA_RANK="${LORA_RANK:-16}"
+LORA_ALPHA="${LORA_ALPHA:-32.0}"
+LORA_DROPOUT="${LORA_DROPOUT:-0.05}"
+
+# Optional presets:
+#   LORA_MODULES='[]'                      # full finetuning (default)
+#   LORA_MODULES='["und"]'                 # only understanding expert LoRA
+#   LORA_MODULES='["und","act"]'           # understanding + action expert LoRA
+#   LORA_MODULES='["und","gen","act"]'     # full LoRA on all three experts
+#   LORA_UNSELECTED_MODE='freeze'          # freeze experts not selected for LoRA
+#   LORA_TARGETS='["attn"]'                # attention-only LoRA
+
 if [[ -z "${POLICY_INIT_PATH}" ]]; then
   echo "Please set POLICY_INIT_PATH to the CubeV2 bootstrap checkpoint."
   echo "For backward compatibility, PRETRAINED_PATH is also accepted."
@@ -105,8 +127,13 @@ fi
 python -c 'from lerobot.transforms.constants import MASK_MAPPING, FEATURE_MAPPING, IMAGE_MAPPING; import sys; rt=sys.argv[1]; missing=[name for name,m in [("MASK_MAPPING", MASK_MAPPING), ("FEATURE_MAPPING", FEATURE_MAPPING), ("IMAGE_MAPPING", IMAGE_MAPPING)] if rt not in m]; raise SystemExit(0 if not missing else "robot_type=" + rt + " missing in " + ", ".join(missing))' \
   "${robot_type}"
 
+LORA_JOB_TAG="$(printf '%s' "${LORA_MODULES}" | tr -d '[]\" ' | tr ',' '-')"
+if [[ -z "${LORA_JOB_TAG}" ]]; then
+  LORA_JOB_TAG="fullft"
+fi
+
 BASE_OUTPUT_DIR="outputs_real/${POLICY}"
-JOB_NAME="${POLICY}-real_lift2-${ACTION_TYPE}-chunk${CHUNK_SIZE}-finetune-$(date +'%Y_%m_%d_%H_%M_%S')"
+JOB_NAME="${POLICY}-real_lift2-${ACTION_TYPE}-chunk${CHUNK_SIZE}-lora-${LORA_JOB_TAG}-finetune-$(date +'%Y_%m_%d_%H_%M_%S')"
 OUTPUT_DIR="${BASE_OUTPUT_DIR}/${JOB_NAME}"
 
 echo "DATASET_DIR=${DATASET_DIR}"
@@ -120,6 +147,12 @@ echo "BATCH_SIZE(per_device)=${BATCH_SIZE}"
 echo "GRADIENT_ACCUMULATION_STEPS=${GRADIENT_ACCUMULATION_STEPS}"
 echo "USE_EXTERNAL_STATS=${USE_EXTERNAL_STATS}"
 echo "DATASET_EXTERNAL_STATS_PATH=${DATASET_EXTERNAL_STATS_PATH}"
+echo "LORA_MODULES=${LORA_MODULES}"
+echo "LORA_UNSELECTED_MODE=${LORA_UNSELECTED_MODE}"
+echo "LORA_TARGETS=${LORA_TARGETS}"
+echo "LORA_RANK=${LORA_RANK}"
+echo "LORA_ALPHA=${LORA_ALPHA}"
+echo "LORA_DROPOUT=${LORA_DROPOUT}"
 echo "OUTPUT_DIR=${OUTPUT_DIR}"
 
 ARGS=(
@@ -150,6 +183,12 @@ ARGS=(
     --policy.freeze_vision_encoder=false
     --policy.train_expert_only=false
     --policy.train_vlm_only=false
+    --policy.lora_modules="${LORA_MODULES}"
+    --policy.lora_unselected_mode="${LORA_UNSELECTED_MODE}"
+    --policy.lora_targets="${LORA_TARGETS}"
+    --policy.lora_rank="${LORA_RANK}"
+    --policy.lora_alpha="${LORA_ALPHA}"
+    --policy.lora_dropout="${LORA_DROPOUT}"
     --policy.qwen3_vl_variant=qwen3_vl_28l
     --policy.action_expert_variant=qwen3_28l
     --policy.chunk_size="${CHUNK_SIZE}"

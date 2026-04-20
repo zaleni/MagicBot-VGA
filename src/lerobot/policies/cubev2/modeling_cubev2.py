@@ -14,12 +14,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import logging
 import math
 import os
 import time
 from collections import deque
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Literal
 
 import torch
@@ -35,6 +37,14 @@ from transformers.models.qwen3_vl import Qwen3VLForConditionalGeneration, Qwen3V
 from lerobot.policies.cubev2.cosmos_tokenizer.image_lib import ImageTokenizer
 from lerobot.policies.cubev2.configuration_cubev2 import CubeV2Config
 from lerobot.policies.cubev2.da3_teacher import DA3BackboneTeacher
+from lerobot.policies.cubev2.lora import (
+    LoRALinear,
+    apply_lora_to_linear_modules,
+    freeze_module_except_lora,
+    is_lora_parameter_name,
+    merge_and_unload_lora_modules_,
+    resolve_lora_target_linear_names,
+)
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.utils import format_big_number
 from lerobot.utils.constants import (
@@ -624,9 +634,58 @@ class CubeV2Model(nn.Module):
             )
         return downloaded_dir
 
+    def _get_lora_injection_roots(self) -> dict[str, nn.Module]:
+        return {
+            "und": self.qwen3_vl_with_expert.und_expert.language_model,
+            "gen": self.qwen3_vl_with_expert.gen_expert,
+            "act": self.qwen3_vl_with_expert.act_expert,
+        }
+
+    def _get_lora_freeze_roots(self) -> dict[str, nn.Module]:
+        return {
+            "und": self.qwen3_vl_with_expert.und_expert.language_model,
+            "gen": self.qwen3_vl_with_expert.gen_expert,
+            "act": self.qwen3_vl_with_expert.act_expert,
+        }
+
+    def _register_frozen_eval_module(self, module: nn.Module):
+        if any(existing_module is module for existing_module in self._frozen_eval_modules):
+            return
+        self._frozen_eval_modules.append(module)
+
+    def _apply_lora_to_selected_experts(self):
+        self.lora_module_counts = {}
+        if not self.config.lora_enabled:
+            return
+
+        target_names = resolve_lora_target_linear_names(self.config.lora_targets)
+        for module_name, root_module in self._get_lora_injection_roots().items():
+            if module_name not in self.config.lora_modules:
+                continue
+            num_replaced = apply_lora_to_linear_modules(
+                root_module,
+                target_names=target_names,
+                rank=self.config.lora_rank,
+                alpha=self.config.lora_alpha,
+                dropout=self.config.lora_dropout,
+            )
+            if num_replaced == 0:
+                raise ValueError(
+                    f"LoRA module selection '{module_name}' did not match any Linear layers for "
+                    f"targets {self.config.lora_targets}."
+                )
+            self.lora_module_counts[module_name] = num_replaced
+
+        logging.info(
+            "Applied CubeV2 LoRA to experts: %s",
+            ", ".join(f"{name}({count})" for name, count in self.lora_module_counts.items()),
+        )
+
     def __init__(self, config: CubeV2Config):
         super().__init__()
         self.config = config
+        self._frozen_eval_modules: list[nn.Module] = []
+        self.lora_module_counts: dict[str, int] = {}
 
         vlm_config = get_qwen_config(config.qwen3_vl_variant)
         action_expert_config = get_qwen_config(config.action_expert_variant)
@@ -637,6 +696,7 @@ class CubeV2Model(nn.Module):
             qwen3_vl_pretrained_path=config.qwen3_vl_pretrained_path,
             precision=config.dtype,
         )
+        self._apply_lora_to_selected_experts()
 
         cosmos_tokenizer_dir = self._resolve_cosmos_tokenizer_dir(config.cosmos_tokenizer_path_or_name)
         cosmos_device = getattr(config, "cosmos_device", None) or config.device or "cuda"
@@ -758,15 +818,36 @@ class CubeV2Model(nn.Module):
         self.set_requires_grad()
     
     def set_requires_grad(self):
+        self._frozen_eval_modules = []
+
         if self.config.freeze_vision_encoder:
             self.qwen3_vl_with_expert.und_expert.visual.eval()
             for params in self.qwen3_vl_with_expert.und_expert.visual.parameters():
                 params.requires_grad = False
+            self._register_frozen_eval_module(self.qwen3_vl_with_expert.und_expert.visual)
+
+        if self.config.lora_enabled:
+            freeze_roots = self._get_lora_freeze_roots()
+            selected_modules = set(self.config.lora_modules)
+
+            for module_name in selected_modules:
+                freeze_root = freeze_roots[module_name]
+                freeze_module_except_lora(freeze_root)
+
+            if self.config.lora_unselected_mode == "freeze":
+                for module_name, freeze_root in freeze_roots.items():
+                    if module_name in selected_modules:
+                        continue
+                    freeze_root.eval()
+                    for params in freeze_root.parameters():
+                        params.requires_grad = False
+                    self._register_frozen_eval_module(freeze_root)
 
         if self.config.train_expert_only:
             self.qwen3_vl_with_expert.und_expert.eval()
             for params in self.qwen3_vl_with_expert.und_expert.parameters():
                 params.requires_grad = False
+            self._register_frozen_eval_module(self.qwen3_vl_with_expert.und_expert)
         
         if self.config.train_vlm_only:
             self.qwen3_vl_with_expert.gen_expert.eval()
@@ -775,28 +856,24 @@ class CubeV2Model(nn.Module):
             self.qwen3_vl_with_expert.act_expert.eval()
             for params in self.qwen3_vl_with_expert.act_expert.parameters():
                 params.requires_grad = False
+            self._register_frozen_eval_module(self.qwen3_vl_with_expert.gen_expert)
+            self._register_frozen_eval_module(self.qwen3_vl_with_expert.act_expert)
         
         self.cosmos.eval()
         for params in self.cosmos.parameters():
             params.requires_grad = False
+        self._register_frozen_eval_module(self.cosmos)
 
         if self.da3_teacher is not None:
             self.da3_teacher.eval()
             for params in self.da3_teacher.parameters():
                 params.requires_grad = False
+            self._register_frozen_eval_module(self.da3_teacher)
     
     def train(self, mode: bool = True):
         super().train(mode)
-
-        if self.config.freeze_vision_encoder:
-            self.qwen3_vl_with_expert.und_expert.visual.eval()
-
-        if self.config.train_expert_only:
-            self.qwen3_vl_with_expert.und_expert.eval()
-        
-        self.cosmos.eval()
-        if self.da3_teacher is not None:
-            self.da3_teacher.eval()
+        for frozen_eval_module in self._frozen_eval_modules:
+            frozen_eval_module.eval()
         return self
 
     @contextmanager
@@ -1755,6 +1832,18 @@ class CubeV2Policy(PreTrainedPolicy):
         lines.append(f"  - Und params          : {num_und} ({format_big_number(num_und)})")
         lines.append(f"  - Gen params          : {num_gen} ({format_big_number(num_gen)})")
         lines.append(f"  - Act params          : {num_act} ({format_big_number(num_act)})")
+        if self.config.lora_enabled:
+            num_lora_params = sum(
+                p.numel()
+                for name, p in self.named_parameters()
+                if is_lora_parameter_name(name.rsplit(".", 1)[-1])
+            )
+            lines.append(f"  - LoRA params         : {num_lora_params} ({format_big_number(num_lora_params)})")
+            lines.append(f"  - LoRA experts        : {', '.join(self.config.lora_modules)}")
+            lines.append(
+                f"  - LoRA targets        : {', '.join(self.config.lora_targets)} | "
+                f"rank={self.config.lora_rank} alpha={self.config.lora_alpha} drop={self.config.lora_dropout}"
+            )
 
         if self.model.da3_teacher is not None:
             num_da3 = sum(p.numel() for p in self.model.da3_teacher.backbone.parameters())
@@ -1835,7 +1924,119 @@ class CubeV2Policy(PreTrainedPolicy):
         return self
 
     def get_optim_params(self) -> dict:
-        return self.parameters()
+        return (param for param in self.parameters() if param.requires_grad)
+
+    def merge_lora_weights_(self):
+        if not self.config.lora_enabled:
+            return self
+
+        num_merged = merge_and_unload_lora_modules_(self.model)
+        logging.info("Merged and unloaded %d CubeV2 LoRA linear modules.", num_merged)
+        self.config.lora_modules = ()
+        self.model.lora_module_counts = {}
+        self.model.set_requires_grad()
+        return self
+
+    def get_merged_state_dict_to_save(self) -> dict[str, Tensor]:
+        merged_state_dict = dict(self.get_state_dict_to_save())
+        if not self.config.lora_enabled:
+            return merged_state_dict
+
+        for module_name, module in self.named_modules():
+            if not isinstance(module, LoRALinear):
+                continue
+
+            weight_key = f"{module_name}.weight"
+            lora_a_key = f"{module_name}.lora_A"
+            lora_b_key = f"{module_name}.lora_B"
+            if weight_key not in merged_state_dict:
+                continue
+            if lora_a_key not in merged_state_dict or lora_b_key not in merged_state_dict:
+                raise KeyError(
+                    f"Missing LoRA tensors for merged export of module '{module_name}'. "
+                    f"Expected keys '{lora_a_key}' and '{lora_b_key}'."
+                )
+
+            delta = torch.matmul(merged_state_dict[lora_b_key], merged_state_dict[lora_a_key]) * module.scaling
+            merged_state_dict[weight_key] = merged_state_dict[weight_key] + delta.to(
+                dtype=merged_state_dict[weight_key].dtype,
+                device=merged_state_dict[weight_key].device,
+            )
+            del merged_state_dict[lora_a_key]
+            del merged_state_dict[lora_b_key]
+
+        return merged_state_dict
+
+    def save_merged_pretrained(self, save_directory: str | Path) -> None:
+        save_directory = Path(save_directory)
+        save_directory.mkdir(parents=True, exist_ok=True)
+
+        merged_config = copy.deepcopy(self.config)
+        merged_config.lora_modules = ()
+        merged_config.pretrained_path = None
+
+        self._save_pretrained_artifacts(
+            save_directory,
+            config=merged_config,
+            state_dict=self.get_merged_state_dict_to_save(),
+        )
+
+    def _get_loaded_pretrained_source_config(self) -> CubeV2Config | None:
+        source_config = getattr(self, "_loaded_pretrained_source_config", None)
+        return source_config if isinstance(source_config, CubeV2Config) else None
+
+    def _validate_lora_loading_compatibility(self) -> bool:
+        source_config = self._get_loaded_pretrained_source_config()
+        if source_config is None:
+            return False
+
+        if source_config.lora_enabled and not self.config.lora_enabled:
+            raise ValueError(
+                "The source checkpoint was saved with LoRA adapters enabled, but the current CubeV2 config "
+                "does not enable LoRA. Load it with matching LoRA settings or export a merged checkpoint first."
+            )
+
+        if source_config.lora_enabled and self.config.lora_enabled:
+            mismatches: list[str] = []
+            training_only_mismatches: list[str] = []
+            if source_config.lora_modules != self.config.lora_modules:
+                mismatches.append(
+                    f"lora_modules source={source_config.lora_modules} current={self.config.lora_modules}"
+                )
+            if source_config.lora_targets != self.config.lora_targets:
+                mismatches.append(
+                    f"lora_targets source={source_config.lora_targets} current={self.config.lora_targets}"
+                )
+            if source_config.lora_rank != self.config.lora_rank:
+                mismatches.append(
+                    f"lora_rank source={source_config.lora_rank} current={self.config.lora_rank}"
+                )
+            if source_config.lora_alpha != self.config.lora_alpha:
+                mismatches.append(
+                    f"lora_alpha source={source_config.lora_alpha} current={self.config.lora_alpha}"
+                )
+            if mismatches:
+                raise ValueError(
+                    "The source LoRA checkpoint is incompatible with the current CubeV2 LoRA config: "
+                    + "; ".join(mismatches)
+                )
+
+            if source_config.lora_unselected_mode != self.config.lora_unselected_mode:
+                training_only_mismatches.append(
+                    "lora_unselected_mode "
+                    f"source={source_config.lora_unselected_mode} current={self.config.lora_unselected_mode}"
+                )
+            if not math.isclose(source_config.lora_dropout, self.config.lora_dropout, rel_tol=0.0, abs_tol=1e-12):
+                training_only_mismatches.append(
+                    f"lora_dropout source={source_config.lora_dropout} current={self.config.lora_dropout}"
+                )
+            if training_only_mismatches:
+                logging.warning(
+                    "Loading CubeV2 LoRA checkpoint with changed training-only settings: %s",
+                    "; ".join(training_only_mismatches),
+                )
+
+        return (not source_config.lora_enabled) and self.config.lora_enabled
 
     def get_state_dict_to_save(self) -> dict[str, Tensor]:
         state_dict = self.state_dict()
@@ -1877,12 +2078,20 @@ class CubeV2Policy(PreTrainedPolicy):
             *ignored_missing_exact,
             "model.future_3d_output_queries",
         }
+        expected_lora_missing = set()
+        if self._validate_lora_loading_compatibility():
+            expected_lora_missing = {
+                key
+                for key in missing_keys
+                if key.endswith(".lora_A") or key.endswith(".lora_B")
+            }
 
         expected_missing = [
             key
             for key in missing_keys
             if key in ignored_missing_exact
             or any(key.startswith(prefix) for prefix in ignored_missing_prefixes)
+            or key in expected_lora_missing
         ]
         filtered_missing = [key for key in missing_keys if key not in expected_missing]
         filtered_unexpected = [

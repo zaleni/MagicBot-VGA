@@ -135,6 +135,12 @@ class CubeV2Config(PreTrainedConfig):
     freeze_vision_encoder: bool = False
     train_expert_only: bool = False
     train_vlm_only: bool = False
+    lora_modules: tuple[str, ...] = ()
+    lora_unselected_mode: str = "full"
+    lora_targets: tuple[str, ...] = ("attn", "ffn")
+    lora_rank: int = 16
+    lora_alpha: float = 32.0
+    lora_dropout: float = 0.05
 
     scale_factor: int = 8
     lambda_gen: float = 0.01
@@ -163,6 +169,9 @@ class CubeV2Config(PreTrainedConfig):
     def __post_init__(self):
         super().__post_init__()
 
+        self.lora_modules = tuple(dict.fromkeys(module_name.lower() for module_name in self.lora_modules))
+        self.lora_targets = tuple(dict.fromkeys(target_name.lower() for target_name in self.lora_targets))
+
         if self.n_action_steps > self.chunk_size:
             raise ValueError(
                 f"n_action_steps ({self.n_action_steps}) cannot be greater than chunk_size ({self.chunk_size})"
@@ -170,6 +179,38 @@ class CubeV2Config(PreTrainedConfig):
 
         if self.dtype not in ["bfloat16", "float32"]:
             raise ValueError(f"Invalid dtype: {self.dtype}")
+
+        supported_lora_modules = {"und", "gen", "act"}
+        unsupported_lora_modules = set(self.lora_modules) - supported_lora_modules
+        if unsupported_lora_modules:
+            raise ValueError(
+                f"Unsupported LoRA modules: {sorted(unsupported_lora_modules)}. "
+                f"Expected a subset of {sorted(supported_lora_modules)}."
+            )
+
+        supported_lora_targets = {"attn", "ffn"}
+        unsupported_lora_targets = set(self.lora_targets) - supported_lora_targets
+        if unsupported_lora_targets:
+            raise ValueError(
+                f"Unsupported LoRA target groups: {sorted(unsupported_lora_targets)}. "
+                f"Expected a subset of {sorted(supported_lora_targets)}."
+            )
+
+        if self.lora_unselected_mode not in {"full", "freeze"}:
+            raise ValueError("lora_unselected_mode must be one of: 'full', 'freeze'")
+
+        if self.lora_rank <= 0:
+            raise ValueError("lora_rank must be positive")
+        if self.lora_alpha <= 0:
+            raise ValueError("lora_alpha must be positive")
+        if not 0.0 <= self.lora_dropout < 1.0:
+            raise ValueError("lora_dropout must be in [0, 1)")
+
+        if self.lora_enabled and (self.train_expert_only or self.train_vlm_only):
+            raise ValueError(
+                "train_expert_only/train_vlm_only cannot be combined with LoRA expert selection. "
+                "Use lora_modules to choose which experts are adapted."
+            )
 
         if self.enable_3d_queries and self.num_3d_query_tokens <= 0:
             raise ValueError("num_3d_query_tokens must be positive when 3D queries are enabled")
@@ -205,6 +246,10 @@ class CubeV2Config(PreTrainedConfig):
 
         if len(self.query_layer_indices) != len(self.da3_layer_weights):
             raise ValueError("da3_layer_weights must align with query_layer_indices")
+
+    @property
+    def lora_enabled(self) -> bool:
+        return len(self.lora_modules) > 0
 
     def validate_features(self) -> None:
         for i in range(self.empty_cameras):

@@ -79,14 +79,24 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             raise TypeError(f"Class {cls.__name__} must define 'name'")
 
     def _save_pretrained(self, save_directory: Path) -> None:
-        self.config._save_pretrained(save_directory)
+        self._save_pretrained_artifacts(save_directory)
+
+    def _save_pretrained_artifacts(
+        self,
+        save_directory: Path,
+        *,
+        config: PreTrainedConfig | None = None,
+        state_dict: dict[str, Tensor] | None = None,
+    ) -> None:
+        config_to_save = self.config if config is None else config
+        config_to_save._save_pretrained(save_directory)
         model_to_save = self.module if hasattr(self, "module") else self
-        state_dict = model_to_save.get_state_dict_to_save()
-        if state_dict is None:
+        state_dict_to_save = model_to_save.get_state_dict_to_save() if state_dict is None else state_dict
+        if state_dict_to_save is None:
             save_model_as_safetensor(model_to_save, str(save_directory / SAFETENSORS_SINGLE_FILE))
         else:
             save_model_as_safetensor(
-                _StateDictSaveWrapper(state_dict),
+                _StateDictSaveWrapper(state_dict_to_save),
                 str(save_directory / SAFETENSORS_SINGLE_FILE),
             )
 
@@ -114,6 +124,21 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         The policy is set in evaluation mode by default using `policy.eval()` (dropout modules are
         deactivated). To train it, you should first set it back in training mode with `policy.train()`.
         """
+        source_config = None
+        try:
+            source_config = PreTrainedConfig.from_pretrained(
+                pretrained_name_or_path=pretrained_name_or_path,
+                force_download=force_download,
+                resume_download=resume_download,
+                proxies=proxies,
+                token=token,
+                cache_dir=cache_dir,
+                local_files_only=local_files_only,
+                revision=revision,
+            )
+        except FileNotFoundError:
+            source_config = None
+
         if config is None:
             config = PreTrainedConfig.from_pretrained(
                 pretrained_name_or_path=pretrained_name_or_path,
@@ -126,8 +151,13 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                 revision=revision,
                 **kwargs,
             )
+        if config is None:
+            raise FileNotFoundError(
+                f"Could not resolve a config for pretrained policy source: {pretrained_name_or_path}"
+            )
         model_id = str(pretrained_name_or_path)
         instance = cls(config, **kwargs)
+        setattr(instance, "_loaded_pretrained_source_config", source_config)
         if os.path.isdir(model_id):
             print("Loading weights from local directory")
             model_file = os.path.join(model_id, SAFETENSORS_SINGLE_FILE)
