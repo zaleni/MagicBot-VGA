@@ -140,6 +140,12 @@ class CubeV2Config(PreTrainedConfig):
     lora_targets: tuple[str, ...] = ("attn", "ffn")
     lora_rank: int = 16
     lora_alpha: float = 32.0
+    lora_rank_und: int | None = None
+    lora_alpha_und: float | None = None
+    lora_rank_gen: int | None = None
+    lora_alpha_gen: float | None = None
+    lora_rank_act: int | None = None
+    lora_alpha_act: float | None = None
     lora_dropout: float = 0.0
 
     scale_factor: int = 8
@@ -203,6 +209,19 @@ class CubeV2Config(PreTrainedConfig):
             raise ValueError("lora_rank must be positive")
         if self.lora_alpha <= 0:
             raise ValueError("lora_alpha must be positive")
+        per_module_lora_values = {
+            "lora_rank_und": self.lora_rank_und,
+            "lora_alpha_und": self.lora_alpha_und,
+            "lora_rank_gen": self.lora_rank_gen,
+            "lora_alpha_gen": self.lora_alpha_gen,
+            "lora_rank_act": self.lora_rank_act,
+            "lora_alpha_act": self.lora_alpha_act,
+        }
+        for field_name, field_value in per_module_lora_values.items():
+            if field_value is None:
+                continue
+            if field_value <= 0:
+                raise ValueError(f"{field_name} must be positive when provided")
         if not 0.0 <= self.lora_dropout < 1.0:
             raise ValueError("lora_dropout must be in [0, 1)")
 
@@ -250,6 +269,33 @@ class CubeV2Config(PreTrainedConfig):
     @property
     def lora_enabled(self) -> bool:
         return len(self.lora_modules) > 0
+
+    def _get_lora_rank_overrides(self) -> dict[str, int | None]:
+        return {
+            "und": self.lora_rank_und,
+            "gen": self.lora_rank_gen,
+            "act": self.lora_rank_act,
+        }
+
+    def _get_lora_alpha_overrides(self) -> dict[str, float | None]:
+        return {
+            "und": self.lora_alpha_und,
+            "gen": self.lora_alpha_gen,
+            "act": self.lora_alpha_act,
+        }
+
+    def get_lora_rank_for(self, module_name: str) -> int:
+        module_name = module_name.lower()
+        override = self._get_lora_rank_overrides().get(module_name)
+        return self.lora_rank if override is None else override
+
+    def get_lora_alpha_for(self, module_name: str) -> float:
+        module_name = module_name.lower()
+        override = self._get_lora_alpha_overrides().get(module_name)
+        return self.lora_alpha if override is None else override
+
+    def get_lora_hparams_for(self, module_name: str) -> tuple[int, float]:
+        return self.get_lora_rank_for(module_name), self.get_lora_alpha_for(module_name)
 
     def validate_features(self) -> None:
         for i in range(self.empty_cameras):

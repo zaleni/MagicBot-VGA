@@ -74,13 +74,14 @@ LOG_FREQ="${LOG_FREQ:-25}"
 
 # JSON array strings are expected here because draccus parses list/tuple CLI
 # overrides reliably from JSON-like syntax.
-# This script defaults to PI-style full LoRA across all three experts.
+# This script defaults to PI-style expert-specific LoRA:
+#   und (2B-scale) -> rank/alpha 16/16
+#   gen (0.6B-scale) -> rank/alpha 32/32
+#   act (0.6B-scale) -> rank/alpha 32/32
+# These hparams are intentionally baked into the launcher instead of exposed as env knobs.
 LORA_MODULES="${LORA_MODULES:-[\"und\",\"gen\",\"act\"]}"
 LORA_UNSELECTED_MODE="${LORA_UNSELECTED_MODE:-full}"
 LORA_TARGETS="${LORA_TARGETS:-[\"attn\",\"ffn\"]}"
-LORA_RANK="${LORA_RANK:-16}"
-LORA_ALPHA="${LORA_ALPHA:-32.0}"
-LORA_DROPOUT="${LORA_DROPOUT:-0.0}"
 
 discover_dataset_dirs() {
   local root="$1"
@@ -182,9 +183,7 @@ echo "DATASET_EXTERNAL_STATS_ROOT=${DATASET_EXTERNAL_STATS_ROOT}"
 echo "LORA_MODULES=${LORA_MODULES}"
 echo "LORA_UNSELECTED_MODE=${LORA_UNSELECTED_MODE}"
 echo "LORA_TARGETS=${LORA_TARGETS}"
-echo "LORA_RANK=${LORA_RANK}"
-echo "LORA_ALPHA=${LORA_ALPHA}"
-echo "LORA_DROPOUT=${LORA_DROPOUT}"
+echo "LORA_HPARAMS=und(16/16), gen(32/32), act(32/32), drop(0.0)"
 echo "OUTPUT_DIR=${OUTPUT_DIR}"
 
 ARGS=(
@@ -218,9 +217,13 @@ ARGS=(
     --policy.lora_modules="${LORA_MODULES}"
     --policy.lora_unselected_mode="${LORA_UNSELECTED_MODE}"
     --policy.lora_targets="${LORA_TARGETS}"
-    --policy.lora_rank="${LORA_RANK}"
-    --policy.lora_alpha="${LORA_ALPHA}"
-    --policy.lora_dropout="${LORA_DROPOUT}"
+    --policy.lora_rank=16
+    --policy.lora_alpha=16.0
+    --policy.lora_rank_gen=32
+    --policy.lora_alpha_gen=32.0
+    --policy.lora_rank_act=32
+    --policy.lora_alpha_act=32.0
+    --policy.lora_dropout=0.0
     --policy.qwen3_vl_variant=qwen3_vl_28l
     --policy.action_expert_variant=qwen3_28l
     --policy.chunk_size="${CHUNK_SIZE}"

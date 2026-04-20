@@ -662,11 +662,12 @@ class CubeV2Model(nn.Module):
         for module_name, root_module in self._get_lora_injection_roots().items():
             if module_name not in self.config.lora_modules:
                 continue
+            module_rank, module_alpha = self.config.get_lora_hparams_for(module_name)
             num_replaced = apply_lora_to_linear_modules(
                 root_module,
                 target_names=target_names,
-                rank=self.config.lora_rank,
-                alpha=self.config.lora_alpha,
+                rank=module_rank,
+                alpha=module_alpha,
                 dropout=self.config.lora_dropout,
             )
             if num_replaced == 0:
@@ -678,7 +679,11 @@ class CubeV2Model(nn.Module):
 
         logging.info(
             "Applied CubeV2 LoRA to experts: %s",
-            ", ".join(f"{name}({count})" for name, count in self.lora_module_counts.items()),
+            ", ".join(
+                f"{name}(count={count}, rank={self.config.get_lora_rank_for(name)}, "
+                f"alpha={self.config.get_lora_alpha_for(name)})"
+                for name, count in self.lora_module_counts.items()
+            ),
         )
 
     def __init__(self, config: CubeV2Config):
@@ -1841,8 +1846,14 @@ class CubeV2Policy(PreTrainedPolicy):
             lines.append(f"  - LoRA params         : {num_lora_params} ({format_big_number(num_lora_params)})")
             lines.append(f"  - LoRA experts        : {', '.join(self.config.lora_modules)}")
             lines.append(
-                f"  - LoRA targets        : {', '.join(self.config.lora_targets)} | "
-                f"rank={self.config.lora_rank} alpha={self.config.lora_alpha} drop={self.config.lora_dropout}"
+                f"  - LoRA targets        : {', '.join(self.config.lora_targets)} | drop={self.config.lora_dropout}"
+            )
+            lines.append(
+                "  - LoRA rank/alpha     : "
+                + ", ".join(
+                    f"{module}(r={self.config.get_lora_rank_for(module)}, a={self.config.get_lora_alpha_for(module)})"
+                    for module in self.config.lora_modules
+                )
             )
 
         if self.model.da3_teacher is not None:
@@ -2007,14 +2018,17 @@ class CubeV2Policy(PreTrainedPolicy):
                 mismatches.append(
                     f"lora_targets source={source_config.lora_targets} current={self.config.lora_targets}"
                 )
-            if source_config.lora_rank != self.config.lora_rank:
-                mismatches.append(
-                    f"lora_rank source={source_config.lora_rank} current={self.config.lora_rank}"
-                )
-            if source_config.lora_alpha != self.config.lora_alpha:
-                mismatches.append(
-                    f"lora_alpha source={source_config.lora_alpha} current={self.config.lora_alpha}"
-                )
+            for module_name in self.config.lora_modules:
+                source_rank, source_alpha = source_config.get_lora_hparams_for(module_name)
+                current_rank, current_alpha = self.config.get_lora_hparams_for(module_name)
+                if source_rank != current_rank:
+                    mismatches.append(
+                        f"{module_name}.lora_rank source={source_rank} current={current_rank}"
+                    )
+                if not math.isclose(source_alpha, current_alpha, rel_tol=0.0, abs_tol=1e-12):
+                    mismatches.append(
+                        f"{module_name}.lora_alpha source={source_alpha} current={current_alpha}"
+                    )
             if mismatches:
                 raise ValueError(
                     "The source LoRA checkpoint is incompatible with the current CubeV2 LoRA config: "
