@@ -146,6 +146,7 @@ Eval side:
 - `WS_URL`: local websocket address, usually `ws://127.0.0.1:8000`
 - `TASK_SUITE_NAME`: `libero_spatial`, `libero_object`, `libero_goal`, `libero_10`, or `libero_90`
 - `TASK_ID`: optional single-task evaluation
+- `SEED`: defaults to `7`
 - `NUM_TRIALS_PER_TASK`: defaults to `50`
 - `INFER_HORIZON`: optional, otherwise follows the server
 - `VIDEO_ROOT`: optional output root, final path becomes `<VIDEO_ROOT>/<TASK_SUITE_NAME>`
