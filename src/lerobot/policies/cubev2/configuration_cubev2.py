@@ -140,7 +140,7 @@ class CubeV2Config(PreTrainedConfig):
     lora_targets: tuple[str, ...] = ("attn", "ffn")
     lora_rank: int = 16
     lora_alpha: float = 32.0
-    lora_dropout: float = 0.05
+    lora_dropout: float = 0.0
 
     scale_factor: int = 8
     lambda_gen: float = 0.01

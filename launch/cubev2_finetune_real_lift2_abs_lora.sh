@@ -76,7 +76,7 @@ LORA_UNSELECTED_MODE="${LORA_UNSELECTED_MODE:-full}"
 LORA_TARGETS="${LORA_TARGETS:-[\"attn\",\"ffn\"]}"
 LORA_RANK="${LORA_RANK:-16}"
 LORA_ALPHA="${LORA_ALPHA:-32.0}"
-LORA_DROPOUT="${LORA_DROPOUT:-0.05}"
+LORA_DROPOUT="${LORA_DROPOUT:-0.0}"
 
 # Optional presets:
 #   LORA_MODULES='[]'                      # full finetuning (default)
