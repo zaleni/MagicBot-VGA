@@ -10,8 +10,20 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJ_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-LAUNCH_SCRIPT_REL="launch/cubev2_finetune_libero.sh"
+LOCAL_PROJ_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+DEFAULT_CLUSTER_PROJ_ROOT="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/MagicBot-VGA"
+PROJ_ROOT="${PROJ_ROOT:-${CLUSTER_PROJ_ROOT:-}}"
+if [[ -z "${PROJ_ROOT}" ]]; then
+  if [[ -d "${DEFAULT_CLUSTER_PROJ_ROOT}" ]]; then
+    PROJ_ROOT="${DEFAULT_CLUSTER_PROJ_ROOT}"
+  else
+    PROJ_ROOT="${LOCAL_PROJ_ROOT}"
+  fi
+fi
+LAUNCH_SCRIPT_PATH="${PROJ_ROOT}/launch/cubev2_finetune_libero.sh"
+
+CONDA_SH_PATH="${CONDA_SH_PATH:-/HOME/uestc_jksong/uestc_jksong_1/miniconda3/etc/profile.d/conda.sh}"
+CONDA_ENV_NAME="${CONDA_ENV_NAME:-magicbot-vga}"
 
 # Optional cluster-specific environment bootstrap.
 if [[ -n "${ENV_SETUP_SCRIPT:-}" ]]; then
@@ -19,14 +31,29 @@ if [[ -n "${ENV_SETUP_SCRIPT:-}" ]]; then
   source "${ENV_SETUP_SCRIPT}"
 fi
 
-if [[ -n "${CONDA_SH_PATH:-}" ]]; then
-  # shellcheck disable=SC1090
-  source "${CONDA_SH_PATH}"
+if [[ ! -f "${CONDA_SH_PATH}" ]]; then
+  echo "conda.sh not found: ${CONDA_SH_PATH}"
+  echo "Set CONDA_SH_PATH explicitly before calling sbatch."
+  exit 1
 fi
 
-if [[ -n "${CONDA_ENV_NAME:-}" ]]; then
-  conda activate "${CONDA_ENV_NAME}"
+# shellcheck disable=SC1090
+source "${CONDA_SH_PATH}"
+conda activate "${CONDA_ENV_NAME}"
+
+if [[ ! -d "${PROJ_ROOT}" ]]; then
+  echo "Project root does not exist: ${PROJ_ROOT}"
+  echo "Set PROJ_ROOT or CLUSTER_PROJ_ROOT explicitly before calling sbatch."
+  exit 1
 fi
+
+if [[ ! -f "${LAUNCH_SCRIPT_PATH}" ]]; then
+  echo "Launch script not found: ${LAUNCH_SCRIPT_PATH}"
+  exit 1
+fi
+
+cd "${PROJ_ROOT}"
+echo "Current working directory: $(pwd)"
 
 GPUS_PER_NODE_RAW="${PROC_PER_NODE:-${GPUS_PER_NODE:-${SLURM_GPUS_ON_NODE:-8}}}"
 if [[ "${GPUS_PER_NODE_RAW}" =~ ([0-9]+) ]]; then
@@ -49,7 +76,7 @@ export NCCL_TIMEOUT="${NCCL_TIMEOUT:-3600}"
 # export NCCL_IB_HCA="${NCCL_IB_HCA:-mlx5_2,mlx5_3}"
 
 export PROJ_ROOT
-export LAUNCH_SCRIPT_REL
+export LAUNCH_SCRIPT_PATH
 
 echo "SLURM_JOB_ID=${SLURM_JOB_ID}"
 echo "SLURM_JOB_NODELIST=${SLURM_JOB_NODELIST}"
@@ -67,5 +94,5 @@ srun --jobid "${SLURM_JOB_ID}" \
     cd "${PROJ_ROOT}"
     export NODE_RANK="${SLURM_PROCID}"
     echo "Host=$(hostname) NODE_RANK=${NODE_RANK}/${NODE_COUNT} PROC_PER_NODE=${PROC_PER_NODE}"
-    exec bash "${LAUNCH_SCRIPT_REL}"
+    exec bash "${LAUNCH_SCRIPT_PATH}"
   '
