@@ -16,9 +16,9 @@ for candidate in [THIS_DIR, SRC_ROOT, REPO_ROOT]:
         sys.path.insert(0, candidate_str)
 
 try:
-    from evaluation.Real_Lift2.websocket_client_policy import WebsocketClientPolicy
+    from evaluation.Libero.websocket_client import WebsocketClientPolicy
 except ImportError:
-    from ..Real_Lift2.websocket_client_policy import WebsocketClientPolicy
+    from .websocket_client import WebsocketClientPolicy
 
 
 def to_hwc_uint8(image: Any) -> np.ndarray:

@@ -14,7 +14,11 @@ Relevant files:
 - `evaluation/Libero/01_serve_magicbot_libero.sh`: start the policy server in the `MagicBot` env
 - `evaluation/Libero/eval.sh`: start the LIBERO evaluator in the `LIBERO` env
 - `evaluation/Libero/inference.py`: main LIBERO evaluation logic
+- `evaluation/Libero/model_server.py`: LIBERO-local policy server entrypoint
+- `evaluation/Libero/websocket_server.py`: LIBERO-local websocket server helper
 - `evaluation/Libero/libero_remote_client.py`: websocket client used by the evaluator
+- `evaluation/Libero/websocket_client.py`: LIBERO-local websocket transport helper
+- `evaluation/Libero/msgpack_numpy.py`: LIBERO-local msgpack NumPy codec helper
 
 ## Install
 
@@ -62,7 +66,8 @@ Notes:
 - In the split two-environment setup, installing the official `third_party/LIBERO/requirements.txt` is the recommended default.
 - The old warning about avoiding upstream requirements only applies if you try to merge LIBERO into the `MagicBot` environment.
 - `tyro`, `imageio`, `websockets`, and `msgpack` are extra deps used by this repo's evaluator path and are not part of upstream LIBERO requirements.
-- `websockets` and `msgpack` are also required on the `MagicBot` serve side, because `01_serve_magicbot_libero.sh` reuses the websocket server from `evaluation/Real_Lift2`.
+- `websockets` and `msgpack` are also required on the `MagicBot` serve side.
+- The LIBERO split-eval path now keeps its own client/server websocket helpers, so later `Real_Lift2` refactors do not change LIBERO benchmark behavior.
 - If you intentionally want a lighter install instead of the official stack, use `bash evaluation/Libero/install_libero.sh` with `INSTALL_LIBERO_REQUIREMENTS=false INSTALL_MINIMAL_LIBERO_EVAL_DEPS=true`.
 
 Quick checks:

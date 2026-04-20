@@ -30,7 +30,7 @@ if [[ -z "${CHECKPOINT_DIR}" ]]; then
 fi
 
 ARGS=(
-  python evaluation/Real_Lift2/serve_magicbot_policy.py
+  python evaluation/Libero/model_server.py
   --ckpt_path="${CHECKPOINT_DIR}"
   --host="${HOST}"
   --port="${PORT}"
