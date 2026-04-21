@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=cubev2-libero
 #SBATCH --nodes=2
+#SBATCH -p hx
 #SBATCH --ntasks-per-node=1
 #SBATCH --gres=gpu:8
-#SBATCH --cpus-per-task=32
+#SBATCH --cpus-per-task=56
 #SBATCH --output=slurm-%x-%j.out
 #SBATCH --error=slurm-%x-%j.err
 
@@ -24,6 +25,28 @@ LAUNCH_SCRIPT_PATH="${PROJ_ROOT}/launch/cubev2_finetune_libero.sh"
 
 CONDA_SH_PATH="${CONDA_SH_PATH:-/HOME/uestc_jksong/uestc_jksong_1/miniconda3/etc/profile.d/conda.sh}"
 CONDA_ENV_NAME="${CONDA_ENV_NAME:-magicbot-vga}"
+
+# Cluster-side training values forwarded to launch/cubev2_finetune_libero.sh.
+POLICY_INIT_PATH="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/model/MagicBot-VGA-Base"
+QWEN3_VL_PRETRAINED_PATH="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/model/Qwen3-VL-2B-Instruct"
+QWEN3_VL_PROCESSOR_PATH="${QWEN3_VL_PRETRAINED_PATH}"
+COSMOS_TOKENIZER_PATH_OR_NAME="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/model/Cosmos-Tokenizer-CI8x8"
+DA3_MODEL_PATH_OR_NAME="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/model/DA3-LARGE-1.1"
+LIBERO_ROOT="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/data/LIBERO/libero_v30"
+ACTION_TYPE="abs"
+CHUNK_SIZE=10
+N_ACTION_STEPS=10
+ENABLE_3D_QUERIES=true
+NUM_3D_QUERY_TOKENS=432
+LAMBDA_3D=0.01
+GEN_LAMBDA=0.002
+USE_EXTERNAL_STATS=true
+DATASET_EXTERNAL_STATS_PATH="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/data/norm_stats/libero_all_chunk10/franka/abs/stats.json"
+BATCH_SIZE=8
+GRAD_ACCUM_STEPS=1
+STEPS=60000
+SAVE_FREQ=10000
+LOG_FREQ=25
 
 # Optional cluster-specific environment bootstrap.
 if [[ -n "${ENV_SETUP_SCRIPT:-}" ]]; then
@@ -77,6 +100,26 @@ export NCCL_TIMEOUT="${NCCL_TIMEOUT:-3600}"
 
 export PROJ_ROOT
 export LAUNCH_SCRIPT_PATH
+export POLICY_INIT_PATH
+export QWEN3_VL_PRETRAINED_PATH
+export QWEN3_VL_PROCESSOR_PATH
+export COSMOS_TOKENIZER_PATH_OR_NAME
+export DA3_MODEL_PATH_OR_NAME
+export LIBERO_ROOT
+export ACTION_TYPE
+export CHUNK_SIZE
+export N_ACTION_STEPS
+export ENABLE_3D_QUERIES
+export NUM_3D_QUERY_TOKENS
+export LAMBDA_3D
+export GEN_LAMBDA
+export USE_EXTERNAL_STATS
+export DATASET_EXTERNAL_STATS_PATH
+export BATCH_SIZE
+export GRAD_ACCUM_STEPS
+export STEPS
+export SAVE_FREQ
+export LOG_FREQ
 
 echo "SLURM_JOB_ID=${SLURM_JOB_ID}"
 echo "SLURM_JOB_NODELIST=${SLURM_JOB_NODELIST}"
@@ -84,6 +127,26 @@ echo "NODE_COUNT=${NODE_COUNT}"
 echo "PROC_PER_NODE=${PROC_PER_NODE}"
 echo "MASTER_ADDR=${MASTER_ADDR}"
 echo "MASTER_PORT=${MASTER_PORT}"
+echo "POLICY_INIT_PATH=${POLICY_INIT_PATH}"
+echo "QWEN3_VL_PRETRAINED_PATH=${QWEN3_VL_PRETRAINED_PATH}"
+echo "QWEN3_VL_PROCESSOR_PATH=${QWEN3_VL_PROCESSOR_PATH}"
+echo "COSMOS_TOKENIZER_PATH_OR_NAME=${COSMOS_TOKENIZER_PATH_OR_NAME}"
+echo "DA3_MODEL_PATH_OR_NAME=${DA3_MODEL_PATH_OR_NAME}"
+echo "LIBERO_ROOT=${LIBERO_ROOT}"
+echo "ACTION_TYPE=${ACTION_TYPE}"
+echo "CHUNK_SIZE=${CHUNK_SIZE}"
+echo "N_ACTION_STEPS=${N_ACTION_STEPS}"
+echo "ENABLE_3D_QUERIES=${ENABLE_3D_QUERIES}"
+echo "NUM_3D_QUERY_TOKENS=${NUM_3D_QUERY_TOKENS}"
+echo "LAMBDA_3D=${LAMBDA_3D}"
+echo "GEN_LAMBDA=${GEN_LAMBDA}"
+echo "USE_EXTERNAL_STATS=${USE_EXTERNAL_STATS}"
+echo "DATASET_EXTERNAL_STATS_PATH=${DATASET_EXTERNAL_STATS_PATH}"
+echo "BATCH_SIZE=${BATCH_SIZE}"
+echo "GRAD_ACCUM_STEPS=${GRAD_ACCUM_STEPS}"
+echo "STEPS=${STEPS}"
+echo "SAVE_FREQ=${SAVE_FREQ}"
+echo "LOG_FREQ=${LOG_FREQ}"
 
 srun --jobid "${SLURM_JOB_ID}" \
   --ntasks="${SLURM_NNODES}" \

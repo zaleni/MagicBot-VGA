@@ -1,9 +1,10 @@
-#!/usr/bin/env bash
+#!/bin/bash
 #SBATCH --job-name=cubev2-real-lift2-abs
 #SBATCH --nodes=2
+#SBATCH -p hx
 #SBATCH --ntasks-per-node=1
 #SBATCH --gres=gpu:8
-#SBATCH --cpus-per-task=32
+#SBATCH --cpus-per-task=56
 #SBATCH --output=slurm-%x-%j.out
 #SBATCH --error=slurm-%x-%j.err
 
@@ -24,6 +25,19 @@ LAUNCH_SCRIPT_PATH="${PROJ_ROOT}/launch/cubev2_finetune_real_lift2_abs.sh"
 
 CONDA_SH_PATH="${CONDA_SH_PATH:-/HOME/uestc_jksong/uestc_jksong_1/miniconda3/etc/profile.d/conda.sh}"
 CONDA_ENV_NAME="${CONDA_ENV_NAME:-magicbot-vga}"
+
+# Cluster-side training values forwarded to launch/cubev2_finetune_real_lift2_abs.sh.
+POLICY_INIT_PATH="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/model/MagicBot-VGA-Base"
+QWEN3_VL_PRETRAINED_PATH="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/model/Qwen3-VL-2B-Instruct"
+QWEN3_VL_PROCESSOR_PATH="${QWEN3_VL_PRETRAINED_PATH}"
+COSMOS_TOKENIZER_PATH_OR_NAME="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/model/Cosmos-Tokenizer-CI8x8"
+DA3_MODEL_PATH_OR_NAME="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/model/DA3-LARGE-1.1"
+DATASET_DIR="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/data/zhenji/lift2-96-0420/Real-lift2-96-0420"
+NORM_STATS_ROOT="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/data/zhenji/norm_stats"
+BATCH_SIZE=8
+GRADIENT_ACCUMULATION_STEPS=1
+STEPS=60000
+SAVE_FREQ=10000
 
 # Optional cluster-specific environment bootstrap.
 if [[ -n "${ENV_SETUP_SCRIPT:-}" ]]; then
@@ -77,6 +91,17 @@ export NCCL_TIMEOUT="${NCCL_TIMEOUT:-3600}"
 
 export PROJ_ROOT
 export LAUNCH_SCRIPT_PATH
+export POLICY_INIT_PATH
+export QWEN3_VL_PRETRAINED_PATH
+export QWEN3_VL_PROCESSOR_PATH
+export COSMOS_TOKENIZER_PATH_OR_NAME
+export DA3_MODEL_PATH_OR_NAME
+export DATASET_DIR
+export NORM_STATS_ROOT
+export BATCH_SIZE
+export GRADIENT_ACCUMULATION_STEPS
+export STEPS
+export SAVE_FREQ
 
 echo "SLURM_JOB_ID=${SLURM_JOB_ID}"
 echo "SLURM_JOB_NODELIST=${SLURM_JOB_NODELIST}"
@@ -84,6 +109,17 @@ echo "NODE_COUNT=${NODE_COUNT}"
 echo "PROC_PER_NODE=${PROC_PER_NODE}"
 echo "MASTER_ADDR=${MASTER_ADDR}"
 echo "MASTER_PORT=${MASTER_PORT}"
+echo "POLICY_INIT_PATH=${POLICY_INIT_PATH}"
+echo "QWEN3_VL_PRETRAINED_PATH=${QWEN3_VL_PRETRAINED_PATH}"
+echo "QWEN3_VL_PROCESSOR_PATH=${QWEN3_VL_PROCESSOR_PATH}"
+echo "COSMOS_TOKENIZER_PATH_OR_NAME=${COSMOS_TOKENIZER_PATH_OR_NAME}"
+echo "DA3_MODEL_PATH_OR_NAME=${DA3_MODEL_PATH_OR_NAME}"
+echo "DATASET_DIR=${DATASET_DIR}"
+echo "NORM_STATS_ROOT=${NORM_STATS_ROOT}"
+echo "BATCH_SIZE=${BATCH_SIZE}"
+echo "GRADIENT_ACCUMULATION_STEPS=${GRADIENT_ACCUMULATION_STEPS}"
+echo "STEPS=${STEPS}"
+echo "SAVE_FREQ=${SAVE_FREQ}"
 
 srun --jobid "${SLURM_JOB_ID}" \
   --ntasks="${SLURM_NNODES}" \
