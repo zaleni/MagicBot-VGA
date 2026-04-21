@@ -85,6 +85,79 @@ export MUJOCO_GL=egl
 export PYOPENGL_PLATFORM=egl
 ```
 
+## Dataset Prep
+
+This section is only needed for LIBERO training data. Evaluation-only benchmark runs do not need a LeRobot dataset.
+
+Download the four LIBERO LeRobot datasets:
+
+```bash
+python -m pip install -U "huggingface-hub==0.35.3"
+
+export LIBERO_DATA_ROOT=/path/to/LEROBOT_LIBERO_DATA
+mkdir -p "$LIBERO_DATA_ROOT"
+
+for REPO in \
+  IPEC-COMMUNITY/libero_spatial_no_noops_1.0.0_lerobot \
+  IPEC-COMMUNITY/libero_object_no_noops_1.0.0_lerobot \
+  IPEC-COMMUNITY/libero_goal_no_noops_1.0.0_lerobot \
+  IPEC-COMMUNITY/libero_10_no_noops_1.0.0_lerobot
+do
+  hf download "$REPO" --repo-type dataset --local-dir "$LIBERO_DATA_ROOT/${REPO##*/}"
+done
+```
+
+After download, the directories are usually LeRobot v2.1 datasets such as:
+
+- `libero_spatial_no_noops_1.0.0_lerobot`
+- `libero_object_no_noops_1.0.0_lerobot`
+- `libero_goal_no_noops_1.0.0_lerobot`
+- `libero_10_no_noops_1.0.0_lerobot`
+
+CubeV2 LIBERO training expects LeRobot v3.0 directories under `LIBERO_ROOT`, for example `libero_goal_no_noops_1.0.0_lerobot_v30`.
+
+Convert them from the repo root:
+
+```bash
+for NAME in \
+  libero_spatial_no_noops_1.0.0_lerobot \
+  libero_object_no_noops_1.0.0_lerobot \
+  libero_goal_no_noops_1.0.0_lerobot \
+  libero_10_no_noops_1.0.0_lerobot
+do
+  PYTHONPATH=./src python -m lerobot.datasets.v30.convert_dataset_v21_to_v30 \
+    --repo-id="$NAME" \
+    --root="$LIBERO_DATA_ROOT" \
+    --push-to-hub=false
+done
+```
+
+This keeps the original v2.1 folders and writes sibling v3.0 folders with the `_v30` suffix. Then point `LIBERO_ROOT` to the parent directory that contains those `libero_*_lerobot_v30` folders.
+
+To compute the merged normalization stats used by LIBERO finetuning:
+
+```bash
+export LIBERO_STATS_ROOT=/path/to/norm_stats/libero_all_chunk10
+export LIBERO_REPO_ID_FILE=/tmp/libero_v30_datasets.txt
+
+printf '%s\n' \
+  "$LIBERO_DATA_ROOT/libero_spatial_no_noops_1.0.0_lerobot_v30" \
+  "$LIBERO_DATA_ROOT/libero_object_no_noops_1.0.0_lerobot_v30" \
+  "$LIBERO_DATA_ROOT/libero_goal_no_noops_1.0.0_lerobot_v30" \
+  "$LIBERO_DATA_ROOT/libero_10_no_noops_1.0.0_lerobot_v30" \
+  > "$LIBERO_REPO_ID_FILE"
+
+PYTHONPATH=./src python src/lerobot/scripts/lerobot_data_stats.py \
+  --repo_id_file "$LIBERO_REPO_ID_FILE" \
+  --action_mode abs \
+  --chunk_size 10 \
+  --output_path "$LIBERO_STATS_ROOT/franka/abs/stats.json"
+```
+
+This writes one merged stats file for all four suites. During training, point `DATASET_EXTERNAL_STATS_PATH` to that file, or set `DATASET_EXTERNAL_STATS_ROOT=$LIBERO_STATS_ROOT`.
+
+If you train with a different action mode or chunk size, keep `--action_mode` and `--chunk_size` aligned with the training launcher.
+
 ## Run
 
 1. Start the policy server in the `magicbot` environment:
