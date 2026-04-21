@@ -43,7 +43,7 @@ DA3_VARIANT="${DA3_VARIANT:-auto}"
 DA3_ALIGNMENT_MODE="${DA3_ALIGNMENT_MODE:-query_decoder}"
 DA3_CODE_ROOT="${DA3_CODE_ROOT:-}"
 
-LIBERO_ROOT="/home/jiangjiahao/data/LIBERO/libero_v30"
+LIBERO_ROOT="${LIBERO_ROOT:-/home/jiangjiahao/data/LIBERO/libero_v30}"
 USE_DIST_LOADING="${USE_DIST_LOADING:-false}"
 VALIDATE_DATASETS="${VALIDATE_DATASETS:-true}"
 VIDEO_BACKEND="${VIDEO_BACKEND:-}"
@@ -61,7 +61,7 @@ GEN_LAMBDA="${GEN_LAMBDA:-0.002}"
 NUM_3D_QUERY_TOKENS="${NUM_3D_QUERY_TOKENS:-432}"
 
 USE_EXTERNAL_STATS="${USE_EXTERNAL_STATS:-true}"
-DATASET_EXTERNAL_STATS_PATH="/home/jiangjiahao/research/MagicBot-VGA/outputs/norm_stats/libero_all_chunk10/franka/abs/stats.json"
+DATASET_EXTERNAL_STATS_PATH="${DATASET_EXTERNAL_STATS_PATH:-/home/jiangjiahao/research/MagicBot-VGA/outputs/norm_stats/libero_all_chunk10/franka/abs/stats.json}"
 DATASET_EXTERNAL_STATS_ROOT="${DATASET_EXTERNAL_STATS_ROOT:-}"
 
 BATCH_SIZE="${BATCH_SIZE:-8}"

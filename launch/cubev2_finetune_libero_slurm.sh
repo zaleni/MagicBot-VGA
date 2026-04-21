@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=cubev2-libero
-#SBATCH --nodes=2
+#SBATCH --nodes=1
 #SBATCH -p hx
 #SBATCH --ntasks-per-node=1
 #SBATCH --gres=gpu:8
-#SBATCH --cpus-per-task=56
+#SBATCH --cpus-per-task=112
 #SBATCH --output=slurm-%x-%j.out
 #SBATCH --error=slurm-%x-%j.err
 
@@ -32,7 +32,7 @@ QWEN3_VL_PRETRAINED_PATH="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/model
 QWEN3_VL_PROCESSOR_PATH="${QWEN3_VL_PRETRAINED_PATH}"
 COSMOS_TOKENIZER_PATH_OR_NAME="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/model/Cosmos-Tokenizer-CI8x8"
 DA3_MODEL_PATH_OR_NAME="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/model/DA3-LARGE-1.1"
-LIBERO_ROOT="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/data/LIBERO/libero_v30"
+LIBERO_ROOT="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/data/libero_v30"
 ACTION_TYPE="abs"
 CHUNK_SIZE=10
 N_ACTION_STEPS=10
@@ -43,7 +43,7 @@ GEN_LAMBDA=0.002
 USE_EXTERNAL_STATS=true
 DATASET_EXTERNAL_STATS_PATH="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/data/norm_stats/libero_all_chunk10/franka/abs/stats.json"
 BATCH_SIZE=8
-GRAD_ACCUM_STEPS=1
+GRAD_ACCUM_STEPS=2
 STEPS=60000
 SAVE_FREQ=10000
 LOG_FREQ=25
