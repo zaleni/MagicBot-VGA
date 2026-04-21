@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import collections
+import copy
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -173,6 +174,8 @@ class ImageTransformsConfig:
 
     # Set this flag to `true` to enable transforms during training
     enable: bool = False
+    # Optional named preset for common augmentation policies.
+    preset: str | None = None
     # This is the maximum number of transforms (sampled from these below) that will be applied to each frame.
     # It's an integer in the interval [1, number_of_available_transforms].
     max_num_transforms: int = 3
@@ -215,6 +218,57 @@ class ImageTransformsConfig:
     )
 
 
+def resolve_image_transforms_preset(cfg: ImageTransformsConfig) -> ImageTransformsConfig:
+    resolved_cfg = copy.deepcopy(cfg)
+    preset = resolved_cfg.preset
+    if preset in (None, "", "default"):
+        return resolved_cfg
+
+    if preset == "lightly":
+        resolved_cfg.max_num_transforms = 1
+        resolved_cfg.random_order = False
+        resolved_cfg.tfs = {
+            "identity": ImageTransformConfig(
+                weight=1.0,
+                type="Identity",
+                kwargs={},
+            ),
+            "brightness": ImageTransformConfig(
+                weight=0.6,
+                type="ColorJitter",
+                kwargs={"brightness": (0.85, 1.15)},
+            ),
+            "contrast": ImageTransformConfig(
+                weight=0.6,
+                type="ColorJitter",
+                kwargs={"contrast": (0.85, 1.15)},
+            ),
+            "saturation": ImageTransformConfig(
+                weight=0.6,
+                type="ColorJitter",
+                kwargs={"saturation": (0.9, 1.1)},
+            ),
+            "hue": ImageTransformConfig(
+                weight=0.3,
+                type="ColorJitter",
+                kwargs={"hue": (-0.02, 0.02)},
+            ),
+            "sharpness": ImageTransformConfig(
+                weight=0.3,
+                type="SharpnessJitter",
+                kwargs={"sharpness": (0.9, 1.1)},
+            ),
+            "affine": ImageTransformConfig(
+                weight=0.2,
+                type="RandomAffine",
+                kwargs={"degrees": (-2.0, 2.0), "translate": (0.02, 0.02)},
+            ),
+        }
+        return resolved_cfg
+
+    raise ValueError(f"Unknown image transforms preset: {preset}")
+
+
 def make_transform_from_config(cfg: ImageTransformConfig):
     if cfg.type == "Identity":
         return v2.Identity(**cfg.kwargs)
@@ -233,6 +287,7 @@ class ImageTransforms(Transform):
 
     def __init__(self, cfg: ImageTransformsConfig) -> None:
         super().__init__()
+        cfg = resolve_image_transforms_preset(cfg)
         self._cfg = cfg
 
         self.weights = []

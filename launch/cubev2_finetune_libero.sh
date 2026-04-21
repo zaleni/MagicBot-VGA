@@ -17,7 +17,7 @@ export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 
-export WANDB_MODE=online
+export WANDB_MODE=${WANDB_MODE:-online}
 export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 export TOKENIZERS_PARALLELISM=false
@@ -218,7 +218,7 @@ ARGS=(
 
     --wandb.enable=true
     --wandb.project=CUBEv2
-    --wandb.mode=online
+    --wandb.mode=${WANDB_MODE}
 )
 
 if [[ -n "${DA3_CODE_ROOT}" ]]; then

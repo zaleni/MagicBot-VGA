@@ -58,6 +58,9 @@ USE_EXTERNAL_STATS="${USE_EXTERNAL_STATS:-true}"
 NORM_STATS_ROOT="${NORM_STATS_ROOT:-/home/jiangjiahao/data/zhenji/norm_stats}"
 DATASET_EXTERNAL_STATS_PATH="${DATASET_EXTERNAL_STATS_PATH:-${NORM_STATS_ROOT}/${ACTION_TYPE}/${DATASET_NAME}/stats.json}"
 
+# Enable a fixed light photometric augmentation preset for real-robot finetuning.
+ENABLE_IMAGE_AUG="${ENABLE_IMAGE_AUG:-false}"
+
 BATCH_SIZE="${BATCH_SIZE:-8}"
 GRADIENT_ACCUMULATION_STEPS="${GRADIENT_ACCUMULATION_STEPS:-2}"
 STEPS="${STEPS:-60000}"
@@ -120,6 +123,7 @@ echo "BATCH_SIZE(per_device)=${BATCH_SIZE}"
 echo "GRADIENT_ACCUMULATION_STEPS=${GRADIENT_ACCUMULATION_STEPS}"
 echo "USE_EXTERNAL_STATS=${USE_EXTERNAL_STATS}"
 echo "DATASET_EXTERNAL_STATS_PATH=${DATASET_EXTERNAL_STATS_PATH}"
+echo "ENABLE_IMAGE_AUG=${ENABLE_IMAGE_AUG}"
 echo "OUTPUT_DIR=${OUTPUT_DIR}"
 
 ARGS=(
@@ -186,6 +190,14 @@ fi
 
 if [[ "${USE_EXTERNAL_STATS}" == "true" ]]; then
     ARGS+=(--dataset.external_stats_path="${DATASET_EXTERNAL_STATS_PATH}")
+fi
+
+if [[ "${ENABLE_IMAGE_AUG}" == "true" ]]; then
+    echo "IMAGE_AUG_PRESET=lightly"
+    ARGS+=(
+        --dataset.image_transforms.enable=true
+        --dataset.image_transforms.preset=lightly
+    )
 fi
 
 accelerate launch "${ARGS[@]}"
