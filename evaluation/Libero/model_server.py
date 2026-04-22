@@ -279,7 +279,7 @@ class MagicBotLiberoPolicy:
         config.device = self.load_device
         setattr(config, "cosmos_device", self.cosmos_device)
         self.runtime_dtype = resolve_runtime_dtype(args.dtype, self.device)
-        config.dtype = "float32" if self.runtime_dtype == torch.float32 else "bfloat16"
+        checkpoint_dtype = getattr(config, "dtype", None)
         logging.info(
             "Resolved runtime backbone paths: qwen_pretrained=%s | qwen_processor=%s | cosmos=%s | da3=%s",
             getattr(config, "qwen3_vl_pretrained_path", None),
@@ -288,11 +288,12 @@ class MagicBotLiberoPolicy:
             getattr(config, "da3_model_path_or_name", None),
         )
         logging.info(
-            "Resolved runtime devices: runtime_device=%s | load_device=%s | cosmos_device=%s | runtime_dtype=%s",
+            "Resolved runtime devices: runtime_device=%s | load_device=%s | cosmos_device=%s | runtime_dtype=%s | checkpoint_dtype=%s",
             self.device,
             self.load_device,
             self.cosmos_device,
             self.runtime_dtype,
+            checkpoint_dtype,
         )
 
         if args.infer_horizon is not None:

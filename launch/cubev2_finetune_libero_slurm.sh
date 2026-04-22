@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=cubev2-libero
-#SBATCH --nodes=1
+#SBATCH --nodes=2
 #SBATCH -p hx
 #SBATCH --ntasks-per-node=1
 #SBATCH --gres=gpu:8
-#SBATCH --cpus-per-task=112
+#SBATCH --cpus-per-task=56
+#SBATCH --mem-per-gpu=200G
 #SBATCH --output=slurm-%x-%j.out
 #SBATCH --error=slurm-%x-%j.err
 
@@ -27,6 +28,8 @@ CONDA_SH_PATH="${CONDA_SH_PATH:-/HOME/uestc_jksong/uestc_jksong_1/miniconda3/etc
 CONDA_ENV_NAME="${CONDA_ENV_NAME:-magicbot-vga}"
 
 # Cluster-side training values forwarded to launch/cubev2_finetune_libero.sh.
+POLICY="cubev2"
+BASE_OUTPUT_DIR="outputs/${POLICY}"
 POLICY_INIT_PATH="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/model/MagicBot-VGA-Base"
 QWEN3_VL_PRETRAINED_PATH="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/model/Qwen3-VL-2B-Instruct"
 QWEN3_VL_PROCESSOR_PATH="${QWEN3_VL_PRETRAINED_PATH}"
@@ -43,10 +46,14 @@ GEN_LAMBDA=0.002
 USE_EXTERNAL_STATS=true
 DATASET_EXTERNAL_STATS_PATH="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/data/norm_stats/libero_all_chunk10/franka/abs/stats.json"
 BATCH_SIZE=8
-GRAD_ACCUM_STEPS=2
-STEPS=60000
+GRAD_ACCUM_STEPS=1
+STEPS=80000
 SAVE_FREQ=10000
 LOG_FREQ=25
+RESUME="${RESUME:-false}"
+RESUME_RUN_DIR="${RESUME_RUN_DIR:-}"
+RESUME_CONFIG_PATH="${RESUME_CONFIG_PATH:-}"
+RESUME_CHECKPOINT_DIR="${RESUME_CHECKPOINT_DIR:-}"
 
 # Optional cluster-specific environment bootstrap.
 if [[ -n "${ENV_SETUP_SCRIPT:-}" ]]; then
@@ -100,6 +107,7 @@ export NCCL_TIMEOUT="${NCCL_TIMEOUT:-3600}"
 
 export PROJ_ROOT
 export LAUNCH_SCRIPT_PATH
+export BASE_OUTPUT_DIR
 export POLICY_INIT_PATH
 export QWEN3_VL_PRETRAINED_PATH
 export QWEN3_VL_PROCESSOR_PATH
@@ -120,6 +128,10 @@ export GRAD_ACCUM_STEPS
 export STEPS
 export SAVE_FREQ
 export LOG_FREQ
+export RESUME
+export RESUME_RUN_DIR
+export RESUME_CONFIG_PATH
+export RESUME_CHECKPOINT_DIR
 
 echo "SLURM_JOB_ID=${SLURM_JOB_ID}"
 echo "SLURM_JOB_NODELIST=${SLURM_JOB_NODELIST}"
@@ -127,6 +139,7 @@ echo "NODE_COUNT=${NODE_COUNT}"
 echo "PROC_PER_NODE=${PROC_PER_NODE}"
 echo "MASTER_ADDR=${MASTER_ADDR}"
 echo "MASTER_PORT=${MASTER_PORT}"
+echo "BASE_OUTPUT_DIR=${BASE_OUTPUT_DIR}"
 echo "POLICY_INIT_PATH=${POLICY_INIT_PATH}"
 echo "QWEN3_VL_PRETRAINED_PATH=${QWEN3_VL_PRETRAINED_PATH}"
 echo "QWEN3_VL_PROCESSOR_PATH=${QWEN3_VL_PROCESSOR_PATH}"
@@ -147,6 +160,16 @@ echo "GRAD_ACCUM_STEPS=${GRAD_ACCUM_STEPS}"
 echo "STEPS=${STEPS}"
 echo "SAVE_FREQ=${SAVE_FREQ}"
 echo "LOG_FREQ=${LOG_FREQ}"
+echo "RESUME=${RESUME}"
+if [[ -n "${RESUME_RUN_DIR}" ]]; then
+  echo "RESUME_RUN_DIR=${RESUME_RUN_DIR}"
+fi
+if [[ -n "${RESUME_CHECKPOINT_DIR}" ]]; then
+  echo "RESUME_CHECKPOINT_DIR=${RESUME_CHECKPOINT_DIR}"
+fi
+if [[ -n "${RESUME_CONFIG_PATH}" ]]; then
+  echo "RESUME_CONFIG_PATH=${RESUME_CONFIG_PATH}"
+fi
 
 srun --jobid "${SLURM_JOB_ID}" \
   --ntasks="${SLURM_NNODES}" \

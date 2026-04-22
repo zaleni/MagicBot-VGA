@@ -34,6 +34,10 @@ export PYTHONPATH="${PROJ_ROOT}/src:${PYTHONPATH:-}"
 cd "${PROJ_ROOT}"
 
 POLICY="cubev2"
+RESUME="${RESUME:-false}"
+RESUME_RUN_DIR="${RESUME_RUN_DIR:-}"
+RESUME_CONFIG_PATH="${RESUME_CONFIG_PATH:-}"
+RESUME_CHECKPOINT_DIR="${RESUME_CHECKPOINT_DIR:-}"
 POLICY_INIT_PATH="${POLICY_INIT_PATH:-/home/jiangjiahao/data/model/MagicBot-VGA-Base}"
 QWEN3_VL_PRETRAINED_PATH="${QWEN3_VL_PRETRAINED_PATH:-/home/jiangjiahao/data/model/Qwen3-VL-2B-Instruct}"
 QWEN3_VL_PROCESSOR_PATH="${QWEN3_VL_PROCESSOR_PATH:-${QWEN3_VL_PRETRAINED_PATH}}"
@@ -67,64 +71,117 @@ STEPS="${STEPS:-60000}"
 SAVE_FREQ="${SAVE_FREQ:-10000}"
 LOG_FREQ="${LOG_FREQ:-50}"
 
-if [[ -z "${POLICY_INIT_PATH}" ]]; then
-  echo "Please set POLICY_INIT_PATH to the CubeV2 bootstrap checkpoint."
-  echo "For backward compatibility, PRETRAINED_PATH is also accepted."
+if [[ "${RESUME}" != "true" && "${RESUME}" != "false" ]]; then
+  echo "RESUME must be true or false, got ${RESUME}"
   exit 1
 fi
 
-if [[ ! -d "${DATASET_DIR}" ]]; then
-  echo "DATASET_DIR does not exist: ${DATASET_DIR}"
-  exit 1
+if [[ -n "${RESUME_RUN_DIR}" && -z "${RESUME_CHECKPOINT_DIR}" ]]; then
+  RESUME_CHECKPOINT_DIR="${RESUME_RUN_DIR%/}/checkpoints/last"
 fi
 
-if [[ ! -f "${DATASET_DIR}/meta/info.json" ]]; then
-  echo "meta/info.json not found under DATASET_DIR: ${DATASET_DIR}"
-  exit 1
+if [[ -n "${RESUME_CHECKPOINT_DIR}" && -z "${RESUME_CONFIG_PATH}" ]]; then
+  RESUME_CONFIG_PATH="${RESUME_CHECKPOINT_DIR%/}/pretrained_model/train_config.json"
 fi
-
-robot_type="$(
-  python -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["robot_type"])' \
-    "${DATASET_DIR}/meta/info.json"
-)"
-
-if [[ "${robot_type}" != "real_lift2" ]]; then
-  echo "Expected robot_type=real_lift2, got ${robot_type}"
-  echo "Please reconvert the dataset or update meta/info.json."
-  exit 1
-fi
-
-if [[ "${ACTION_TYPE}" != "delta" && "${ACTION_TYPE}" != "abs" ]]; then
-  echo "ACTION_TYPE must be abs or delta, got ${ACTION_TYPE}"
-  exit 1
-fi
-
-if [[ "${USE_EXTERNAL_STATS}" == "true" && ! -f "${DATASET_EXTERNAL_STATS_PATH}" ]]; then
-  echo "Missing external stats: ${DATASET_EXTERNAL_STATS_PATH}"
-  echo "Compute them first with util_scripts/compute_norm_stats_single.py"
-  exit 1
-fi
-
-python -c 'from lerobot.transforms.constants import MASK_MAPPING, FEATURE_MAPPING, IMAGE_MAPPING; import sys; rt=sys.argv[1]; missing=[name for name,m in [("MASK_MAPPING", MASK_MAPPING), ("FEATURE_MAPPING", FEATURE_MAPPING), ("IMAGE_MAPPING", IMAGE_MAPPING)] if rt not in m]; raise SystemExit(0 if not missing else "robot_type=" + rt + " missing in " + ", ".join(missing))' \
-  "${robot_type}"
 
 BASE_OUTPUT_DIR="outputs_real/${POLICY}"
-JOB_NAME="${POLICY}-real_lift2-${ACTION_TYPE}-chunk${CHUNK_SIZE}-finetune-$(date +'%Y_%m_%d_%H_%M_%S')"
-OUTPUT_DIR="${BASE_OUTPUT_DIR}/${JOB_NAME}"
+JOB_NAME=""
+OUTPUT_DIR=""
 
-echo "DATASET_DIR=${DATASET_DIR}"
-echo "DATASET_NAME=${DATASET_NAME}"
-echo "DATASET_REPO_ID=${DATASET_REPO_ID}"
-echo "robot_type=${robot_type}"
-echo "ACTION_TYPE=${ACTION_TYPE}"
-echo "CHUNK_SIZE=${CHUNK_SIZE}"
-echo "N_ACTION_STEPS=${N_ACTION_STEPS}"
-echo "BATCH_SIZE(per_device)=${BATCH_SIZE}"
-echo "GRADIENT_ACCUMULATION_STEPS=${GRADIENT_ACCUMULATION_STEPS}"
-echo "USE_EXTERNAL_STATS=${USE_EXTERNAL_STATS}"
-echo "DATASET_EXTERNAL_STATS_PATH=${DATASET_EXTERNAL_STATS_PATH}"
-echo "ENABLE_IMAGE_AUG=${ENABLE_IMAGE_AUG}"
-echo "OUTPUT_DIR=${OUTPUT_DIR}"
+if [[ "${RESUME}" == "true" ]]; then
+  if [[ -z "${RESUME_CONFIG_PATH}" ]]; then
+    echo "Set RESUME_RUN_DIR, RESUME_CHECKPOINT_DIR, or RESUME_CONFIG_PATH when RESUME=true."
+    exit 1
+  fi
+
+  if [[ ! -f "${RESUME_CONFIG_PATH}" ]]; then
+    echo "Resume config not found: ${RESUME_CONFIG_PATH}"
+    exit 1
+  fi
+
+  if [[ -z "${RESUME_CHECKPOINT_DIR}" ]]; then
+    RESUME_CHECKPOINT_DIR="$(dirname "$(dirname "${RESUME_CONFIG_PATH}")")"
+  fi
+
+  if [[ -z "${RESUME_RUN_DIR}" ]]; then
+    RESUME_RUN_DIR="$(dirname "$(dirname "${RESUME_CHECKPOINT_DIR}")")"
+  fi
+
+  JOB_NAME="$(
+    python -c 'import json,sys; cfg=json.load(open(sys.argv[1], encoding="utf-8")); print(cfg.get("job_name", ""))' \
+      "${RESUME_CONFIG_PATH}"
+  )"
+  OUTPUT_DIR="$(
+    python -c 'import json,sys; cfg=json.load(open(sys.argv[1], encoding="utf-8")); print(cfg.get("output_dir", ""))' \
+      "${RESUME_CONFIG_PATH}"
+  )"
+
+  echo "RESUME=true"
+  echo "RESUME_RUN_DIR=${RESUME_RUN_DIR}"
+  echo "RESUME_CHECKPOINT_DIR=${RESUME_CHECKPOINT_DIR}"
+  echo "RESUME_CONFIG_PATH=${RESUME_CONFIG_PATH}"
+  echo "RESUME_OUTPUT_DIR=${OUTPUT_DIR}"
+  echo "RESUME_JOB_NAME=${JOB_NAME}"
+else
+  if [[ -z "${POLICY_INIT_PATH}" ]]; then
+    echo "Please set POLICY_INIT_PATH to the CubeV2 bootstrap checkpoint."
+    echo "For backward compatibility, PRETRAINED_PATH is also accepted."
+    exit 1
+  fi
+
+  if [[ ! -d "${DATASET_DIR}" ]]; then
+    echo "DATASET_DIR does not exist: ${DATASET_DIR}"
+    exit 1
+  fi
+
+  if [[ ! -f "${DATASET_DIR}/meta/info.json" ]]; then
+    echo "meta/info.json not found under DATASET_DIR: ${DATASET_DIR}"
+    exit 1
+  fi
+
+  robot_type="$(
+    python -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["robot_type"])' \
+      "${DATASET_DIR}/meta/info.json"
+  )"
+
+  if [[ "${robot_type}" != "real_lift2" ]]; then
+    echo "Expected robot_type=real_lift2, got ${robot_type}"
+    echo "Please reconvert the dataset or update meta/info.json."
+    exit 1
+  fi
+
+  if [[ "${ACTION_TYPE}" != "delta" && "${ACTION_TYPE}" != "abs" ]]; then
+    echo "ACTION_TYPE must be abs or delta, got ${ACTION_TYPE}"
+    exit 1
+  fi
+
+  if [[ "${USE_EXTERNAL_STATS}" == "true" && ! -f "${DATASET_EXTERNAL_STATS_PATH}" ]]; then
+    echo "Missing external stats: ${DATASET_EXTERNAL_STATS_PATH}"
+    echo "Compute them first with util_scripts/compute_norm_stats_single.py"
+    exit 1
+  fi
+
+  python -c 'from lerobot.transforms.constants import MASK_MAPPING, FEATURE_MAPPING, IMAGE_MAPPING; import sys; rt=sys.argv[1]; missing=[name for name,m in [("MASK_MAPPING", MASK_MAPPING), ("FEATURE_MAPPING", FEATURE_MAPPING), ("IMAGE_MAPPING", IMAGE_MAPPING)] if rt not in m]; raise SystemExit(0 if not missing else "robot_type=" + rt + " missing in " + ", ".join(missing))' \
+    "${robot_type}"
+
+  JOB_NAME="${POLICY}-real_lift2-${ACTION_TYPE}-chunk${CHUNK_SIZE}-finetune-$(date +'%Y_%m_%d_%H_%M_%S')"
+  OUTPUT_DIR="${BASE_OUTPUT_DIR}/${JOB_NAME}"
+
+  echo "RESUME=false"
+  echo "DATASET_DIR=${DATASET_DIR}"
+  echo "DATASET_NAME=${DATASET_NAME}"
+  echo "DATASET_REPO_ID=${DATASET_REPO_ID}"
+  echo "robot_type=${robot_type}"
+  echo "ACTION_TYPE=${ACTION_TYPE}"
+  echo "CHUNK_SIZE=${CHUNK_SIZE}"
+  echo "N_ACTION_STEPS=${N_ACTION_STEPS}"
+  echo "BATCH_SIZE(per_device)=${BATCH_SIZE}"
+  echo "GRADIENT_ACCUMULATION_STEPS=${GRADIENT_ACCUMULATION_STEPS}"
+  echo "USE_EXTERNAL_STATS=${USE_EXTERNAL_STATS}"
+  echo "DATASET_EXTERNAL_STATS_PATH=${DATASET_EXTERNAL_STATS_PATH}"
+  echo "ENABLE_IMAGE_AUG=${ENABLE_IMAGE_AUG}"
+  echo "OUTPUT_DIR=${OUTPUT_DIR}"
+fi
 
 ARGS=(
     --multi_gpu
@@ -134,70 +191,79 @@ ARGS=(
     --main_process_ip="${MASTER_ADDR}"
     --main_process_port="${MASTER_PORT}"
     src/lerobot/scripts/lerobot_train.py
-
-    --output_dir="${OUTPUT_DIR}"
-    --num_workers=12
-    --job_name="${JOB_NAME}"
-
-    --policy.type="${POLICY}"
-    --policy.repo_id="lerobot_lab/${POLICY}"
-    --policy.pretrained_path="${POLICY_INIT_PATH}"
-    --policy.qwen3_vl_pretrained_path="${QWEN3_VL_PRETRAINED_PATH}"
-    --policy.cosmos_tokenizer_path_or_name="${COSMOS_TOKENIZER_PATH_OR_NAME}"
-    --policy.push_to_hub=false
-    --policy.gradient_checkpointing=false
-    --policy.dtype=bfloat16
-    --policy.optimizer_lr=5.0e-5
-    --policy.scheduler_warmup_steps=2000
-    --policy.scheduler_decay_steps="${STEPS}"
-    --policy.scheduler_decay_lr=5.0e-6
-    --policy.freeze_vision_encoder=false
-    --policy.train_expert_only=false
-    --policy.train_vlm_only=false
-    --policy.qwen3_vl_variant=qwen3_vl_28l
-    --policy.action_expert_variant=qwen3_28l
-    --policy.chunk_size="${CHUNK_SIZE}"
-    --policy.n_action_steps="${N_ACTION_STEPS}"
-    --policy.enable_3d_queries="${ENABLE_3D_QUERIES}"
-    --policy.num_3d_query_tokens="${NUM_3D_QUERY_TOKENS}"
-    --policy.lambda_3d="${LAMBDA_3D}"
-    --policy.da3_model_path_or_name="${DA3_MODEL_PATH_OR_NAME}"
-    --policy.da3_variant="${DA3_VARIANT}"
-    --policy.da3_alignment_mode="${DA3_ALIGNMENT_MODE}"
-    --policy.log_da3_teacher_timing=true
-
-    --dataset.type="${POLICY}"
-    --dataset.repo_id="${DATASET_REPO_ID}"
-    --dataset.qwen3_vl_processor_path="${QWEN3_VL_PROCESSOR_PATH}"
-    --dataset.action_mode="${ACTION_TYPE}"
-    --dataset.use_external_stats="${USE_EXTERNAL_STATS}"
-
-    --seed=42
-    --batch_size="${BATCH_SIZE}"
-    --gradient_accumulation_steps="${GRADIENT_ACCUMULATION_STEPS}"
-    --steps="${STEPS}"
-    --save_freq="${SAVE_FREQ}"
-    --log_freq="${LOG_FREQ}"
-
-    --wandb.enable=true
-    --wandb.project=CUBEv2
-    --wandb.mode="${WANDB_MODE}"
 )
 
-if [[ -n "${DA3_CODE_ROOT}" ]]; then
-    ARGS+=(--policy.da3_code_root="${DA3_CODE_ROOT}")
-fi
-
-if [[ "${USE_EXTERNAL_STATS}" == "true" ]]; then
-    ARGS+=(--dataset.external_stats_path="${DATASET_EXTERNAL_STATS_PATH}")
-fi
-
-if [[ "${ENABLE_IMAGE_AUG}" == "true" ]]; then
-    echo "IMAGE_AUG_PRESET=lightly"
+if [[ "${RESUME}" == "true" ]]; then
     ARGS+=(
-        --dataset.image_transforms.enable=true
-        --dataset.image_transforms.preset=lightly
+        --resume=true
+        --config_path="${RESUME_CONFIG_PATH}"
     )
+else
+    ARGS+=(
+        --output_dir="${OUTPUT_DIR}"
+        --num_workers=12
+        --job_name="${JOB_NAME}"
+
+        --policy.type="${POLICY}"
+        --policy.repo_id="lerobot_lab/${POLICY}"
+        --policy.pretrained_path="${POLICY_INIT_PATH}"
+        --policy.qwen3_vl_pretrained_path="${QWEN3_VL_PRETRAINED_PATH}"
+        --policy.cosmos_tokenizer_path_or_name="${COSMOS_TOKENIZER_PATH_OR_NAME}"
+        --policy.push_to_hub=false
+        --policy.gradient_checkpointing=false
+        --policy.dtype=bfloat16
+        --policy.optimizer_lr=5.0e-5
+        --policy.scheduler_warmup_steps=2000
+        --policy.scheduler_decay_steps="${STEPS}"
+        --policy.scheduler_decay_lr=5.0e-6
+        --policy.freeze_vision_encoder=false
+        --policy.train_expert_only=false
+        --policy.train_vlm_only=false
+        --policy.qwen3_vl_variant=qwen3_vl_28l
+        --policy.action_expert_variant=qwen3_28l
+        --policy.chunk_size="${CHUNK_SIZE}"
+        --policy.n_action_steps="${N_ACTION_STEPS}"
+        --policy.enable_3d_queries="${ENABLE_3D_QUERIES}"
+        --policy.num_3d_query_tokens="${NUM_3D_QUERY_TOKENS}"
+        --policy.lambda_3d="${LAMBDA_3D}"
+        --policy.da3_model_path_or_name="${DA3_MODEL_PATH_OR_NAME}"
+        --policy.da3_variant="${DA3_VARIANT}"
+        --policy.da3_alignment_mode="${DA3_ALIGNMENT_MODE}"
+        --policy.log_da3_teacher_timing=true
+
+        --dataset.type="${POLICY}"
+        --dataset.repo_id="${DATASET_REPO_ID}"
+        --dataset.qwen3_vl_processor_path="${QWEN3_VL_PROCESSOR_PATH}"
+        --dataset.action_mode="${ACTION_TYPE}"
+        --dataset.use_external_stats="${USE_EXTERNAL_STATS}"
+
+        --seed=42
+        --batch_size="${BATCH_SIZE}"
+        --gradient_accumulation_steps="${GRADIENT_ACCUMULATION_STEPS}"
+        --steps="${STEPS}"
+        --save_freq="${SAVE_FREQ}"
+        --log_freq="${LOG_FREQ}"
+
+        --wandb.enable=true
+        --wandb.project=CUBEv2
+        --wandb.mode="${WANDB_MODE}"
+    )
+
+    if [[ -n "${DA3_CODE_ROOT}" ]]; then
+        ARGS+=(--policy.da3_code_root="${DA3_CODE_ROOT}")
+    fi
+
+    if [[ "${USE_EXTERNAL_STATS}" == "true" ]]; then
+        ARGS+=(--dataset.external_stats_path="${DATASET_EXTERNAL_STATS_PATH}")
+    fi
+
+    if [[ "${ENABLE_IMAGE_AUG}" == "true" ]]; then
+        echo "IMAGE_AUG_PRESET=lightly"
+        ARGS+=(
+            --dataset.image_transforms.enable=true
+            --dataset.image_transforms.preset=lightly
+        )
+    fi
 fi
 
 accelerate launch "${ARGS[@]}"

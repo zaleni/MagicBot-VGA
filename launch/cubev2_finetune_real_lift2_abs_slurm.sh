@@ -32,13 +32,17 @@ QWEN3_VL_PRETRAINED_PATH="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/model
 QWEN3_VL_PROCESSOR_PATH="${QWEN3_VL_PRETRAINED_PATH}"
 COSMOS_TOKENIZER_PATH_OR_NAME="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/model/Cosmos-Tokenizer-CI8x8"
 DA3_MODEL_PATH_OR_NAME="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/model/DA3-LARGE-1.1"
-DATASET_DIR="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/data/zhenji/lift2-96-0420/Real-lift2-96-0420"
+DATASET_DIR="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/data/zhenji/table_clean_100_filter"
 NORM_STATS_ROOT="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/data/zhenji/norm_stats"
 ENABLE_IMAGE_AUG=false
 BATCH_SIZE=8
 GRADIENT_ACCUMULATION_STEPS=1
 STEPS=60000
 SAVE_FREQ=10000
+RESUME="${RESUME:-false}"
+RESUME_RUN_DIR="${RESUME_RUN_DIR:-}"
+RESUME_CONFIG_PATH="${RESUME_CONFIG_PATH:-}"
+RESUME_CHECKPOINT_DIR="${RESUME_CHECKPOINT_DIR:-}"
 
 # Optional cluster-specific environment bootstrap.
 if [[ -n "${ENV_SETUP_SCRIPT:-}" ]]; then
@@ -104,6 +108,10 @@ export BATCH_SIZE
 export GRADIENT_ACCUMULATION_STEPS
 export STEPS
 export SAVE_FREQ
+export RESUME
+export RESUME_RUN_DIR
+export RESUME_CONFIG_PATH
+export RESUME_CHECKPOINT_DIR
 
 echo "SLURM_JOB_ID=${SLURM_JOB_ID}"
 echo "SLURM_JOB_NODELIST=${SLURM_JOB_NODELIST}"
@@ -123,6 +131,16 @@ echo "BATCH_SIZE=${BATCH_SIZE}"
 echo "GRADIENT_ACCUMULATION_STEPS=${GRADIENT_ACCUMULATION_STEPS}"
 echo "STEPS=${STEPS}"
 echo "SAVE_FREQ=${SAVE_FREQ}"
+echo "RESUME=${RESUME}"
+if [[ -n "${RESUME_RUN_DIR}" ]]; then
+  echo "RESUME_RUN_DIR=${RESUME_RUN_DIR}"
+fi
+if [[ -n "${RESUME_CHECKPOINT_DIR}" ]]; then
+  echo "RESUME_CHECKPOINT_DIR=${RESUME_CHECKPOINT_DIR}"
+fi
+if [[ -n "${RESUME_CONFIG_PATH}" ]]; then
+  echo "RESUME_CONFIG_PATH=${RESUME_CONFIG_PATH}"
+fi
 
 srun --jobid "${SLURM_JOB_ID}" \
   --ntasks="${SLURM_NNODES}" \
