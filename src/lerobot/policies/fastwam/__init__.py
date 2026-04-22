@@ -1,7 +1,4 @@
-from ._compat import ensure_local_fastwam_package_tree
 from .configuration_fastwam import FastWAMConfig, FastWAMDatasetConfig
-
-ensure_local_fastwam_package_tree()
 
 __all__ = ["FastWAMConfig", "FastWAMDatasetConfig", "FastWAMPolicy"]
 
