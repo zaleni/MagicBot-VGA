@@ -248,6 +248,8 @@ class FastWAMBaseLerobotDatasetV3(Dataset):
                 (t * global_sample_stride) / fps for t in range(-past_action_size, -past_action_size + action_size)
             ]
 
+        self._infer_feature_raw_shapes_from_metadata(metas)
+
         episodes: dict[str, list[int]] = {}
         if val_set_proportion < 1e-6:
             for meta in metas:
@@ -284,6 +286,77 @@ class FastWAMBaseLerobotDatasetV3(Dataset):
             "from": torch.cat(episode_from),
             "to": torch.cat(episode_to),
         }
+
+    def _infer_feature_raw_shapes_from_metadata(self, metas: list[LeRobotDatasetMetadata]) -> None:
+        def _collect_shapes(feature_key: str) -> list[Any]:
+            shapes = []
+            for dataset_meta in metas:
+                if feature_key not in dataset_meta.features:
+                    raise KeyError(
+                        f"Feature '{feature_key}' not found in dataset metadata for {dataset_meta.root}."
+                    )
+                shapes.append(dataset_meta.features[feature_key]["shape"])
+            return shapes
+
+        def _all_same(shapes: list[Any]) -> bool:
+            if not shapes:
+                return True
+            first = tuple(shapes[0]) if isinstance(shapes[0], (list, tuple)) else shapes[0]
+            for shape in shapes[1:]:
+                current = tuple(shape) if isinstance(shape, (list, tuple)) else shape
+                if current != first:
+                    return False
+            return True
+
+        for meta in self.image_meta:
+            shapes = _collect_shapes(meta["lerobot_key"])
+            if not _all_same(shapes):
+                raise ValueError(
+                    f"Inconsistent image shapes for '{meta['lerobot_key']}' across datasets: {shapes}"
+                )
+            actual_shape = list(shapes[0])
+            if list(meta["raw_shape"]) != actual_shape:
+                logger.info(
+                    "Overriding FastWAM image raw_shape for %s from %s to dataset metadata shape %s.",
+                    meta["lerobot_key"],
+                    meta["raw_shape"],
+                    actual_shape,
+                )
+                meta["raw_shape"] = actual_shape
+
+        for meta in self.state_meta:
+            shapes = _collect_shapes(meta["lerobot_key"])
+            if not _all_same(shapes):
+                raise ValueError(
+                    f"Inconsistent state shapes for '{meta['lerobot_key']}' across datasets: {shapes}"
+                )
+            actual_shape = shapes[0]
+            actual_dim = int(actual_shape[0]) if isinstance(actual_shape, (list, tuple)) else int(actual_shape)
+            if int(meta["raw_shape"]) != actual_dim:
+                logger.info(
+                    "Overriding FastWAM state raw_shape for %s from %s to dataset metadata dim %s.",
+                    meta["lerobot_key"],
+                    meta["raw_shape"],
+                    actual_dim,
+                )
+                meta["raw_shape"] = actual_dim
+
+        for meta in self.action_meta:
+            shapes = _collect_shapes(meta["lerobot_key"])
+            if not _all_same(shapes):
+                raise ValueError(
+                    f"Inconsistent action shapes for '{meta['lerobot_key']}' across datasets: {shapes}"
+                )
+            actual_shape = shapes[0]
+            actual_dim = int(actual_shape[0]) if isinstance(actual_shape, (list, tuple)) else int(actual_shape)
+            if int(meta["raw_shape"]) != actual_dim:
+                logger.info(
+                    "Overriding FastWAM action raw_shape for %s from %s to dataset metadata dim %s.",
+                    meta["lerobot_key"],
+                    meta["raw_shape"],
+                    actual_dim,
+                )
+                meta["raw_shape"] = actual_dim
 
     def _get_action(self, meta: dict[str, Any], lerobot_sample: dict[str, Any]) -> torch.Tensor:
         key, lerobot_key, raw_shape = meta["key"], meta["lerobot_key"], meta["raw_shape"]
