@@ -288,15 +288,25 @@ class FastWAMBaseLerobotDatasetV3(Dataset):
         }
 
     def _infer_feature_raw_shapes_from_metadata(self, metas: list[LeRobotDatasetMetadata]) -> None:
-        def _collect_shapes(feature_key: str) -> list[Any]:
-            shapes = []
+        def _collect_feature_specs(feature_key: str) -> list[dict[str, Any]]:
+            specs = []
             for dataset_meta in metas:
                 if feature_key not in dataset_meta.features:
                     raise KeyError(
                         f"Feature '{feature_key}' not found in dataset metadata for {dataset_meta.root}."
                     )
-                shapes.append(dataset_meta.features[feature_key]["shape"])
-            return shapes
+                specs.append(dataset_meta.features[feature_key])
+            return specs
+
+        def _canonicalize_visual_shape(shape: Any, names: Any) -> list[int]:
+            shape_list = list(shape)
+            if len(shape_list) != 3:
+                return shape_list
+            if names is not None and len(names) == 3 and names[2] in ["channel", "channels"]:
+                return [shape_list[2], shape_list[0], shape_list[1]]
+            if shape_list[-1] in [1, 3, 4] and shape_list[0] not in [1, 3, 4]:
+                return [shape_list[2], shape_list[0], shape_list[1]]
+            return shape_list
 
         def _all_same(shapes: list[Any]) -> bool:
             if not shapes:
@@ -309,7 +319,8 @@ class FastWAMBaseLerobotDatasetV3(Dataset):
             return True
 
         for meta in self.image_meta:
-            shapes = _collect_shapes(meta["lerobot_key"])
+            specs = _collect_feature_specs(meta["lerobot_key"])
+            shapes = [_canonicalize_visual_shape(spec["shape"], spec.get("names")) for spec in specs]
             if not _all_same(shapes):
                 raise ValueError(
                     f"Inconsistent image shapes for '{meta['lerobot_key']}' across datasets: {shapes}"
@@ -325,7 +336,8 @@ class FastWAMBaseLerobotDatasetV3(Dataset):
                 meta["raw_shape"] = actual_shape
 
         for meta in self.state_meta:
-            shapes = _collect_shapes(meta["lerobot_key"])
+            specs = _collect_feature_specs(meta["lerobot_key"])
+            shapes = [spec["shape"] for spec in specs]
             if not _all_same(shapes):
                 raise ValueError(
                     f"Inconsistent state shapes for '{meta['lerobot_key']}' across datasets: {shapes}"
@@ -342,7 +354,8 @@ class FastWAMBaseLerobotDatasetV3(Dataset):
                 meta["raw_shape"] = actual_dim
 
         for meta in self.action_meta:
-            shapes = _collect_shapes(meta["lerobot_key"])
+            specs = _collect_feature_specs(meta["lerobot_key"])
+            shapes = [spec["shape"] for spec in specs]
             if not _all_same(shapes):
                 raise ValueError(
                     f"Inconsistent action shapes for '{meta['lerobot_key']}' across datasets: {shapes}"
@@ -388,7 +401,10 @@ class FastWAMBaseLerobotDatasetV3(Dataset):
                 image = (image.clamp(0.0, 1.0) * 255).to(torch.uint8)
             else:
                 image = image.to(torch.uint8)
-        if list(image.shape[1:]) != list(raw_shape):
+        expected_shape = list(raw_shape)
+        if len(expected_shape) == 3 and expected_shape[-1] in [1, 3, 4] and expected_shape[0] not in [1, 3, 4]:
+            expected_shape = [expected_shape[2], expected_shape[0], expected_shape[1]]
+        if list(image.shape[1:]) != expected_shape:
             raise ValueError(f"Image '{key}' shape {tuple(image.shape[1:])} mismatch with meta {raw_shape}.")
         return image
 
