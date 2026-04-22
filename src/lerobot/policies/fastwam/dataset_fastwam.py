@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import os
 import traceback
 from collections import defaultdict
@@ -28,13 +27,11 @@ from .core.data.lerobot.utils.normalizer import (
     save_dataset_stats_to_json,
 )
 from .core.utils.logging_config import get_logger
+from .text_cache import DEFAULT_PROMPT, build_text_embedding_cache_path
 
 logger = get_logger(__name__)
 
 MAX_GETITEM_ATTEMPT = 5
-DEFAULT_PROMPT = "A video recorded from a robot's point of view executing the following instruction: {task}"
-
-
 def _to_plain_dict(value: Any) -> Any:
     if isinstance(value, dict):
         return {key: _to_plain_dict(child) for key, child in value.items()}
@@ -703,15 +700,15 @@ class FastWAMRobotVideoDatasetV3(Dataset):
         if self.text_embedding_cache_dir is None:
             raise ValueError("text_embedding_cache_dir is not set.")
         os.makedirs(self.text_embedding_cache_dir, exist_ok=True)
-        hashed = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
-        cache_path = os.path.join(
+        cache_path = build_text_embedding_cache_path(
             self.text_embedding_cache_dir,
-            f"{hashed}.t5_len{self.context_len}.wan22ti2v5b.pt",
+            prompt,
+            self.context_len,
         )
         if not os.path.exists(cache_path):
             raise FileNotFoundError(
                 f"Missing text embedding cache: {cache_path}. "
-                "Run the FastWAM text embedding precompute script first, or set policy.load_text_encoder=true "
+                "Run `python src/lerobot/scripts/fastwam_precompute_text_embeds.py ...` first, or set policy.load_text_encoder=true "
                 "and leave dataset.text_embedding_cache_dir unset."
             )
         payload = torch.load(cache_path, map_location="cpu")

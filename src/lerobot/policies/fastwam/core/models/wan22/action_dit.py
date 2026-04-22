@@ -131,7 +131,21 @@ class ActionDiT(nn.Module):
         from pathlib import Path
         p = Path(action_dit_pretrained_path)
         if not p.is_absolute():
-            p = Path(__file__).resolve().parents[4] / p
+            file_path = Path(__file__).resolve()
+            candidate_roots = [Path.cwd()]
+            if len(file_path.parents) > 7:
+                candidate_roots.append(file_path.parents[7])
+            if len(file_path.parents) > 4:
+                candidate_roots.append(file_path.parents[4])
+            resolved_path = None
+            for root in candidate_roots:
+                candidate = (root / p).resolve()
+                if candidate.is_file():
+                    resolved_path = candidate
+                    break
+            if resolved_path is None:
+                resolved_path = (candidate_roots[0] / p).resolve()
+            p = resolved_path
         action_dit_pretrained_path = str(p)
         if not os.path.isfile(action_dit_pretrained_path):
             raise FileNotFoundError(

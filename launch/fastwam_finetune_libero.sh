@@ -36,7 +36,9 @@ FASTWAM_VARIANT="${FASTWAM_VARIANT:-fastwam}"
 
 WAN_MODEL_ID="${WAN_MODEL_ID:-Wan-AI/Wan2.2-TI2V-5B}"
 WAN_TOKENIZER_MODEL_ID="${WAN_TOKENIZER_MODEL_ID:-Wan-AI/Wan2.1-T2V-1.3B}"
-ACTION_DIT_PRETRAINED_PATH="${ACTION_DIT_PRETRAINED_PATH:-${PROJ_ROOT}/third_party/FastWAM/checkpoints/ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt}"
+FASTWAM_REDIRECT_COMMON_FILES="${FASTWAM_REDIRECT_COMMON_FILES:-true}"
+FASTWAM_ASSET_ROOT="${FASTWAM_ASSET_ROOT:-${PROJ_ROOT}/checkpoints/fastwam}"
+ACTION_DIT_PRETRAINED_PATH="${ACTION_DIT_PRETRAINED_PATH:-${FASTWAM_ASSET_ROOT}/ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt}"
 NATIVE_FASTWAM_CHECKPOINT_PATH="${NATIVE_FASTWAM_CHECKPOINT_PATH:-}"
 LOAD_TEXT_ENCODER="${LOAD_TEXT_ENCODER:-false}"
 
@@ -119,13 +121,16 @@ fi
 
 if [[ ! -f "${ACTION_DIT_PRETRAINED_PATH}" ]]; then
   echo "Missing ActionDiT backbone: ${ACTION_DIT_PRETRAINED_PATH}"
-  echo "Generate it with third_party/FastWAM/scripts/preprocess_action_dit_backbone.py first."
+  echo "Generate it with:"
+  echo "  python src/lerobot/scripts/fastwam_preprocess_action_dit_backbone.py --output \"${ACTION_DIT_PRETRAINED_PATH}\" --device cuda --dtype bfloat16"
   exit 1
 fi
 
 if [[ "${LOAD_TEXT_ENCODER}" != "true" && ! -d "${TEXT_EMBED_CACHE_DIR}" ]]; then
   echo "LOAD_TEXT_ENCODER=false but TEXT_EMBED_CACHE_DIR does not exist: ${TEXT_EMBED_CACHE_DIR}"
-  echo "Precompute text embeddings first, or set LOAD_TEXT_ENCODER=true."
+  echo "Precompute text embeddings with:"
+  echo "  python src/lerobot/scripts/fastwam_precompute_text_embeds.py --repo-id-file <repo_id_file.txt> --text-embedding-cache-dir \"${TEXT_EMBED_CACHE_DIR}\" --device cuda"
+  echo "Or set LOAD_TEXT_ENCODER=true."
   exit 1
 fi
 
@@ -192,6 +197,7 @@ ARGS=(
     --policy.variant="${FASTWAM_VARIANT}"
     --policy.model_id="${WAN_MODEL_ID}"
     --policy.tokenizer_model_id="${WAN_TOKENIZER_MODEL_ID}"
+    --policy.redirect_common_files="${FASTWAM_REDIRECT_COMMON_FILES}"
     --policy.action_dit_pretrained_path="${ACTION_DIT_PRETRAINED_PATH}"
     --policy.load_text_encoder="${LOAD_TEXT_ENCODER}"
     --policy.dtype="${DTYPE}"
