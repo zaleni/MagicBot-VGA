@@ -15,6 +15,7 @@
 from .InternVLA_A1_3B.configuration_internvla_a1 import QwenA1Config as QwenA1Config
 from .InternVLA_A1_2B.configuration_internvla_a1 import InternA1Config as InternA1Config
 from .cubev2.configuration_cubev2 import CubeV2Config as CubeV2Config
+from .fastwam.configuration_fastwam import FastWAMConfig as FastWAMConfig
 from .pi0.configuration_pi0 import PI0Config as PI0Config
 from .pi05.configuration_pi05 import PI05Config as PI05Config
 
@@ -22,6 +23,7 @@ __all__ = [
     "QwenA1Config", 
     "InternA1Config", 
     "CubeV2Config",
+    "FastWAMConfig",
     "PI0Config",
     "PI05Config",
 ]

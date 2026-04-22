@@ -16,8 +16,10 @@
 import logging
 import os
 import time
+from math import ceil
 from contextlib import nullcontext
 from datetime import timedelta
+from pathlib import Path
 from pprint import pformat
 from typing import Any
 
@@ -32,7 +34,7 @@ from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.sampler import MultiLeRobotWeightedSampler
-from lerobot.datasets.utils import cycle
+from lerobot.datasets.utils import cycle, load_json, write_json
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies.factory import make_policy
 from lerobot.policies.pretrained import PreTrainedPolicy
@@ -54,6 +56,8 @@ from lerobot.utils.utils import (
     gather_object, 
 )
 
+FASTWAM_TRAINER_STATE_FILE = "fastwam_trainer_state.json"
+
 
 def update_policy(
     train_metrics: MetricsTracker,
@@ -64,6 +68,9 @@ def update_policy(
     accelerator: Accelerator,
     lr_scheduler=None,
     lock=None,
+    *,
+    use_zero_grad_set_to_none: bool = False,
+    skip_scheduler_when_optimizer_step_skipped: bool = False,
 ) -> tuple[MetricsTracker, dict, bool, float]:
     """
     Performs a single training step to update the policy's weights.
@@ -117,10 +124,16 @@ def update_policy(
         # still advance whenever .step() is called. Gate it on sync steps so
         # gradient accumulation keeps the scheduler aligned with real optimizer
         # updates.
-        if lr_scheduler is not None and accelerator.sync_gradients:
+        should_step_scheduler = lr_scheduler is not None and accelerator.sync_gradients
+        if should_step_scheduler and skip_scheduler_when_optimizer_step_skipped:
+            should_step_scheduler = not bool(getattr(accelerator, "optimizer_step_was_skipped", False))
+        if should_step_scheduler:
             lr_scheduler.step()
 
-        optimizer.zero_grad()
+        if use_zero_grad_set_to_none:
+            optimizer.zero_grad(set_to_none=True)
+        else:
+            optimizer.zero_grad()
 
         # Update internal buffers if policy has update method only when an
         # optimizer step actually happened.
@@ -130,7 +143,7 @@ def update_policy(
             accelerator.unwrap_model(policy, keep_fp32_wrapper=True).update()
 
     train_metrics.loss = loss.item()
-    for metric_name in ("loss_action", "loss_gen", "loss_3d", "time_3d_teacher_forward_s"):
+    for metric_name in ("loss_action", "loss_video", "loss_gen", "loss_3d", "time_3d_teacher_forward_s"):
         if metric_name in output_dict and metric_name in train_metrics.metrics:
             setattr(train_metrics, metric_name, output_dict[metric_name])
     if accelerator.sync_gradients and grad_norm is not None:
@@ -186,6 +199,9 @@ def _format_train_status_line(
     if "loss_action" in train_tracker.metrics:
         loss_action = loss_overrides.get("loss_action", _meter_avg_or_val(train_tracker.loss_action))
         loss_parts.append(f"action:{loss_action:.3f}")
+    if "loss_video" in train_tracker.metrics:
+        loss_video = loss_overrides.get("loss_video", _meter_avg_or_val(train_tracker.loss_video))
+        loss_parts.append(f"video:{loss_video:.3f}")
     if "loss_gen" in train_tracker.metrics:
         loss_gen = loss_overrides.get("loss_gen", _meter_avg_or_val(train_tracker.loss_gen))
         lambda_gen = float(getattr(cfg.policy, "lambda_gen", 1.0))
@@ -279,8 +295,14 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         if is_main_process:
             logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
 
+    fastwam_worker_init_fn = None
     if cfg.seed is not None:
-        set_seed(cfg.seed, accelerator=accelerator)
+        if cfg.policy is not None and cfg.policy.type == "fastwam":
+            from lerobot.policies.fastwam.core.utils.pytorch_utils import set_global_seed as set_fastwam_global_seed
+
+            fastwam_worker_init_fn = set_fastwam_global_seed(cfg.seed, get_worker_init_fn=True)
+        else:
+            set_seed(cfg.seed, accelerator=accelerator)
 
     # Use accelerator's device
     device = accelerator.device
@@ -315,11 +337,45 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     else:
         data_stats = None
 
+    if cfg.policy.type == "fastwam":
+        cfg.policy.action_norm_use_stepwise = bool(getattr(cfg.dataset, "processor_use_stepwise_action_norm", False))
+        cfg.policy.action_norm_default_mode = str(getattr(cfg.dataset, "processor_norm_default_mode", "min/max"))
+        fastwam_max_steps = getattr(cfg.policy, "train_max_steps", None)
+        fastwam_num_epochs = getattr(cfg.policy, "train_num_epochs", None)
+        if fastwam_max_steps is not None:
+            cfg.steps = max(int(fastwam_max_steps), 1)
+            if is_main_process:
+                logging.info("FastWAM training steps overridden by policy.train_max_steps=%d", cfg.steps)
+        elif fastwam_num_epochs is not None:
+            global_batch_size = max(cfg.batch_size * accelerator.num_processes, 1)
+            micro_steps_per_epoch = max(ceil(len(dataset) / global_batch_size), 1)
+            opt_steps_per_epoch = max(
+                ceil(micro_steps_per_epoch / cfg.gradient_accumulation_steps),
+                1,
+            )
+            cfg.steps = max(opt_steps_per_epoch * int(fastwam_num_epochs), 1)
+            if is_main_process:
+                logging.info(
+                    "FastWAM training steps derived from policy.train_num_epochs=%d: "
+                    "micro_steps_per_epoch=%d, opt_steps_per_epoch=%d, total_steps=%d",
+                    int(fastwam_num_epochs),
+                    micro_steps_per_epoch,
+                    opt_steps_per_epoch,
+                    cfg.steps,
+                )
+
     if is_main_process:
         logging.info("Creating policy")
     policy = make_policy(
         cfg=cfg.policy,
     )
+
+    if cfg.policy.type == "fastwam" and hasattr(policy, "set_action_postprocess_from_stats"):
+        fastwam_stats = getattr(dataset, "dataset_stats", None)
+        if fastwam_stats is None and isinstance(data_stats, dict):
+            fastwam_stats = data_stats.get("fastwam")
+        if fastwam_stats is not None:
+            policy.set_action_postprocess_from_stats(fastwam_stats)
 
     # Wait for all processes to finish policy creation before continuing
     accelerator.wait_for_everyone()
@@ -357,21 +413,39 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         logging.info(f"policy info:\n{policy}")
 
     # create dataloader for offline training
-    if not cfg.dataset.streaming and hasattr(dataset, "dataset_weights") and dataset.dataset_weights is not None:
+    fastwam_train_sampler = None
+    if cfg.policy.type == "fastwam":
+        from lerobot.policies.fastwam.core.utils.samplers import ResumableEpochSampler
+
+        shuffle = False
+        sampler = ResumableEpochSampler(
+            dataset=dataset,
+            seed=0 if cfg.seed is None else cfg.seed,
+            batch_size=cfg.batch_size,
+            num_processes=accelerator.num_processes,
+        )
+        num_workers = cfg.num_workers
+        prefetch_factor = 2 if cfg.num_workers > 0 else None
+        worker_init_fn = fastwam_worker_init_fn
+        fastwam_train_sampler = sampler
+    elif not cfg.dataset.streaming and hasattr(dataset, "dataset_weights") and dataset.dataset_weights is not None:
         shuffle = False
         sampler = MultiLeRobotWeightedSampler(dataset=dataset)
         num_workers = cfg.num_workers
         prefetch_factor = 2 if cfg.num_workers > 0 else None
+        worker_init_fn = None
     elif cfg.dataset.streaming:
         shuffle = False
         sampler = None
         num_workers = 1
         prefetch_factor = 4
+        worker_init_fn = None
     else:
         shuffle = True
         sampler = None
         num_workers = cfg.num_workers
         prefetch_factor = 2 if cfg.num_workers > 0 else None
+        worker_init_fn = None
 
     dataloader = torch.utils.data.DataLoader(
         dataset,
@@ -382,6 +456,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         pin_memory=device.type == "cuda",
         drop_last=False,
         prefetch_factor=prefetch_factor,
+        worker_init_fn=worker_init_fn,
     )
 
     # Prepare everything with accelerator
@@ -394,11 +469,42 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         policy, optimizer, dataloader, lr_scheduler = accelerator.prepare(
             policy, optimizer, dataloader, lr_scheduler
         )
-    dl_iter = cycle(dataloader)
+    fastwam_epoch = 0
+    fastwam_batch_in_epoch = 0
+    if cfg.resume and cfg.policy.type == "fastwam" and cfg.checkpoint_path is not None:
+        fastwam_state_path = Path(cfg.checkpoint_path) / "training_state" / FASTWAM_TRAINER_STATE_FILE
+        if fastwam_state_path.is_file():
+            fastwam_resume_state = load_json(fastwam_state_path)
+            fastwam_epoch = int(fastwam_resume_state.get("epoch", 0))
+            fastwam_batch_in_epoch = int(fastwam_resume_state.get("batch_in_epoch", 0))
+            if fastwam_train_sampler is not None:
+                fastwam_train_sampler.set_epoch_offset(fastwam_epoch)
+                fastwam_train_sampler.set_resume_batch_offset(fastwam_batch_in_epoch)
+            if is_main_process:
+                logging.info(
+                    "Restored FastWAM dataloader progress: epoch=%d batch_in_epoch=%d sample_offset=%d",
+                    fastwam_epoch,
+                    fastwam_batch_in_epoch,
+                    fastwam_batch_in_epoch * cfg.batch_size * accelerator.num_processes,
+                )
+    if cfg.policy.type == "fastwam":
+        dl_iter = iter(dataloader)
+    else:
+        dl_iter = cycle(dataloader)
 
     policy.train()
 
-    if cfg.policy.type in ["a1", "qwena1", "cubev2"]:
+    if cfg.policy.type == "fastwam":
+        train_metrics = {
+            "loss": AverageMeter("loss", ":.3f"),
+            "loss_action": AverageMeter("loss_action", ":.3f"),
+            "loss_video": AverageMeter("loss_video", ":.3f"),
+            "grad_norm": AverageMeter("grdn", ":.3f"),
+            "lr": AverageMeter("lr", ":0.1e"),
+            "update_s": AverageMeter("updt_s", ":.3f"),
+            "dataloading_s": AverageMeter("data_s", ":.3f"),
+        }
+    elif cfg.policy.type in ["a1", "qwena1", "cubev2"]:
         train_metrics = {
             "loss": AverageMeter("loss", ":.3f"),
             "loss_action": AverageMeter("loss_action", ":.3f"),
@@ -441,7 +547,20 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     accumulated_dataloading_time = 0.0
     while step < cfg.steps:
         start_time = time.perf_counter()
-        batch = next(dl_iter)
+        if cfg.policy.type == "fastwam":
+            try:
+                batch = next(dl_iter)
+                fastwam_batch_in_epoch += 1
+            except StopIteration:
+                fastwam_epoch += 1
+                fastwam_batch_in_epoch = 0
+                if fastwam_train_sampler is not None:
+                    fastwam_train_sampler.clear_resume_batch_offset()
+                dl_iter = iter(dataloader)
+                batch = next(dl_iter)
+                fastwam_batch_in_epoch += 1
+        else:
+            batch = next(dl_iter)
         if cfg.dataset.dist_loading:
             batch = send_to_device(batch, accelerator.device, non_blocking=True)
         accumulated_dataloading_time += time.perf_counter() - start_time
@@ -454,6 +573,8 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             cfg.optimizer.grad_clip_norm,
             accelerator=accelerator,
             lr_scheduler=lr_scheduler,
+            use_zero_grad_set_to_none=(cfg.policy.type == "fastwam"),
+            skip_scheduler_when_optimizer_step_skipped=(cfg.policy.type == "fastwam"),
         )
         accumulated_update_time += update_time_s
 
@@ -479,6 +600,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                 for name, value in {
                     "loss": _meter_avg_or_val(train_tracker.loss) if "loss" in train_tracker.metrics else None,
                     "loss_action": _meter_avg_or_val(train_tracker.loss_action) if "loss_action" in train_tracker.metrics else None,
+                    "loss_video": _meter_avg_or_val(train_tracker.loss_video) if "loss_video" in train_tracker.metrics else None,
                     "loss_gen": _meter_avg_or_val(train_tracker.loss_gen) if "loss_gen" in train_tracker.metrics else None,
                     "loss_3d": _meter_avg_or_val(train_tracker.loss_3d) if "loss_3d" in train_tracker.metrics else None,
                 }.items()
@@ -544,6 +666,14 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                     scheduler=lr_scheduler,
                     data_stats=data_stats, 
                 )
+                if cfg.policy.type == "fastwam":
+                    write_json(
+                        {
+                            "epoch": fastwam_epoch,
+                            "batch_in_epoch": fastwam_batch_in_epoch,
+                        },
+                        checkpoint_dir / "training_state" / FASTWAM_TRAINER_STATE_FILE,
+                    )
                 update_last_checkpoint(checkpoint_dir)
                 if wandb_logger:
                     wandb_logger.log_policy(checkpoint_dir)

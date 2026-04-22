@@ -21,7 +21,7 @@ from pathlib import Path
 
 import draccus
 from torch.optim import Optimizer
-from torch.optim.lr_scheduler import LambdaLR, LRScheduler
+from torch.optim.lr_scheduler import ConstantLR, CosineAnnealingLR, LambdaLR, LRScheduler, LinearLR, SequentialLR
 
 from lerobot.datasets.utils import write_json
 from lerobot.utils.constants import SCHEDULER_STATE
@@ -130,6 +130,63 @@ class CosineDecayWithWarmupSchedulerConfig(LRSchedulerConfig):
             return cosine_decay_schedule(current_step)
 
         return LambdaLR(optimizer, lr_lambda, -1)
+
+
+@LRSchedulerConfig.register_subclass("fastwam_native")
+@dataclass
+class FastWAMNativeSchedulerConfig(LRSchedulerConfig):
+    """Replicates the native FastWAM trainer scheduler behavior.
+
+    Native FastWAM uses:
+    - optional linear warmup from `1 / warmup_steps`
+    - cosine annealing with `eta_min = peak_lr * min_lr_ratio`
+    - warmup defaults to 5% of total optimizer steps when not specified
+    """
+
+    num_warmup_steps: int | None = None
+    peak_lr: float = 1e-4
+    min_lr_ratio: float = 0.01
+    scheduler_type: str = "cosine"
+    warmup_ratio: float = 0.05
+
+    def build(self, optimizer: Optimizer, num_training_steps: int) -> LRScheduler:
+        total_train_steps = max(int(num_training_steps), 1)
+        if self.num_warmup_steps is None:
+            warmup_steps = int(total_train_steps * float(self.warmup_ratio))
+        else:
+            warmup_steps = int(self.num_warmup_steps)
+        warmup_steps = min(max(warmup_steps, 0), total_train_steps - 1)
+
+        remaining_steps = max(total_train_steps - warmup_steps, 1)
+        scheduler_type = str(self.scheduler_type).strip().lower()
+        if scheduler_type == "cosine":
+            main_scheduler = CosineAnnealingLR(
+                optimizer,
+                T_max=remaining_steps,
+                eta_min=float(self.peak_lr) * float(self.min_lr_ratio),
+            )
+        elif scheduler_type == "constant":
+            main_scheduler = ConstantLR(optimizer, factor=1.0, total_iters=remaining_steps)
+        else:
+            raise ValueError(
+                f"Unsupported FastWAM scheduler_type: {self.scheduler_type}. "
+                "Expected one of: ['cosine', 'constant']."
+            )
+
+        if warmup_steps <= 0:
+            return main_scheduler
+
+        warmup_scheduler = LinearLR(
+            optimizer,
+            start_factor=1.0 / warmup_steps,
+            end_factor=1.0,
+            total_iters=warmup_steps,
+        )
+        return SequentialLR(
+            optimizer,
+            schedulers=[warmup_scheduler, main_scheduler],
+            milestones=[warmup_steps],
+        )
 
 
 def save_scheduler_state(scheduler: LRScheduler, save_dir: Path) -> None:

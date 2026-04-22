@@ -39,6 +39,7 @@ from lerobot.datasets.transformed_dataset import (
     MultiLeRobotDataset, 
     MultiStreamingLeRobotDataset, 
 )
+from lerobot.policies.fastwam.configuration_fastwam import FastWAMDatasetConfig
 from lerobot.transforms.constants import get_feature_mapping, get_image_mapping
 from lerobot.utils.constants import ACTION, OBS_PREFIX, REWARD, OBS_STATE
 from lerobot.utils.constants import HF_LEROBOT_HOME
@@ -551,6 +552,26 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
     Returns:
         LeRobotDataset | MultiLeRobotDataset
     """
+    if isinstance(cfg.dataset, FastWAMDatasetConfig):
+        from lerobot.policies.fastwam.dataset_fastwam import build_fastwam_dataset
+
+        if cfg.dataset.dist_loading:
+            raise ValueError(
+                "FastWAM training in this framework does not support `dataset.dist_loading=true`. "
+                "Leave it disabled so Accelerate can shard the dataloader correctly."
+            )
+        if cfg.dataset.text_embedding_cache_dir is None and not getattr(cfg.policy, "load_text_encoder", False):
+            raise ValueError(
+                "FastWAM training needs either `dataset.text_embedding_cache_dir` for cached text embeddings "
+                "or `policy.load_text_encoder=true` for on-the-fly prompt encoding."
+            )
+        stats_cache_path = cfg.dataset.normalization_stats_path
+        if stats_cache_path is None and cfg.output_dir is not None:
+            stats_cache_path = str(Path(cfg.output_dir) / "fastwam_dataset_stats.json")
+        dataset = build_fastwam_dataset(cfg.dataset, stats_cache_path=stats_cache_path)
+        data_stats = {"fastwam": dataset.dataset_stats} if dataset.dataset_stats is not None else {}
+        return dataset, data_stats
+
     image_transforms = (
         ImageTransforms(cfg.dataset.image_transforms) if cfg.dataset.image_transforms.enable else None
     )
