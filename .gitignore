@@ -165,6 +165,8 @@ wandb/
 
 # Data folders
 data
+!src/lerobot/policies/fastwam/core/data/
+!src/lerobot/policies/fastwam/core/data/**
 outputs
 
 # Translations
