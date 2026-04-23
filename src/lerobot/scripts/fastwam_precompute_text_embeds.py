@@ -14,6 +14,7 @@ import torch
 import torch.distributed as dist
 from tqdm import tqdm
 
+from lerobot.datasets.utils import DEFAULT_TASKS_PATH, LEGACY_TASKS_PATH, load_tasks
 from lerobot.policies.fastwam.core.models.wan22.helpers.loader import _load_registered_model, _resolve_configs
 from lerobot.policies.fastwam.core.models.wan22.wan_video_text_encoder import HuggingfaceTokenizer
 from lerobot.policies.fastwam.text_cache import build_fastwam_prompt, build_text_embedding_cache_path
@@ -84,30 +85,63 @@ def _resolve_dataset_dirs(dataset_dirs: list[str], repo_id_file: str | None) -> 
     return deduped
 
 
+def _read_task_strings_from_parquet(dataset_dir: Path) -> list[str]:
+    tasks = load_tasks(dataset_dir)
+    if "task" in tasks.columns:
+        task_values = tasks["task"].tolist()
+    else:
+        task_values = tasks.index.tolist()
+
+    result = []
+    for task in task_values:
+        task = str(task).strip()
+        if task:
+            result.append(task)
+    return result
+
+
+def _read_task_strings_from_jsonl(tasks_path: Path) -> list[str]:
+    result = []
+    with tasks_path.open("r", encoding="utf-8") as handle:
+        for line_idx, line in enumerate(handle, start=1):
+            line = line.strip()
+            if not line:
+                continue
+            record = json.loads(line)
+            if "task" not in record:
+                raise KeyError(f"Missing `task` field at {tasks_path}:{line_idx}")
+            task = str(record["task"]).strip()
+            if task:
+                result.append(task)
+    return result
+
+
+def _read_task_strings(dataset_dir: Path) -> list[str]:
+    parquet_path = dataset_dir / DEFAULT_TASKS_PATH
+    legacy_path = dataset_dir / LEGACY_TASKS_PATH
+    if parquet_path.exists():
+        return _read_task_strings_from_parquet(dataset_dir)
+    if legacy_path.exists():
+        return _read_task_strings_from_jsonl(legacy_path)
+    raise FileNotFoundError(
+        "Missing tasks file. Expected either "
+        f"{parquet_path} (LeRobot v3.0) or {legacy_path} (legacy)."
+    )
+
+
 def _read_unique_prompts(dataset_dirs: list[str]) -> list[str]:
     prompts: list[str] = []
     seen = set()
     total_task_rows = 0
 
     for ds_dir in dataset_dirs:
-        tasks_path = Path(ds_dir) / "meta" / "tasks.jsonl"
-        if not tasks_path.exists():
-            raise FileNotFoundError(f"Missing tasks file: {tasks_path}")
-
-        with tasks_path.open("r", encoding="utf-8") as handle:
-            for line_idx, line in enumerate(handle, start=1):
-                line = line.strip()
-                if not line:
-                    continue
-                record = json.loads(line)
-                if "task" not in record:
-                    raise KeyError(f"Missing `task` field at {tasks_path}:{line_idx}")
-                task = str(record["task"])
-                prompt = build_fastwam_prompt(task)
-                total_task_rows += 1
-                if prompt not in seen:
-                    seen.add(prompt)
-                    prompts.append(prompt)
+        task_strings = _read_task_strings(Path(ds_dir))
+        for task in task_strings:
+            prompt = build_fastwam_prompt(task)
+            total_task_rows += 1
+            if prompt not in seen:
+                seen.add(prompt)
+                prompts.append(prompt)
 
     logging.info(
         "Loaded %d task rows from %d datasets, deduplicated to %d prompts.",
@@ -139,7 +173,7 @@ def main() -> None:
         "--dataset-dir",
         action="append",
         default=[],
-        help="Dataset directory containing `meta/tasks.jsonl`. Can be specified multiple times.",
+        help="Dataset directory containing `meta/tasks.parquet` or legacy `meta/tasks.jsonl`. Can be specified multiple times.",
     )
     parser.add_argument(
         "--repo-id-file",
