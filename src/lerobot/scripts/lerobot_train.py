@@ -59,6 +59,33 @@ from lerobot.utils.utils import (
 FASTWAM_TRAINER_STATE_FILE = "fastwam_trainer_state.json"
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _format_policy_summary(policy: torch.nn.Module) -> str:
+    params = list(policy.parameters())
+    total_params = sum(param.numel() for param in params)
+    trainable_params = sum(param.numel() for param in params if param.requires_grad)
+    trainable_pct = (100.0 * trainable_params / total_params) if total_params else 0.0
+
+    first_param = params[0] if params else None
+    device = str(first_param.device) if first_param is not None else "n/a"
+    dtype = str(first_param.dtype).removeprefix("torch.") if first_param is not None else "n/a"
+
+    return (
+        f"{policy.__class__.__name__}("
+        f"total_params={format_big_number(total_params)}, "
+        f"trainable_params={format_big_number(trainable_params)} "
+        f"({trainable_pct:.2f}%), "
+        f"device={device}, dtype={dtype}"
+        ")"
+    )
+
+
 def update_policy(
     train_metrics: MetricsTracker,
     policy: PreTrainedPolicy,
@@ -410,7 +437,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             "Effective batch size: "
             f"{cfg.batch_size} x {num_processes} x {cfg.gradient_accumulation_steps} = {effective_bs}"
         )
-        logging.info(f"policy info:\n{policy}")
+        logging.info("policy info: %s", _format_policy_summary(policy))
+        if _env_flag("PRINT_POLICY_STRUCTURE", default=False):
+            logging.info("policy structure:\n%s", policy)
 
     # create dataloader for offline training
     fastwam_train_sampler = None
