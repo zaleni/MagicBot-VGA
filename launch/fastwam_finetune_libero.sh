@@ -43,7 +43,11 @@ NATIVE_FASTWAM_CHECKPOINT_PATH="${NATIVE_FASTWAM_CHECKPOINT_PATH:-}"
 LOAD_TEXT_ENCODER="${LOAD_TEXT_ENCODER:-false}"
 
 LIBERO_ROOT="${LIBERO_ROOT:-/home/jiangjiahao/data/LIBERO/libero_v30}"
-TEXT_EMBED_CACHE_DIR="${TEXT_EMBED_CACHE_DIR:-${PROJ_ROOT}/outputs/fastwam/text_embeds/libero}"
+if [[ "${LOAD_TEXT_ENCODER}" == "true" ]]; then
+  TEXT_EMBED_CACHE_DIR="${TEXT_EMBED_CACHE_DIR:-}"
+else
+  TEXT_EMBED_CACHE_DIR="${TEXT_EMBED_CACHE_DIR:-${PROJ_ROOT}/outputs/fastwam/text_embeds/libero}"
+fi
 NORMALIZATION_STATS_PATH="${NORMALIZATION_STATS_PATH:-}"
 VALIDATE_DATASETS="${VALIDATE_DATASETS:-true}"
 VIDEO_BACKEND="${VIDEO_BACKEND:-}"
@@ -163,7 +167,7 @@ fi
 echo "Discovered ${#DATASET_REPO_IDS[@]} LIBERO datasets under ${LIBERO_ROOT}"
 printf '  %s\n' "${DATASET_REPO_IDS[@]}"
 
-BASE_OUTPUT_DIR="${BASE_OUTPUT_DIR:-/home/jiangjiahao/data/ckpt/${POLICY}}"
+BASE_OUTPUT_DIR="${BASE_OUTPUT_DIR:-checkpoints/ckpt/${POLICY}}"
 JOB_NAME="${POLICY}-${FASTWAM_VARIANT}-libero-$(date +'%Y_%m_%d_%H_%M_%S')"
 OUTPUT_DIR="${BASE_OUTPUT_DIR}/${JOB_NAME}"
 REPO_ID_FILE_DIR="${BASE_OUTPUT_DIR}/_repo_id_files"
