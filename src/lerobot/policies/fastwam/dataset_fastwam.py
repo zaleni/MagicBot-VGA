@@ -396,6 +396,8 @@ class FastWAMBaseLerobotDatasetV3(Dataset):
             image = image.unsqueeze(0)
         if image.ndim != 4:
             raise ValueError(f"Expected image tensor with 4 dims for key '{key}', got {tuple(image.shape)}")
+        if image.shape[-1] in [1, 3, 4] and image.shape[1] not in [1, 3, 4]:
+            image = image.permute(0, 3, 1, 2).contiguous()
         if image.dtype != torch.uint8:
             if image.is_floating_point():
                 image = (image.clamp(0.0, 1.0) * 255).to(torch.uint8)
@@ -598,7 +600,7 @@ class FastWAMRobotVideoDatasetV3(Dataset):
         dataset_dirs: list[str],
         shape_meta: dict[str, Any],
         num_frames: int = 33,
-        video_size: tuple[int, int] = (384, 640),
+        video_size: tuple[int, int] = (224, 448),
         camera_key: str | None = None,
         processor: BaseProcessor | None = None,
         text_embedding_cache_dir: str | None = None,
