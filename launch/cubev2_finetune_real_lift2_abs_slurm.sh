@@ -35,11 +35,12 @@ COSMOS_TOKENIZER_PATH_OR_NAME="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/
 DA3_MODEL_PATH_OR_NAME="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/model/DA3-LARGE-1.1"
 DATASET_DIR="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/data/zhenji/table_clean_100_filter"
 NORM_STATS_ROOT="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/data/zhenji/norm_stats"
-ENABLE_IMAGE_AUG=false
+ENABLE_IMAGE_AUG=true
 BATCH_SIZE=8
 GRADIENT_ACCUMULATION_STEPS=1
 STEPS=60000
 SAVE_FREQ=10000
+NUM_WORKERS=8
 
 # Optional cluster-specific environment bootstrap.
 if [[ -n "${ENV_SETUP_SCRIPT:-}" ]]; then
@@ -105,6 +106,7 @@ export BATCH_SIZE
 export GRADIENT_ACCUMULATION_STEPS
 export STEPS
 export SAVE_FREQ
+export NUM_WORKERS
 
 echo "SLURM_JOB_ID=${SLURM_JOB_ID}"
 echo "SLURM_JOB_NODELIST=${SLURM_JOB_NODELIST}"
@@ -124,6 +126,7 @@ echo "BATCH_SIZE=${BATCH_SIZE}"
 echo "GRADIENT_ACCUMULATION_STEPS=${GRADIENT_ACCUMULATION_STEPS}"
 echo "STEPS=${STEPS}"
 echo "SAVE_FREQ=${SAVE_FREQ}"
+echo "NUM_WORKERS=${NUM_WORKERS}"
 
 srun --jobid "${SLURM_JOB_ID}" \
   --ntasks="${SLURM_NNODES}" \

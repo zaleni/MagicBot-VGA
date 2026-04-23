@@ -74,6 +74,7 @@ GRAD_ACCUM_STEPS="${GRAD_ACCUM_STEPS:-2}"
 STEPS="${STEPS:-60000}"
 SAVE_FREQ="${SAVE_FREQ:-10000}"
 LOG_FREQ="${LOG_FREQ:-25}"
+NUM_WORKERS="${NUM_WORKERS:-12}"
 
 if [[ "${RESUME}" != "true" && "${RESUME}" != "false" ]]; then
   echo "RESUME must be true or false, got ${RESUME}"
@@ -234,11 +235,12 @@ if [[ "${RESUME}" == "true" ]]; then
     ARGS+=(
         --resume=true
         --config_path="${RESUME_CONFIG_PATH}"
+        --num_workers="${NUM_WORKERS}"
     )
 else
     ARGS+=(
         --output_dir="${OUTPUT_DIR}"
-        --num_workers=12
+        --num_workers="${NUM_WORKERS}"
         --job_name="${JOB_NAME}"
 
         --policy.type=${POLICY}
