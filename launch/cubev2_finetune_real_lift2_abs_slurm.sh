@@ -35,6 +35,7 @@ COSMOS_TOKENIZER_PATH_OR_NAME="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/
 DA3_MODEL_PATH_OR_NAME="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/model/DA3-LARGE-1.1"
 DATASET_DIR="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/data/zhenji/table_clean_100_filter"
 NORM_STATS_ROOT="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/data/zhenji/norm_stats"
+ACTION_TYPE="${ACTION_TYPE:-abs}"
 ENABLE_IMAGE_AUG=true
 BATCH_SIZE=8
 GRADIENT_ACCUMULATION_STEPS=1
@@ -66,6 +67,11 @@ fi
 
 if [[ ! -f "${LAUNCH_SCRIPT_PATH}" ]]; then
   echo "Launch script not found: ${LAUNCH_SCRIPT_PATH}"
+  exit 1
+fi
+
+if [[ "${ACTION_TYPE}" != "delta" && "${ACTION_TYPE}" != "abs" ]]; then
+  echo "ACTION_TYPE must be abs or delta, got ${ACTION_TYPE}"
   exit 1
 fi
 
@@ -101,6 +107,7 @@ export COSMOS_TOKENIZER_PATH_OR_NAME
 export DA3_MODEL_PATH_OR_NAME
 export DATASET_DIR
 export NORM_STATS_ROOT
+export ACTION_TYPE
 export ENABLE_IMAGE_AUG
 export BATCH_SIZE
 export GRADIENT_ACCUMULATION_STEPS
@@ -121,6 +128,7 @@ echo "COSMOS_TOKENIZER_PATH_OR_NAME=${COSMOS_TOKENIZER_PATH_OR_NAME}"
 echo "DA3_MODEL_PATH_OR_NAME=${DA3_MODEL_PATH_OR_NAME}"
 echo "DATASET_DIR=${DATASET_DIR}"
 echo "NORM_STATS_ROOT=${NORM_STATS_ROOT}"
+echo "ACTION_TYPE=${ACTION_TYPE}"
 echo "ENABLE_IMAGE_AUG=${ENABLE_IMAGE_AUG}"
 echo "BATCH_SIZE=${BATCH_SIZE}"
 echo "GRADIENT_ACCUMULATION_STEPS=${GRADIENT_ACCUMULATION_STEPS}"
