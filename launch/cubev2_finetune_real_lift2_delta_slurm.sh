@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=cubev2-real-lift2-abs
+#SBATCH --job-name=cubev2-real-lift2-delta
 #SBATCH --nodes=2
-#SBATCH -p hx
+#SBATCH -p h100x
 #SBATCH --ntasks-per-node=1
 #SBATCH --gres=gpu:8
 #SBATCH --cpus-per-task=56
@@ -35,7 +35,7 @@ COSMOS_TOKENIZER_PATH_OR_NAME="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/
 DA3_MODEL_PATH_OR_NAME="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/model/DA3-LARGE-1.1"
 DATASET_DIR="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/data/zhenji/table_clean_100_filter"
 NORM_STATS_ROOT="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/data/zhenji/norm_stats"
-ACTION_TYPE="${ACTION_TYPE:-abs}"
+ACTION_TYPE="${ACTION_TYPE:-delta}"
 JOB_NAME="real_lift2-table_clean-${ACTION_TYPE}-chunk50-imgaug-finetune-$(date +'%Y_%m_%d_%H_%M_%S')"
 ENABLE_IMAGE_AUG=true
 BATCH_SIZE=8

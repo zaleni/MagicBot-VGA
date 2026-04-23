@@ -86,7 +86,7 @@ if [[ -n "${RESUME_CHECKPOINT_DIR}" && -z "${RESUME_CONFIG_PATH}" ]]; then
 fi
 
 BASE_OUTPUT_DIR="outputs_real/${POLICY}"
-JOB_NAME=""
+JOB_NAME="${JOB_NAME:-}"
 OUTPUT_DIR=""
 
 if [[ "${RESUME}" == "true" ]]; then
@@ -165,7 +165,9 @@ else
   python -c 'from lerobot.transforms.constants import MASK_MAPPING, FEATURE_MAPPING, IMAGE_MAPPING; import sys; rt=sys.argv[1]; missing=[name for name,m in [("MASK_MAPPING", MASK_MAPPING), ("FEATURE_MAPPING", FEATURE_MAPPING), ("IMAGE_MAPPING", IMAGE_MAPPING)] if rt not in m]; raise SystemExit(0 if not missing else "robot_type=" + rt + " missing in " + ", ".join(missing))' \
     "${robot_type}"
 
-  JOB_NAME="${POLICY}-real_lift2-${ACTION_TYPE}-chunk${CHUNK_SIZE}-finetune-$(date +'%Y_%m_%d_%H_%M_%S')"
+  if [[ -z "${JOB_NAME}" ]]; then
+    JOB_NAME="${POLICY}-real_lift2-${ACTION_TYPE}-chunk${CHUNK_SIZE}-finetune-$(date +'%Y_%m_%d_%H_%M_%S')"
+  fi
   OUTPUT_DIR="${BASE_OUTPUT_DIR}/${JOB_NAME}"
 
   echo "RESUME=false"
@@ -181,6 +183,7 @@ else
   echo "USE_EXTERNAL_STATS=${USE_EXTERNAL_STATS}"
   echo "DATASET_EXTERNAL_STATS_PATH=${DATASET_EXTERNAL_STATS_PATH}"
   echo "ENABLE_IMAGE_AUG=${ENABLE_IMAGE_AUG}"
+  echo "JOB_NAME=${JOB_NAME}"
   echo "OUTPUT_DIR=${OUTPUT_DIR}"
 fi
 
