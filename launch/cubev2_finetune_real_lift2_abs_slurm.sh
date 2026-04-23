@@ -5,6 +5,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --gres=gpu:8
 #SBATCH --cpus-per-task=56
+#SBATCH --mem-per-gpu=250G
 #SBATCH --output=slurm-%x-%j.out
 #SBATCH --error=slurm-%x-%j.err
 
@@ -39,10 +40,6 @@ BATCH_SIZE=8
 GRADIENT_ACCUMULATION_STEPS=1
 STEPS=60000
 SAVE_FREQ=10000
-RESUME="${RESUME:-false}"
-RESUME_RUN_DIR="${RESUME_RUN_DIR:-}"
-RESUME_CONFIG_PATH="${RESUME_CONFIG_PATH:-}"
-RESUME_CHECKPOINT_DIR="${RESUME_CHECKPOINT_DIR:-}"
 
 # Optional cluster-specific environment bootstrap.
 if [[ -n "${ENV_SETUP_SCRIPT:-}" ]]; then
@@ -108,10 +105,6 @@ export BATCH_SIZE
 export GRADIENT_ACCUMULATION_STEPS
 export STEPS
 export SAVE_FREQ
-export RESUME
-export RESUME_RUN_DIR
-export RESUME_CONFIG_PATH
-export RESUME_CHECKPOINT_DIR
 
 echo "SLURM_JOB_ID=${SLURM_JOB_ID}"
 echo "SLURM_JOB_NODELIST=${SLURM_JOB_NODELIST}"
@@ -131,16 +124,6 @@ echo "BATCH_SIZE=${BATCH_SIZE}"
 echo "GRADIENT_ACCUMULATION_STEPS=${GRADIENT_ACCUMULATION_STEPS}"
 echo "STEPS=${STEPS}"
 echo "SAVE_FREQ=${SAVE_FREQ}"
-echo "RESUME=${RESUME}"
-if [[ -n "${RESUME_RUN_DIR}" ]]; then
-  echo "RESUME_RUN_DIR=${RESUME_RUN_DIR}"
-fi
-if [[ -n "${RESUME_CHECKPOINT_DIR}" ]]; then
-  echo "RESUME_CHECKPOINT_DIR=${RESUME_CHECKPOINT_DIR}"
-fi
-if [[ -n "${RESUME_CONFIG_PATH}" ]]; then
-  echo "RESUME_CONFIG_PATH=${RESUME_CONFIG_PATH}"
-fi
 
 srun --jobid "${SLURM_JOB_ID}" \
   --ntasks="${SLURM_NNODES}" \

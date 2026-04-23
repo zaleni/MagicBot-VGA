@@ -174,7 +174,7 @@ class FastWAMConfig(PreTrainedConfig):
     proprio_dim: int = 8
     action_horizon: int = 32
     n_action_steps: int = 1
-    num_inference_steps: int = 20
+    num_inference_steps: int = 10
 
     video_dit_config: dict[str, Any] | None = None
     action_dit_config: dict[str, Any] | None = None

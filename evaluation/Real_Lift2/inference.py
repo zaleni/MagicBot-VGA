@@ -766,6 +766,9 @@ def inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_comm
                         robot_action(action, shm_dict)
                         timestep += 1
                         exec_rate.sleep()
+
+                    if episode_restart_requested:
+                        break
             finally:
                 prefetcher.stop()
         elif args.inference_mode == "rtc":
@@ -1028,6 +1031,9 @@ def inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_comm
                     robot_action(action, shm_dict)
                     timestep += 1
                     exec_rate.sleep()
+
+                if episode_restart_requested:
+                    break
 
             client.close()
 
