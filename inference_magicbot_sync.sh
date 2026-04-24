@@ -6,7 +6,7 @@ cd ~/research/MagicBot-VGA
 
 conda activate magicbot
 
-CHECKPOINT_DIR=/home/jjhao/data/model/Lift2-Table_Clean-abs-0424 \
+CHECKPOINT_DIR=/home/jjhao/data/model/Lift2-Table_Clean-abs-0423-woAUG-6w \
 QWEN3_VL_PRETRAINED_PATH=/home/jjhao/data/model/Qwen3-VL-2B-Instruct \
 QWEN3_VL_PROCESSOR_PATH=/home/jjhao/data/model/Qwen3-VL-2B-Instruct \
 COSMOS_TOKENIZER_PATH_OR_NAME=/home/jjhao/data/model/Cosmos-Tokenizer-CI8x8 \
