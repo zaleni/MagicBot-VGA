@@ -437,9 +437,12 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             "Effective batch size: "
             f"{cfg.batch_size} x {num_processes} x {cfg.gradient_accumulation_steps} = {effective_bs}"
         )
-        logging.info("policy info: %s", _format_policy_summary(policy))
-        if _env_flag("PRINT_POLICY_STRUCTURE", default=False):
-            logging.info("policy structure:\n%s", policy)
+        if cfg.policy.type == "fastwam":
+            logging.info("policy info: %s", _format_policy_summary(policy))
+            if _env_flag("PRINT_POLICY_STRUCTURE", default=False):
+                logging.info("policy structure:\n%s", policy)
+        else:
+            logging.info(f"policy info:\n{policy}")
 
     # create dataloader for offline training
     fastwam_train_sampler = None

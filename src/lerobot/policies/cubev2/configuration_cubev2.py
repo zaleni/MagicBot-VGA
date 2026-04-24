@@ -70,6 +70,8 @@ class CubeV2DatasetConfig(DatasetConfig):
                     transform,
                     pretrained_model_name_or_path=self.qwen3_vl_processor_path,
                 )
+        # Persist transform overrides even when the delta transform set is unchanged.
+        self.data_transforms = replace(self.data_transforms, inputs=inputs)
         has_delta = any(isinstance(t, DeltaActionTransformFn) for t in inputs)
         if self.action_mode == "delta":
             if not has_delta:
