@@ -40,6 +40,10 @@ except ImportError:
 
 np.set_printoptions(linewidth=200, suppress=True)
 
+MANUAL_HOME_INACTIVE = 0
+MANUAL_HOME_ACTIVE = 1
+MANUAL_HOME_RESUME_GUARD = 2
+
 
 def extract_action_sequence(response, action_dim, keys=("actions", "action")):
     if not isinstance(response, dict):
@@ -235,8 +239,36 @@ class RTCActionQueue:
 
 
 def set_manual_home_command(manual_home_command, enabled: bool) -> None:
+    set_manual_home_state(manual_home_command, MANUAL_HOME_ACTIVE if enabled else MANUAL_HOME_INACTIVE)
+
+
+def set_manual_home_state(manual_home_command, state: int) -> None:
     with manual_home_command.get_lock():
-        manual_home_command.value = 1 if enabled else 0
+        manual_home_command.value = int(state)
+
+
+def get_manual_home_state(manual_home_command) -> int:
+    with manual_home_command.get_lock():
+        return int(manual_home_command.value)
+
+
+def wait_for_manual_home_resume_guard(args, ros_proc, manual_home_command) -> bool:
+    """Wait until the ROS process finishes publishing zero actions after resume."""
+    expected_guard_s = max(0, int(args.manual_home_resume_guard_steps)) / max(1, int(args.frame_rate))
+    timeout_s = max(2.0, expected_guard_s + 1.0)
+    start_time = time.monotonic()
+    timeout_warning_emitted = False
+    while ros_proc.is_alive():
+        if get_manual_home_state(manual_home_command) == MANUAL_HOME_INACTIVE:
+            return True
+        if not timeout_warning_emitted and time.monotonic() - start_time > timeout_s:
+            print(
+                "[Manual Home] Resume guard did not finish before timeout; "
+                "still waiting so fresh inference does not overwrite the zero-action flush."
+            )
+            timeout_warning_emitted = True
+        time.sleep(0.02)
+    return False
 
 
 def print_manual_home_help() -> None:
@@ -310,13 +342,14 @@ def maybe_enter_manual_home_pause(args, ros_proc, shm_dict, manual_home_command,
             last_resume_reminder_time = now
         resume_command = poll_manual_console_command(manual_home_active=True)
         if resume_command == "resume":
-            set_manual_home_command(manual_home_command, False)
             robot_action(np.zeros((action_dim,), dtype=np.float32), shm_dict)
+            set_manual_home_state(manual_home_command, MANUAL_HOME_RESUME_GUARD)
             print(
                 "[Manual Home] Second Enter detected.\n"
-                "[Manual Home] Leaving home-pause state, briefly flushing stale actions, and starting a fresh rollout now.\n"
+                "[Manual Home] Leaving home-pause state and briefly flushing stale actions before fresh inference.\n"
                 "[Manual Home] This second Enter will also be reused as the first-chunk confirmation.\n"
             )
+            wait_for_manual_home_resume_guard(args, ros_proc, manual_home_command)
             return True, True
         if resume_command not in (None, "home"):
             print(

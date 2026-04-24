@@ -52,6 +52,14 @@ _shutdown_in_progress = False
 _observation_warning_cache: set[str] = set()
 DEFAULT_MANUAL_HOME_DURATION_S = 1.0
 DEFAULT_MANUAL_HOME_RESUME_GUARD_STEPS = 12
+MANUAL_HOME_INACTIVE = 0
+MANUAL_HOME_ACTIVE = 1
+MANUAL_HOME_RESUME_GUARD = 2
+
+
+def set_manual_home_state(manual_home_command, state: int) -> None:
+    with manual_home_command.get_lock():
+        manual_home_command.value = int(state)
 
 
 def ensure_compat_args(args) -> None:
@@ -535,6 +543,7 @@ def ros_process(args, config, meta_queue, connected_event, start_event, shm_read
 
     rate = Rate(args.frame_rate)
     manual_home_active = False
+    manual_home_resume_guard_active = False
     manual_home_resume_guard_steps_remaining = 0
     while rclpy.ok():
         obs = get_observation_or_none(ros_operator)
@@ -542,7 +551,8 @@ def ros_process(args, config, meta_queue, connected_event, start_event, shm_read
             rate.sleep()
             continue
 
-        if manual_home_command.value == 1:
+        manual_home_state = manual_home_command.value
+        if manual_home_state == MANUAL_HOME_ACTIVE:
             if not manual_home_active:
                 current_qpos = np.asarray(obs.get("qpos", np.zeros((14,), dtype=np.float32)), dtype=np.float32)
                 publish_staged_home_arms(
@@ -556,6 +566,7 @@ def ros_process(args, config, meta_queue, connected_event, start_event, shm_read
                     log_prefix="[Manual Home]",
                 )
                 manual_home_active = True
+                manual_home_resume_guard_active = False
                 manual_home_resume_guard_steps_remaining = 0
             if args.use_base and args.fixed_body_height >= 0:
                 fixed_h = float(args.fixed_body_height)
@@ -564,14 +575,25 @@ def ros_process(args, config, meta_queue, connected_event, start_event, shm_read
                 ros_operator.set_robot_base_target(action_base)
             rate.sleep()
             continue
-        elif manual_home_active:
+        elif (
+            manual_home_state == MANUAL_HOME_RESUME_GUARD
+            and not manual_home_resume_guard_active
+        ) or (
+            manual_home_state == MANUAL_HOME_INACTIVE
+            and manual_home_active
+            and not manual_home_resume_guard_active
+        ):
             manual_home_active = False
             manual_home_resume_guard_steps_remaining = max(0, int(args.manual_home_resume_guard_steps))
+            manual_home_resume_guard_active = manual_home_resume_guard_steps_remaining > 0
             if manual_home_resume_guard_steps_remaining > 0:
                 print(
                     "[Manual Home] Resume requested. Holding zero actions for "
                     f"{manual_home_resume_guard_steps_remaining} control steps to flush stale commands."
                 )
+                set_manual_home_state(manual_home_command, MANUAL_HOME_RESUME_GUARD)
+            else:
+                set_manual_home_state(manual_home_command, MANUAL_HOME_INACTIVE)
 
         for cam in args.camera_names:
             shm, shape, dtype = shm_dict[cam]
@@ -592,13 +614,17 @@ def ros_process(args, config, meta_queue, connected_event, start_event, shm_read
             action_base[3] = fixed_h
             ros_operator.set_robot_base_target(action_base)
 
-        if manual_home_resume_guard_steps_remaining > 0:
+        if manual_home_resume_guard_active:
             zero_action = np.zeros(shape, dtype=dtype)
             robot_action(zero_action, shm_dict)
             left_action = np.zeros((7,), dtype=np.float32)
             right_action = np.zeros((7,), dtype=np.float32)
             ros_operator.follow_arm_publish(left_action, right_action)
             manual_home_resume_guard_steps_remaining -= 1
+            if manual_home_resume_guard_steps_remaining <= 0:
+                manual_home_resume_guard_active = False
+                set_manual_home_state(manual_home_command, MANUAL_HOME_INACTIVE)
+                print("[Manual Home] Resume guard finished. Fresh inference can start now.")
             rate.sleep()
             continue
 
