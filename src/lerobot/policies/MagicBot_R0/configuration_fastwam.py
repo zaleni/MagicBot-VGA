@@ -193,7 +193,10 @@ class MagicBotR0Config(PreTrainedConfig):
     redirect_common_files: bool = True
     mot_checkpoint_mixed_attn: bool = True
     skip_dit_load_from_pretrain: bool = False
-    action_dit_pretrained_path: str = "checkpoints/ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt"
+    action_dit_pretrained_path: str = "checkpoints/magicbot_r0/ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt"
+    future_3d_pretrained_path: str | None = (
+        "checkpoints/magicbot_r0/Future3DExpert_linear_interp_Wan22_alphascale_768hdim.pt"
+    )
     native_checkpoint_path: str | None = None
     dtype: str = "bfloat16"
     device: str | None = None

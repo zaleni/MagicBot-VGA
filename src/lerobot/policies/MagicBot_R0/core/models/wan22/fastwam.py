@@ -146,6 +146,7 @@ class FastWAM(torch.nn.Module):
         action_dit_config: dict[str, Any] | None = None,
         future_3d_config: dict[str, Any] | None = None,
         action_dit_pretrained_path: str | None = None,
+        future_3d_pretrained_path: str | None = None,
         skip_dit_load_from_pretrain: bool = False,
         mot_checkpoint_mixed_attn: bool = True,
         video_train_shift: float = 5.0,
@@ -200,7 +201,13 @@ class FastWAM(torch.nn.Module):
         mixtures = {"video": video_expert}
         if future_3d_config is None:
             raise ValueError("`future_3d_config` is required for MagicBot_R0.")
-        future_3d_expert = Future3DExpert(**future_3d_config).to(device=device, dtype=torch_dtype)
+        future_3d_expert = Future3DExpert.from_pretrained(
+            future_3d_config=future_3d_config,
+            future_3d_pretrained_path=future_3d_pretrained_path,
+            skip_dit_load_from_pretrain=skip_dit_load_from_pretrain,
+            device=device,
+            torch_dtype=torch_dtype,
+        )
         if int(future_3d_expert.num_heads) != int(video_expert.num_heads):
             raise ValueError("Future3DExpert `num_heads` must match video expert for MoT mixed attention.")
         if int(future_3d_expert.attn_head_dim) != int(video_expert.attn_head_dim):

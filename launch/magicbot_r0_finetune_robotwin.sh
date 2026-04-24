@@ -5,7 +5,7 @@ set -euo pipefail
 ################################# ENV config ##################################
 
 export MASTER_ADDR=${MASTER_ADDR:-"127.0.0.1"}
-export MASTER_PORT=${MASTER_PORT:-6389}
+export MASTER_PORT=${MASTER_PORT:-6390}
 echo "MASTER_ADDR=${MASTER_ADDR}, MASTER_PORT=${MASTER_PORT}"
 
 PROC_PER_NODE="${PROC_PER_NODE:-8}"
@@ -17,7 +17,9 @@ export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 
-export WANDB_MODE=${WANDB_MODE:-online}
+export WANDB_MODE=${WANDB_MODE:-offline}
+export HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-1}
+export TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-1}
 export TOKENIZERS_PARALLELISM=false
 
 ###############################################################################
@@ -52,53 +54,90 @@ FUTURE_3D_PRETRAINED_PATH="${FUTURE_3D_PRETRAINED_PATH:-${MAGICBOT_R0_ASSET_ROOT
 NATIVE_FASTWAM_CHECKPOINT_PATH="${NATIVE_FASTWAM_CHECKPOINT_PATH:-}"
 LOAD_TEXT_ENCODER="${LOAD_TEXT_ENCODER:-false}"
 
-LIBERO_ROOT="${LIBERO_ROOT:-/home/jiangjiahao/data/LIBERO/libero_v30}"
+ROBOTWIN_ROOT="${ROBOTWIN_ROOT:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/RoboTwin-LeRobot-v30}"
+ROBOTWIN_REQUIRE_THREE_CAMERAS="${ROBOTWIN_REQUIRE_THREE_CAMERAS:-true}"
 if [[ "${LOAD_TEXT_ENCODER}" == "true" ]]; then
   TEXT_EMBED_CACHE_DIR="${TEXT_EMBED_CACHE_DIR:-}"
 else
-  TEXT_EMBED_CACHE_DIR="${TEXT_EMBED_CACHE_DIR:-${PROJ_ROOT}/outputs/magicbot_r0/text_embeds/libero}"
+  TEXT_EMBED_CACHE_DIR="${TEXT_EMBED_CACHE_DIR:-${PROJ_ROOT}/outputs/magicbot_r0/text_embeds/robotwin}"
 fi
 NORMALIZATION_STATS_PATH="${NORMALIZATION_STATS_PATH:-}"
+DATASET_EXTERNAL_STATS_PATH="${DATASET_EXTERNAL_STATS_PATH:-}"
+DATASET_EXTERNAL_STATS_ROOT="${DATASET_EXTERNAL_STATS_ROOT:-}"
+DATASET_EXTERNAL_STATS_ROBOT_TYPE="${DATASET_EXTERNAL_STATS_ROBOT_TYPE:-aloha}"
 VALIDATE_DATASETS="${VALIDATE_DATASETS:-true}"
 VIDEO_BACKEND="${VIDEO_BACKEND:-}"
 USE_DIST_LOADING="${USE_DIST_LOADING:-false}"
 
-NUM_FRAMES="${NUM_FRAMES:-33}"
+ACTION_TYPE="${ACTION_TYPE:-abs}"
+ACTION_DIM="${ACTION_DIM:-14}"
+PROPRIO_DIM="${PROPRIO_DIM:-14}"
 ACTION_HORIZON="${ACTION_HORIZON:-32}"
 N_ACTION_STEPS="${N_ACTION_STEPS:-8}"
 NUM_INFERENCE_STEPS="${NUM_INFERENCE_STEPS:-10}"
+NUM_FRAMES="${NUM_FRAMES:-33}"
 ACTION_VIDEO_FREQ_RATIO="${ACTION_VIDEO_FREQ_RATIO:-4}"
-VIDEO_HEIGHT="${VIDEO_HEIGHT:-224}"
-VIDEO_WIDTH="${VIDEO_WIDTH:-448}"
-CONCAT_MULTI_CAMERA="${CONCAT_MULTI_CAMERA:-horizontal}"
+VIDEO_HEIGHT="${VIDEO_HEIGHT:-384}"
+VIDEO_WIDTH="${VIDEO_WIDTH:-320}"
+CONCAT_MULTI_CAMERA="${CONCAT_MULTI_CAMERA:-robotwin}"
+NORM_DEFAULT_MODE="${NORM_DEFAULT_MODE:-z-score}"
 
-BATCH_SIZE="${BATCH_SIZE:-16}"
+BATCH_SIZE="${BATCH_SIZE:-8}"
 GRAD_ACCUM_STEPS="${GRAD_ACCUM_STEPS:-1}"
-STEPS="${STEPS:-1}"
+STEPS="${STEPS:-200000}"
 NUM_EPOCHS="${NUM_EPOCHS:-10}"
 TRAIN_MAX_STEPS="${TRAIN_MAX_STEPS:-}"
-SAVE_FREQ="${SAVE_FREQ:-2000}"
-LOG_FREQ="${LOG_FREQ:-10}"
-NUM_WORKERS="${NUM_WORKERS:-8}"
+SAVE_FREQ="${SAVE_FREQ:-20000}"
+LOG_FREQ="${LOG_FREQ:-25}"
+NUM_WORKERS="${NUM_WORKERS:-12}"
 
-LR="${LR:-1.0e-4}"
+LR="${LR:-5.0e-5}"
 WEIGHT_DECAY="${WEIGHT_DECAY:-1.0e-2}"
-WARMUP_STEPS="${WARMUP_STEPS:-}"
-DECAY_LR="${DECAY_LR:-}"
+WARMUP_STEPS="${WARMUP_STEPS:-2000}"
+DECAY_LR="${DECAY_LR:-5.0e-6}"
 LAMBDA_VIDEO="${LAMBDA_VIDEO:-1.0}"
 LAMBDA_ACTION="${LAMBDA_ACTION:-1.0}"
-LAMBDA_3D="${LAMBDA_3D:-0.05}"
-DA3_NUM_VIEWS="${DA3_NUM_VIEWS:-2}"
+LAMBDA_3D="${LAMBDA_3D:-0.01}"
+DA3_NUM_VIEWS="${DA3_NUM_VIEWS:-3}"
 PROCESSOR_NUM_OUTPUT_CAMERAS="${PROCESSOR_NUM_OUTPUT_CAMERAS:-${DA3_NUM_VIEWS}}"
 FUTURE_3D_TOKENS_PER_VIEW="${FUTURE_3D_TOKENS_PER_VIEW:-144}"
 FUTURE_3D_VIEW_ATTENTION_LAYOUT="${FUTURE_3D_VIEW_ATTENTION_LAYOUT:-${CONCAT_MULTI_CAMERA}}"
-DA3_MODEL_PATH_OR_NAME="${DA3_MODEL_PATH_OR_NAME:-/home/jiangjiahao/data/model/DA3-LARGE-1.1}"
+DA3_MODEL_PATH_OR_NAME="${DA3_MODEL_PATH_OR_NAME:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/model/DA3-LARGE-1-1}"
 DA3_VARIANT="${DA3_VARIANT:-large}"
 DA3_CODE_ROOT="${DA3_CODE_ROOT:-}"
 DA3_TEACHER_PROCESS_RES="${DA3_TEACHER_PROCESS_RES:-504}"
+LOG_DA3_TEACHER_TIMING="${LOG_DA3_TEACHER_TIMING:-true}"
 FUTURE_3D_TARGET_INDEX="${FUTURE_3D_TARGET_INDEX:--1}"
 DTYPE="${DTYPE:-bfloat16}"
 FASTWAM_CHECKPOINT_MIXED_ATTN="${FASTWAM_CHECKPOINT_MIXED_ATTN:-false}"
+
+IMAGE_KEYS="${IMAGE_KEYS:-[\"head\",\"left\",\"right\"]}"
+IMAGE_RAW_SHAPES="${IMAGE_RAW_SHAPES:-[[3,480,640],[3,480,640],[3,480,640]]}"
+IMAGE_SHAPES="${IMAGE_SHAPES:-[[3,240,320],[3,240,320],[3,240,320]]}"
+ACTION_KEYS="${ACTION_KEYS:-[\"default\"]}"
+ACTION_RAW_SHAPES="${ACTION_RAW_SHAPES:-[${ACTION_DIM}]}"
+ACTION_SHAPES="${ACTION_SHAPES:-[${ACTION_DIM}]}"
+STATE_KEYS="${STATE_KEYS:-[\"default\"]}"
+STATE_RAW_SHAPES="${STATE_RAW_SHAPES:-[${PROPRIO_DIM}]}"
+STATE_SHAPES="${STATE_SHAPES:-[${PROPRIO_DIM}]}"
+PROCESSOR_DELTA_ACTION_DIM_MASK="${PROCESSOR_DELTA_ACTION_DIM_MASK:-{\"default\":[true,true,true,true,true,true,false,true,true,true,true,true,true,false]}}"
+
+case "${ACTION_TYPE}" in
+  abs|delta)
+    ;;
+  *)
+    echo "Unsupported ACTION_TYPE=${ACTION_TYPE}. Expected abs or delta."
+    exit 1
+    ;;
+esac
+
+if [[ -z "${NORMALIZATION_STATS_PATH}" ]]; then
+  if [[ -n "${DATASET_EXTERNAL_STATS_PATH}" ]]; then
+    NORMALIZATION_STATS_PATH="${DATASET_EXTERNAL_STATS_PATH}"
+  elif [[ -n "${DATASET_EXTERNAL_STATS_ROOT}" ]]; then
+    NORMALIZATION_STATS_PATH="${DATASET_EXTERNAL_STATS_ROOT}/${DATASET_EXTERNAL_STATS_ROBOT_TYPE}/${ACTION_TYPE}/stats.json"
+  fi
+fi
 
 case "${DTYPE}" in
   bfloat16)
@@ -125,38 +164,51 @@ discover_dataset_dirs() {
   find -L "${root}" -path "*/meta/info.json" 2>/dev/null \
     | while read -r info_path; do
         ds_dir="$(dirname "$(dirname "${info_path}")")"
-        ds_name="$(basename "${ds_dir}")"
-        case "${ds_name}" in
-          libero_*_lerobot_v30)
-            if [[ -d "${ds_dir}/data" || -d "${ds_dir}/videos" ]]; then
-              echo "${ds_dir}"
-            fi
-            ;;
-        esac
+        if [[ ! -d "${ds_dir}/data" && ! -d "${ds_dir}/videos" ]]; then
+          continue
+        fi
+        if [[ "${ROBOTWIN_REQUIRE_THREE_CAMERAS}" == "true" ]]; then
+          python -c 'import json, sys
+info = json.load(open(sys.argv[1], encoding="utf-8"))
+features = set(info.get("features", {}).keys())
+required = {
+    "observation.images.head",
+    "observation.images.left",
+    "observation.images.right",
+    "observation.state",
+    "action",
+}
+raise SystemExit(0 if required.issubset(features) else 1)
+' "${info_path}" || continue
+        fi
+        echo "${ds_dir}"
       done \
     | sort -u
 }
 
-mapfile -t DATASET_REPO_IDS < <(discover_dataset_dirs "${LIBERO_ROOT}")
+mapfile -t DATASET_REPO_IDS < <(discover_dataset_dirs "${ROBOTWIN_ROOT}")
 
 if [[ ${#DATASET_REPO_IDS[@]} -eq 0 ]]; then
-  echo "No LIBERO v3.0 datasets found under LIBERO_ROOT=${LIBERO_ROOT}"
-  echo "Expected directories like libero_goal_no_noops_1.0.0_lerobot_v30"
+  echo "No valid RoboTwin LeRobot datasets found under ROBOTWIN_ROOT=${ROBOTWIN_ROOT}"
+  if [[ "${ROBOTWIN_REQUIRE_THREE_CAMERAS}" == "true" ]]; then
+    echo "The default filter keeps only datasets with head/left/right cameras."
+    echo "Set ROBOTWIN_REQUIRE_THREE_CAMERAS=false if you intentionally want to include other layouts."
+  fi
   exit 1
 fi
 
 if [[ ! -f "${ACTION_DIT_PRETRAINED_PATH}" ]]; then
-  echo "Missing ActionDiT backbone: ${ACTION_DIT_PRETRAINED_PATH}"
-  echo "Generate MagicBot_R0 expert backbones with:"
-  echo "  python src/lerobot/scripts/magicbot_r0_preprocess_expert_backbones.py --expert both --action-output \"${ACTION_DIT_PRETRAINED_PATH}\" --future-3d-output \"${FUTURE_3D_PRETRAINED_PATH}\" --action-dim 7 --da3-num-views ${DA3_NUM_VIEWS} --future-3d-tokens-per-view ${FUTURE_3D_TOKENS_PER_VIEW} --device cuda --dtype bfloat16"
-  exit 1
+    echo "Missing ActionDiT backbone: ${ACTION_DIT_PRETRAINED_PATH}"
+    echo "Generate MagicBot_R0 expert backbones with:"
+    echo "  python src/lerobot/scripts/magicbot_r0_preprocess_expert_backbones.py --expert both --action-output \"${ACTION_DIT_PRETRAINED_PATH}\" --future-3d-output \"${FUTURE_3D_PRETRAINED_PATH}\" --action-dim ${ACTION_DIM} --da3-num-views ${DA3_NUM_VIEWS} --future-3d-tokens-per-view ${FUTURE_3D_TOKENS_PER_VIEW} --device cuda --dtype bfloat16"
+    exit 1
 fi
 
 if [[ ! -f "${FUTURE_3D_PRETRAINED_PATH}" ]]; then
-  echo "Missing Future3DExpert backbone: ${FUTURE_3D_PRETRAINED_PATH}"
-  echo "Generate MagicBot_R0 expert backbones with:"
-  echo "  python src/lerobot/scripts/magicbot_r0_preprocess_expert_backbones.py --expert both --action-output \"${ACTION_DIT_PRETRAINED_PATH}\" --future-3d-output \"${FUTURE_3D_PRETRAINED_PATH}\" --action-dim 7 --da3-num-views ${DA3_NUM_VIEWS} --future-3d-tokens-per-view ${FUTURE_3D_TOKENS_PER_VIEW} --device cuda --dtype bfloat16"
-  exit 1
+    echo "Missing Future3DExpert backbone: ${FUTURE_3D_PRETRAINED_PATH}"
+    echo "Generate MagicBot_R0 expert backbones with:"
+    echo "  python src/lerobot/scripts/magicbot_r0_preprocess_expert_backbones.py --expert both --action-output \"${ACTION_DIT_PRETRAINED_PATH}\" --future-3d-output \"${FUTURE_3D_PRETRAINED_PATH}\" --action-dim ${ACTION_DIM} --da3-num-views ${DA3_NUM_VIEWS} --future-3d-tokens-per-view ${FUTURE_3D_TOKENS_PER_VIEW} --device cuda --dtype bfloat16"
+    exit 1
 fi
 
 if [[ "${LOAD_TEXT_ENCODER}" != "true" && ! -d "${TEXT_EMBED_CACHE_DIR}" ]]; then
@@ -173,31 +225,35 @@ if [[ -n "${NORMALIZATION_STATS_PATH}" && ! -f "${NORMALIZATION_STATS_PATH}" ]];
 fi
 
 if [[ "${VALIDATE_DATASETS}" == "true" ]]; then
-  echo "Validating LIBERO dataset mappings..."
+  echo "Validating RoboTwin dataset mappings..."
   for ds_dir in "${DATASET_REPO_IDS[@]}"; do
     info_path="${ds_dir}/meta/info.json"
     python -c 'import json, sys
-from lerobot.transforms.constants import infer_embodiment_variant
 info = json.load(open(sys.argv[1], encoding="utf-8"))
-robot_type = info["robot_type"]
-resolved = infer_embodiment_variant(robot_type, info.get("features", {}))
-codebase_version = info.get("codebase_version", "unknown")
-print(f"{sys.argv[2]} -> codebase={codebase_version}, robot_type={robot_type}, resolved={resolved}")
-if codebase_version != "v3.0":
-    raise SystemExit(f"Dataset is not v3.0: {sys.argv[2]}")
-if resolved != "libero_franka":
-    raise SystemExit(f"Unexpected mapping resolution for {sys.argv[2]}: {resolved}")
+features = set(info.get("features", {}).keys())
+required = {
+    "observation.images.head",
+    "observation.images.left",
+    "observation.images.right",
+    "observation.state",
+    "action",
+}
+print("{} -> robot_type={}, features={}".format(sys.argv[2], info.get("robot_type"), len(features)))
+missing = sorted(required - features)
+if missing:
+    raise SystemExit(f"Missing required MagicBot_R0 RobotWin features for {sys.argv[2]}: {missing}")
 ' "${info_path}" "${ds_dir}"
   done
 else
   echo "Skipping per-dataset validation (VALIDATE_DATASETS=${VALIDATE_DATASETS})."
 fi
 
-echo "Discovered ${#DATASET_REPO_IDS[@]} LIBERO datasets under ${LIBERO_ROOT}"
+echo "Discovered ${#DATASET_REPO_IDS[@]} RoboTwin datasets under ${ROBOTWIN_ROOT}"
 printf '  %s\n' "${DATASET_REPO_IDS[@]}"
 
-BASE_OUTPUT_DIR="${BASE_OUTPUT_DIR:-checkpoints/ckpt/${POLICY}}"
-JOB_NAME="${POLICY}-${MAGICBOT_R0_VARIANT}-libero-$(date +'%Y_%m_%d_%H_%M_%S')"
+BASE_OUTPUT_DIR="${BASE_OUTPUT_DIR:-outputs/${POLICY}}"
+BOOTSTRAP_TAG="${BOOTSTRAP_TAG:-magicbot_r0_backbone}"
+JOB_NAME="${JOB_NAME:-${POLICY}-${MAGICBOT_R0_VARIANT}-robotwin-3d-${ACTION_TYPE}-${BOOTSTRAP_TAG}-finetune-$(date +'%Y_%m_%d_%H_%M_%S')}"
 OUTPUT_DIR="${BASE_OUTPUT_DIR}/${JOB_NAME}"
 REPO_ID_FILE_DIR="${BASE_OUTPUT_DIR}/_repo_id_files"
 mkdir -p "${REPO_ID_FILE_DIR}"
@@ -205,12 +261,14 @@ REPO_ID_FILE="${REPO_ID_FILE_DIR}/${JOB_NAME}.txt"
 printf '%s\n' "${DATASET_REPO_IDS[@]}" > "${REPO_ID_FILE}"
 
 echo "MAGICBOT_R0_VARIANT=${MAGICBOT_R0_VARIANT}"
+echo "ACTION_TYPE=${ACTION_TYPE}"
+echo "ACTION_DIM=${ACTION_DIM}, PROPRIO_DIM=${PROPRIO_DIM}"
+echo "NORM_DEFAULT_MODE=${NORM_DEFAULT_MODE}"
+echo "NORMALIZATION_STATS_PATH=${NORMALIZATION_STATS_PATH:-<auto-compute>}"
 echo "ACTION_DIT_PRETRAINED_PATH=${ACTION_DIT_PRETRAINED_PATH}"
 echo "FUTURE_3D_PRETRAINED_PATH=${FUTURE_3D_PRETRAINED_PATH}"
-echo "NUM_FRAMES=${NUM_FRAMES}"
-echo "ACTION_HORIZON=${ACTION_HORIZON}"
-echo "ACTION_VIDEO_FREQ_RATIO=${ACTION_VIDEO_FREQ_RATIO}"
-echo "CONCAT_MULTI_CAMERA=${CONCAT_MULTI_CAMERA}"
+echo "NUM_FRAMES=${NUM_FRAMES}, ACTION_HORIZON=${ACTION_HORIZON}, ACTION_VIDEO_FREQ_RATIO=${ACTION_VIDEO_FREQ_RATIO}"
+echo "VIDEO_SIZE=[${VIDEO_HEIGHT},${VIDEO_WIDTH}], CONCAT_MULTI_CAMERA=${CONCAT_MULTI_CAMERA}"
 echo "Future3D: LAMBDA_3D=${LAMBDA_3D}, DA3_NUM_VIEWS=${DA3_NUM_VIEWS}, TOKENS_PER_VIEW=${FUTURE_3D_TOKENS_PER_VIEW}, VIEW_LAYOUT=${FUTURE_3D_VIEW_ATTENTION_LAYOUT}"
 echo "OUTPUT_DIR=${OUTPUT_DIR}"
 
@@ -240,8 +298,8 @@ ARGS=(
     --policy.load_text_encoder="${LOAD_TEXT_ENCODER}"
     --policy.dtype="${DTYPE}"
     --policy.mot_checkpoint_mixed_attn="${FASTWAM_CHECKPOINT_MIXED_ATTN}"
-    --policy.action_dim=7
-    --policy.proprio_dim=8
+    --policy.action_dim="${ACTION_DIM}"
+    --policy.proprio_dim="${PROPRIO_DIM}"
     --policy.action_horizon="${ACTION_HORIZON}"
     --policy.n_action_steps="${N_ACTION_STEPS}"
     --policy.num_inference_steps="${NUM_INFERENCE_STEPS}"
@@ -254,6 +312,7 @@ ARGS=(
     --policy.da3_model_path_or_name="${DA3_MODEL_PATH_OR_NAME}"
     --policy.da3_variant="${DA3_VARIANT}"
     --policy.da3_teacher_process_res="${DA3_TEACHER_PROCESS_RES}"
+    --policy.log_da3_teacher_timing="${LOG_DA3_TEACHER_TIMING}"
     --policy.optimizer_lr="${LR}"
     --policy.optimizer_weight_decay="${WEIGHT_DECAY}"
     --policy.train_num_epochs="${NUM_EPOCHS}"
@@ -261,6 +320,16 @@ ARGS=(
     --dataset.type=${POLICY}
     --dataset.repo_id="multidata_from_file"
     --dataset.repo_id_file="${REPO_ID_FILE}"
+    --dataset.action_mode="${ACTION_TYPE}"
+    --dataset.image_keys="${IMAGE_KEYS}"
+    --dataset.image_raw_shapes="${IMAGE_RAW_SHAPES}"
+    --dataset.image_shapes="${IMAGE_SHAPES}"
+    --dataset.action_keys="${ACTION_KEYS}"
+    --dataset.action_raw_shapes="${ACTION_RAW_SHAPES}"
+    --dataset.action_shapes="${ACTION_SHAPES}"
+    --dataset.state_keys="${STATE_KEYS}"
+    --dataset.state_raw_shapes="${STATE_RAW_SHAPES}"
+    --dataset.state_shapes="${STATE_SHAPES}"
     --dataset.num_frames="${NUM_FRAMES}"
     --dataset.action_video_freq_ratio="${ACTION_VIDEO_FREQ_RATIO}"
     --dataset.video_size="[${VIDEO_HEIGHT},${VIDEO_WIDTH}]"
@@ -268,9 +337,11 @@ ARGS=(
     --dataset.val_set_proportion=0.0
     --dataset.skip_padding_as_possible=false
     --dataset.concat_multi_camera="${CONCAT_MULTI_CAMERA}"
+    --dataset.processor_norm_default_mode="${NORM_DEFAULT_MODE}"
     --dataset.processor_num_output_cameras="${PROCESSOR_NUM_OUTPUT_CAMERAS}"
-    --dataset.processor_action_output_dim=7
-    --dataset.processor_proprio_output_dim=8
+    --dataset.processor_action_output_dim="${ACTION_DIM}"
+    --dataset.processor_proprio_output_dim="${PROPRIO_DIM}"
+    --dataset.processor_delta_action_dim_mask="${PROCESSOR_DELTA_ACTION_DIM_MASK}"
     --dataset.future_3d_target_index="${FUTURE_3D_TARGET_INDEX}"
 
     --seed=42

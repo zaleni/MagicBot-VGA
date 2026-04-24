@@ -27,11 +27,59 @@ from .core.data.lerobot.utils.normalizer import (
     save_dataset_stats_to_json,
 )
 from .core.utils.logging_config import get_logger
+from .stats_adapter import ensure_fastwam_stats_format
 from .text_cache import DEFAULT_PROMPT, build_text_embedding_cache_path
 
 logger = get_logger(__name__)
 
 MAX_GETITEM_ATTEMPT = 5
+
+
+class MaskedDeltaActionTransform:
+    """Convert absolute action targets to deltas from the first observed state."""
+
+    def __init__(self, delta_action_dim_mask: dict[str, list[bool]] | None):
+        self.delta_action_dim_mask = delta_action_dim_mask
+
+    def _mask_for(self, key: str, action: torch.Tensor) -> torch.Tensor:
+        if self.delta_action_dim_mask is None:
+            return torch.ones(action.shape[-1], dtype=torch.bool, device=action.device)
+        if key not in self.delta_action_dim_mask:
+            raise KeyError(f"Missing delta action mask for key {key!r}.")
+        dim_mask = torch.as_tensor(self.delta_action_dim_mask[key], dtype=torch.bool, device=action.device)
+        if dim_mask.numel() != action.shape[-1]:
+            raise ValueError(
+                f"Delta action mask for key {key!r} has {dim_mask.numel()} dims, "
+                f"expected {action.shape[-1]}."
+            )
+        return dim_mask
+
+    def _apply(self, batch: dict[str, Any], sign: float) -> dict[str, Any]:
+        if "action" not in batch:
+            return batch
+        for key, action in batch["action"].items():
+            if key not in batch["state"]:
+                raise KeyError(f"Delta action transform requires matching state key {key!r}.")
+            state = batch["state"][key]
+            if action.shape[-1] != state.shape[-1]:
+                raise ValueError(
+                    f"Delta action transform expects action/state dim match for key {key!r}, "
+                    f"got action={action.shape[-1]} and state={state.shape[-1]}."
+                )
+            dim_mask = self._mask_for(key, action)
+            base_state = state[..., :1, :].to(device=action.device, dtype=action.dtype)
+            delta_action = action.clone()
+            delta_action[..., dim_mask] = delta_action[..., dim_mask] + sign * base_state[..., dim_mask]
+            batch["action"][key] = delta_action
+        return batch
+
+    def forward(self, batch: dict[str, Any]) -> dict[str, Any]:
+        return self._apply(batch, sign=-1.0)
+
+    def backward(self, batch: dict[str, Any]) -> dict[str, Any]:
+        return self._apply(batch, sign=1.0)
+
+
 def _to_plain_dict(value: Any) -> Any:
     if isinstance(value, dict):
         return {key: _to_plain_dict(child) for key, child in value.items()}
@@ -677,6 +725,11 @@ class FastWAMRobotVideoDatasetV3(Dataset):
                 if stats_path is not None:
                     stats_path.parent.mkdir(parents=True, exist_ok=True)
                     save_dataset_stats_to_json(dataset_stats, str(stats_path))
+            dataset_stats = ensure_fastwam_stats_format(
+                dataset_stats,
+                self.lerobot_dataset.shape_meta,
+                require_state=True,
+            )
             processor.set_normalizer_from_stats(dataset_stats)
             self.dataset_stats = _to_plain_dict(dataset_stats)
             self.lerobot_dataset.set_processor(processor)
@@ -824,7 +877,7 @@ class FastWAMRobotVideoDatasetV3(Dataset):
         if not os.path.exists(cache_path):
             raise FileNotFoundError(
                 f"Missing text embedding cache: {cache_path}. "
-                "Run `python src/lerobot/scripts/fastwam_precompute_text_embeds.py ...` first, or set policy.load_text_encoder=true "
+                "Run `python src/lerobot/scripts/magicbot_r0_precompute_text_embeds.py ...` first, or set policy.load_text_encoder=true "
                 "and leave dataset.text_embedding_cache_dir unset."
             )
         payload = torch.load(cache_path, map_location="cpu")
@@ -867,13 +920,17 @@ def build_fastwam_processor(cfg: MagicBotR0DatasetConfig) -> FastWAMProcessor:
         ]
         for key in cfg.image_keys
     }
+    action_state_transforms = None
+    if cfg.action_mode == "delta":
+        action_state_transforms = [MaskedDeltaActionTransform(cfg.processor_delta_action_dim_mask)]
+
     return FastWAMProcessor(
         shape_meta=cfg.shape_meta,
         num_obs_steps=cfg.num_frames,
         num_output_cameras=num_output_cameras,
         action_output_dim=action_output_dim,
         proprio_output_dim=proprio_output_dim,
-        action_state_transforms=None,
+        action_state_transforms=action_state_transforms,
         use_stepwise_action_norm=cfg.processor_use_stepwise_action_norm,
         norm_default_mode=cfg.processor_norm_default_mode,
         norm_exception_mode=None,

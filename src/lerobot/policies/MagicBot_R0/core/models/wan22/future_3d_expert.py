@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from typing import Any, Dict
 
 import torch
@@ -116,6 +118,22 @@ class Future3DBlock(nn.Module):
 
 
 class Future3DExpert(nn.Module):
+    FUTURE_3D_BACKBONE_SKIP_PREFIXES = (
+        "query_tokens",
+        "layer_norms.",
+        "output_queries",
+        "output_decoder.",
+    )
+    FUTURE_3D_BACKBONE_META_KEYS = (
+        "hidden_dim",
+        "ffn_dim",
+        "num_layers",
+        "num_heads",
+        "attn_head_dim",
+        "freq_dim",
+        "eps",
+    )
+
     def __init__(
         self,
         hidden_dim: int = 768,
@@ -148,6 +166,7 @@ class Future3DExpert(nn.Module):
         self.hidden_dim = hidden_dim
         self.ffn_dim = ffn_dim
         self.freq_dim = freq_dim
+        self.eps = eps
         self.num_heads = num_heads
         self.attn_head_dim = attn_head_dim
         self.num_layers = num_layers
@@ -188,6 +207,132 @@ class Future3DExpert(nn.Module):
             output_dim=da3_query_dim,
         )
         self.use_gradient_checkpointing = use_gradient_checkpointing
+
+    @classmethod
+    def backbone_key_set(cls, keys) -> set[str]:
+        return {
+            key
+            for key in keys
+            if not any(key.startswith(prefix) for prefix in cls.FUTURE_3D_BACKBONE_SKIP_PREFIXES)
+        }
+
+    @classmethod
+    def _resolve_pretrained_path(cls, pretrained_path: str | Path) -> Path:
+        p = Path(pretrained_path)
+        if p.is_absolute():
+            return p
+
+        file_path = Path(__file__).resolve()
+        candidate_roots = [Path.cwd()]
+        if len(file_path.parents) > 7:
+            candidate_roots.append(file_path.parents[7])
+        if len(file_path.parents) > 4:
+            candidate_roots.append(file_path.parents[4])
+
+        for root in candidate_roots:
+            candidate = (root / p).resolve()
+            if candidate.is_file():
+                return candidate
+        return (candidate_roots[0] / p).resolve()
+
+    @classmethod
+    def from_pretrained(
+        cls,
+        future_3d_config: dict[str, Any],
+        future_3d_pretrained_path: str | None = None,
+        skip_dit_load_from_pretrain: bool = False,
+        device: str = "cuda",
+        torch_dtype: torch.dtype = torch.bfloat16,
+    ) -> "Future3DExpert":
+        if future_3d_config is None:
+            raise ValueError("`future_3d_config` is required for Future3DExpert.from_pretrained().")
+        if skip_dit_load_from_pretrain:
+            return cls(**future_3d_config).to(device=device, dtype=torch_dtype)
+        if not future_3d_pretrained_path:
+            return cls(**future_3d_config).to(device=device, dtype=torch_dtype)
+
+        p = cls._resolve_pretrained_path(future_3d_pretrained_path)
+        future_3d_pretrained_path = str(p)
+        if not os.path.isfile(future_3d_pretrained_path):
+            raise FileNotFoundError(
+                f"`future_3d_pretrained_path` does not exist: {future_3d_pretrained_path}"
+            )
+
+        future_cfg = dict(future_3d_config)
+        future_expert = cls(**future_cfg).to(device=device, dtype=torch_dtype)
+        future_state = future_expert.state_dict()
+        expected_backbone_keys = cls.backbone_key_set(future_state.keys())
+
+        payload = torch.load(future_3d_pretrained_path, map_location="cpu")
+        if not isinstance(payload, dict):
+            raise ValueError(
+                f"Invalid future-3D backbone payload type from {future_3d_pretrained_path}: {type(payload)}"
+            )
+
+        meta = payload.get("meta")
+        if not isinstance(meta, dict):
+            raise ValueError(f"`meta` must be a dict in {future_3d_pretrained_path}.")
+        expected_meta = {
+            "hidden_dim": int(future_cfg["hidden_dim"]),
+            "ffn_dim": int(future_cfg["ffn_dim"]),
+            "num_layers": int(future_cfg["num_layers"]),
+            "num_heads": int(future_cfg["num_heads"]),
+            "attn_head_dim": int(future_cfg["attn_head_dim"]),
+            "freq_dim": int(future_cfg["freq_dim"]),
+            "eps": float(future_cfg["eps"]),
+        }
+        for key in cls.FUTURE_3D_BACKBONE_META_KEYS:
+            if key not in meta:
+                raise ValueError(f"`meta.{key}` missing in {future_3d_pretrained_path}")
+            expected_value = expected_meta[key]
+            got_value = meta[key]
+            if key == "eps":
+                if abs(float(got_value) - float(expected_value)) > 1e-12:
+                    raise ValueError(
+                        f"`meta.{key}` mismatch in {future_3d_pretrained_path}: "
+                        f"expected {expected_value}, got {got_value}"
+                    )
+            elif int(got_value) != int(expected_value):
+                raise ValueError(
+                    f"`meta.{key}` mismatch in {future_3d_pretrained_path}: "
+                    f"expected {expected_value}, got {got_value}"
+                )
+
+        backbone_state_dict = payload.get("backbone_state_dict")
+        if not isinstance(backbone_state_dict, dict):
+            raise ValueError(
+                f"`backbone_state_dict` must be a dict in {future_3d_pretrained_path}, "
+                f"got {type(backbone_state_dict)}"
+            )
+
+        provided_keys = set(backbone_state_dict.keys())
+        missing_keys = sorted(expected_backbone_keys - provided_keys)
+        unexpected_keys = sorted(provided_keys - expected_backbone_keys)
+        if missing_keys or unexpected_keys:
+            raise ValueError(
+                "Future3D backbone key mismatch in preprocessed payload. "
+                f"missing={missing_keys[:10]}{'...' if len(missing_keys) > 10 else ''}, "
+                f"unexpected={unexpected_keys[:10]}{'...' if len(unexpected_keys) > 10 else ''}"
+            )
+
+        merged_state = dict(future_state)
+        for key in expected_backbone_keys:
+            value = backbone_state_dict[key]
+            if not isinstance(value, torch.Tensor):
+                raise ValueError(
+                    f"`backbone_state_dict[{key}]` must be torch.Tensor in {future_3d_pretrained_path}, "
+                    f"got {type(value)}"
+                )
+            target = merged_state[key]
+            if tuple(value.shape) != tuple(target.shape):
+                raise ValueError(
+                    f"Shape mismatch for `{key}` in {future_3d_pretrained_path}: "
+                    f"expected {tuple(target.shape)}, got {tuple(value.shape)}"
+                )
+            merged_state[key] = value.to(device=target.device, dtype=target.dtype)
+
+        future_expert.load_state_dict(merged_state, strict=True)
+        return future_expert.to(device=device, dtype=torch_dtype)
 
     def pre_dit(
         self,

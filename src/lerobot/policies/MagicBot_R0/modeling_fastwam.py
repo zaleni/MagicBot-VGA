@@ -14,9 +14,13 @@ from lerobot.datasets.utils import serialize_dict, write_json
 from lerobot.policies.pretrained import PreTrainedPolicy
 
 from .configuration_fastwam import MagicBotR0Config
-from .core.data.lerobot.utils.normalizer import SingleFieldLinearNormalizer, load_dataset_stats_from_json
+from .core.data.lerobot.utils.normalizer import (
+    SingleFieldLinearNormalizer,
+    load_dataset_stats_from_json,
+)
 from .core.models.wan22.fastwam import FastWAM
 from .core.models.wan22.fastwam_joint import FastWAMJoint
+from .stats_adapter import ensure_fastwam_stats_format
 
 
 class MagicBotR0Policy(PreTrainedPolicy):
@@ -62,6 +66,7 @@ class MagicBotR0Policy(PreTrainedPolicy):
             action_dit_config=config.action_dit_config,
             future_3d_config=config.future_3d_config,
             action_dit_pretrained_path=config.action_dit_pretrained_path,
+            future_3d_pretrained_path=config.future_3d_pretrained_path,
             skip_dit_load_from_pretrain=config.skip_dit_load_from_pretrain,
             mot_checkpoint_mixed_attn=config.mot_checkpoint_mixed_attn,
             video_train_shift=float(config.video_scheduler.get("train_shift", 5.0)),
@@ -139,8 +144,11 @@ class MagicBotR0Policy(PreTrainedPolicy):
 
     @staticmethod
     def _extract_fastwam_stats(stats_payload: dict[str, Any]) -> dict[str, Any]:
-        if "fastwam" in stats_payload:
-            stats_payload = stats_payload["fastwam"]
+        stats_payload = ensure_fastwam_stats_format(
+            stats_payload,
+            shape_meta=None,
+            require_state=False,
+        )
         if "action" not in stats_payload:
             raise ValueError("FastWAM stats payload must contain an `action` section.")
         return stats_payload
