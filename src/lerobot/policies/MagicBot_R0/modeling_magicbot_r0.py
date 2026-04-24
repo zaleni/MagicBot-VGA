@@ -13,14 +13,14 @@ from torch import Tensor
 from lerobot.datasets.utils import serialize_dict, write_json
 from lerobot.policies.pretrained import PreTrainedPolicy
 
-from .configuration_fastwam import MagicBotR0Config
+from .configuration_magicbot_r0 import MagicBotR0Config
 from .core.data.lerobot.utils.normalizer import (
     SingleFieldLinearNormalizer,
     load_dataset_stats_from_json,
 )
-from .core.models.wan22.fastwam import FastWAM
-from .core.models.wan22.fastwam_joint import FastWAMJoint
-from .stats_adapter import ensure_fastwam_stats_format
+from .core.models.wan22.magicbot_r0 import MagicBotR0
+from .core.models.wan22.magicbot_r0_joint import MagicBotR0Joint
+from .stats_adapter import ensure_magicbot_r0_stats_format
 
 
 class MagicBotR0Policy(PreTrainedPolicy):
@@ -38,7 +38,7 @@ class MagicBotR0Policy(PreTrainedPolicy):
         self._action_stats_payload: dict[str, Any] | None = None
         self.model = self._build_model(config)
         if config.native_checkpoint_path:
-            logging.info("Loading FastWAM native checkpoint from %s", config.native_checkpoint_path)
+            logging.info("Loading MagicBot_R0 native checkpoint from %s", config.native_checkpoint_path)
             self.model.load_checkpoint(config.native_checkpoint_path)
         self._maybe_load_action_postprocess_from_config()
         self.reset()
@@ -46,8 +46,8 @@ class MagicBotR0Policy(PreTrainedPolicy):
     @staticmethod
     def _variant_to_class(variant: str):
         mapping = {
-            "fastwam": FastWAM,
-            "fastwam_joint": FastWAMJoint,
+            "magicbot_r0": MagicBotR0,
+            "magicbot_r0_joint": MagicBotR0Joint,
         }
         return mapping[variant]
 
@@ -98,7 +98,7 @@ class MagicBotR0Policy(PreTrainedPolicy):
     def _save_pretrained(self, save_directory: Path) -> None:
         self._save_pretrained_artifacts(save_directory)
         if self._action_stats_payload is not None:
-            stats_payload = {"fastwam": self._action_stats_payload}
+            stats_payload = {"magicbot_r0": self._action_stats_payload}
             write_json(serialize_dict(stats_payload), save_directory / self._stats_filename)
 
     @classmethod
@@ -143,14 +143,14 @@ class MagicBotR0Policy(PreTrainedPolicy):
         return policy
 
     @staticmethod
-    def _extract_fastwam_stats(stats_payload: dict[str, Any]) -> dict[str, Any]:
-        stats_payload = ensure_fastwam_stats_format(
+    def _extract_magicbot_r0_stats(stats_payload: dict[str, Any]) -> dict[str, Any]:
+        stats_payload = ensure_magicbot_r0_stats_format(
             stats_payload,
             shape_meta=None,
             require_state=False,
         )
         if "action" not in stats_payload:
-            raise ValueError("FastWAM stats payload must contain an `action` section.")
+            raise ValueError("MagicBot_R0 stats payload must contain an `action` section.")
         return stats_payload
 
     @staticmethod
@@ -175,10 +175,10 @@ class MagicBotR0Policy(PreTrainedPolicy):
         raise ValueError(f"Unable to infer action dimension from stats keys: {list(stats_for_key.keys())}")
 
     def set_action_postprocess_from_stats(self, stats_payload: dict[str, Any]) -> None:
-        stats_payload = self._extract_fastwam_stats(stats_payload)
+        stats_payload = self._extract_magicbot_r0_stats(stats_payload)
         action_stats = stats_payload["action"]
         if not isinstance(action_stats, dict) or len(action_stats) == 0:
-            raise ValueError("FastWAM action stats must be a non-empty dict.")
+            raise ValueError("MagicBot_R0 action stats must be a non-empty dict.")
 
         use_stepwise = bool(self.config.action_norm_use_stepwise)
         default_mode = str(self.config.action_norm_default_mode)
@@ -195,7 +195,7 @@ class MagicBotR0Policy(PreTrainedPolicy):
             }
             if len(selected_stats) == 0:
                 raise ValueError(
-                    f"Missing {prefix}* stats for FastWAM action key '{key}'. Available keys: {list(key_stats.keys())}"
+                    f"Missing {prefix}* stats for MagicBot_R0 action key '{key}'. Available keys: {list(key_stats.keys())}"
                 )
 
             normalizer = SingleFieldLinearNormalizer(
@@ -214,7 +214,7 @@ class MagicBotR0Policy(PreTrainedPolicy):
         total_dim = sum(int(spec["dim"]) for spec in denorm_specs)
         if total_dim != int(self.config.action_dim):
             raise ValueError(
-                f"FastWAM action stats dim mismatch: stats sum to {total_dim}, config.action_dim={self.config.action_dim}"
+                f"MagicBot_R0 action stats dim mismatch: stats sum to {total_dim}, config.action_dim={self.config.action_dim}"
             )
         self._action_denorm_specs = denorm_specs
         self._action_stats_payload = stats_payload
@@ -222,11 +222,11 @@ class MagicBotR0Policy(PreTrainedPolicy):
     def _load_action_postprocess_from_stats_path(self, stats_path: str | Path) -> None:
         stats_path = Path(stats_path)
         if not stats_path.is_file():
-            raise FileNotFoundError(f"FastWAM action stats file does not exist: {stats_path}")
+            raise FileNotFoundError(f"MagicBot_R0 action stats file does not exist: {stats_path}")
         stats_payload = load_dataset_stats_from_json(str(stats_path))
         self.set_action_postprocess_from_stats(stats_payload)
         self._action_stats_source = str(stats_path)
-        logging.info("Loaded FastWAM action postprocess stats from %s", stats_path)
+        logging.info("Loaded MagicBot_R0 action postprocess stats from %s", stats_path)
 
     @classmethod
     def _resolve_pretrained_stats_path(
@@ -299,7 +299,7 @@ class MagicBotR0Policy(PreTrainedPolicy):
         )
         if stats_path is None:
             logging.info(
-                "FastWAM pretrained source %s has no %s; action outputs will stay normalized unless "
+                "MagicBot_R0 pretrained source %s has no %s; action outputs will stay normalized unless "
                 "`policy.action_stats_path` is provided.",
                 pretrained_name_or_path,
                 self._stats_filename,
@@ -340,7 +340,7 @@ class MagicBotR0Policy(PreTrainedPolicy):
         prompts = sample.get("prompt")
         if prompts is None:
             raise ValueError(
-                "FastWAM training requires either `context/context_mask` in the batch or `prompt` with "
+                "MagicBot_R0 training requires either `context/context_mask` in the batch or `prompt` with "
                 "`policy.load_text_encoder=true`."
             )
         if not self.config.load_text_encoder:
@@ -394,7 +394,7 @@ class MagicBotR0Policy(PreTrainedPolicy):
                 raise ValueError(f"`video` must be [B,3,T,H,W] for inference, got {tuple(video.shape)}")
             image = video[:, :, 0, :, :]
         else:
-            raise ValueError("FastWAM inference expects `input_image` or `video` in the batch.")
+            raise ValueError("MagicBot_R0 inference expects `input_image` or `video` in the batch.")
         if image.ndim == 3:
             image = image.unsqueeze(0)
         if image.ndim != 4:
@@ -423,7 +423,7 @@ class MagicBotR0Policy(PreTrainedPolicy):
             action = action.unsqueeze(0)
             squeeze_batch = True
         elif action.ndim != 3:
-            raise ValueError(f"Expected FastWAM action to be [B,T,D] or [T,D], got {tuple(action.shape)}")
+            raise ValueError(f"Expected MagicBot_R0 action to be [B,T,D] or [T,D], got {tuple(action.shape)}")
 
         action_f32 = action.to(dtype=torch.float32)
         parts = []
@@ -434,7 +434,7 @@ class MagicBotR0Policy(PreTrainedPolicy):
             cur_action = action_f32[..., start:end]
             if cur_action.shape[-1] != dim:
                 raise ValueError(
-                    f"FastWAM action dim mismatch while denormalizing: expected slice dim {dim}, got {cur_action.shape[-1]}"
+                    f"MagicBot_R0 action dim mismatch while denormalizing: expected slice dim {dim}, got {cur_action.shape[-1]}"
                 )
             scale = spec["scale"].to(device=cur_action.device, dtype=cur_action.dtype)
             offset = spec["offset"].to(device=cur_action.device, dtype=cur_action.dtype)
@@ -443,7 +443,7 @@ class MagicBotR0Policy(PreTrainedPolicy):
 
         if start != action_f32.shape[-1]:
             raise ValueError(
-                f"FastWAM denormalizer consumed {start} dims but action has {action_f32.shape[-1]} dims."
+                f"MagicBot_R0 denormalizer consumed {start} dims but action has {action_f32.shape[-1]} dims."
             )
 
         action_denorm = torch.cat(parts, dim=-1)

@@ -169,7 +169,7 @@ class FastWAMNativeSchedulerConfig(LRSchedulerConfig):
             main_scheduler = ConstantLR(optimizer, factor=1.0, total_iters=remaining_steps)
         else:
             raise ValueError(
-                f"Unsupported FastWAM scheduler_type: {self.scheduler_type}. "
+                f"Unsupported native MoT scheduler_type: {self.scheduler_type}. "
                 "Expected one of: ['cosine', 'constant']."
             )
 
@@ -187,6 +187,12 @@ class FastWAMNativeSchedulerConfig(LRSchedulerConfig):
             schedulers=[warmup_scheduler, main_scheduler],
             milestones=[warmup_steps],
         )
+
+
+@LRSchedulerConfig.register_subclass("magicbot_r0_native")
+@dataclass
+class MagicBotR0NativeSchedulerConfig(FastWAMNativeSchedulerConfig):
+    """MagicBot_R0 native trainer scheduler behavior."""
 
 
 def save_scheduler_state(scheduler: LRScheduler, save_dir: Path) -> None:

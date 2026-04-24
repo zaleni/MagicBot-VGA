@@ -30,12 +30,12 @@ def setup_logging(
     Example:
         ```python
         # In a single-machine script
-        from lerobot.policies.fastwam.core.utils.logging_config import setup_logging
+        from lerobot.policies.MagicBot_R0.core.utils.logging_config import setup_logging
         setup_logging()
         
         # In a distributed training script
         from accelerate import PartialState
-        from lerobot.policies.fastwam.core.utils.logging_config import setup_logging
+        from lerobot.policies.MagicBot_R0.core.utils.logging_config import setup_logging
         
         distributed_state = PartialState()
         setup_logging(

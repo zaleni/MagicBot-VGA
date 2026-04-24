@@ -7,7 +7,7 @@ DEFAULT_PROMPT = "A video recorded from a robot's point of view executing the fo
 TEXT_EMBED_CACHE_ENCODER_ID = "wan22ti2v5b"
 
 
-def build_fastwam_prompt(task: str) -> str:
+def build_magicbot_r0_prompt(task: str) -> str:
     return DEFAULT_PROMPT.format(task=task)
 
 

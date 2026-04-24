@@ -14,7 +14,7 @@ def _is_field_stats(value: Any) -> bool:
     return isinstance(value, dict) and any(key in value for key in ("mean", "std", "min", "max", "q01", "q99"))
 
 
-def _is_fastwam_group(value: Any) -> bool:
+def _is_magicbot_r0_group(value: Any) -> bool:
     if not isinstance(value, dict):
         return False
     for child in value.values():
@@ -25,8 +25,8 @@ def _is_fastwam_group(value: Any) -> bool:
     return False
 
 
-def _is_fastwam_stats_payload(stats: Any) -> bool:
-    return isinstance(stats, dict) and _is_fastwam_group(stats.get("action"))
+def _is_magicbot_r0_stats_payload(stats: Any) -> bool:
+    return isinstance(stats, dict) and _is_magicbot_r0_group(stats.get("action"))
 
 
 def _clone_stat_value(value: Any) -> Any:
@@ -39,7 +39,7 @@ def _clone_stat_value(value: Any) -> Any:
     return value
 
 
-def _field_stats_to_fastwam_stats(field_stats: dict[str, Any]) -> dict[str, Any]:
+def _field_stats_to_magicbot_r0_stats(field_stats: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for stat_name in ("min", "max", "mean", "std", "q01", "q99"):
         if stat_name in field_stats:
@@ -85,7 +85,7 @@ def _convert_framework_group_stats(
     grouped_stats = stats_payload.get(group)
     if isinstance(grouped_stats, dict) and not _is_field_stats(grouped_stats):
         keyed_group = {
-            str(key): _field_stats_to_fastwam_stats(value)
+            str(key): _field_stats_to_magicbot_r0_stats(value)
             for key, value in grouped_stats.items()
             if _is_field_stats(value)
         }
@@ -96,11 +96,11 @@ def _convert_framework_group_stats(
         if group == "action":
             for candidate in ("action", "action.default", "default"):
                 if _is_field_stats(stats_payload.get(candidate)):
-                    return {"default": _field_stats_to_fastwam_stats(stats_payload[candidate])}
+                    return {"default": _field_stats_to_magicbot_r0_stats(stats_payload[candidate])}
         if not required:
             return {}
         raise ValueError(
-            f"Cannot adapt framework stats to FastWAM format for `{group}` without shape_meta."
+            f"Cannot adapt framework stats to MagicBot_R0 format for `{group}` without shape_meta."
         )
 
     converted: dict[str, Any] = {}
@@ -120,9 +120,9 @@ def _convert_framework_group_stats(
         if selected_stats is None:
             missing.append(key)
             continue
-        converted[key] = _field_stats_to_fastwam_stats(selected_stats)
+        converted[key] = _field_stats_to_magicbot_r0_stats(selected_stats)
         logger.info(
-            "Adapted framework normalization stats key %s -> FastWAM %s/%s.",
+            "Adapted framework normalization stats key %s -> MagicBot_R0 %s/%s.",
             selected_source,
             group,
             key,
@@ -130,23 +130,23 @@ def _convert_framework_group_stats(
 
     if missing and required:
         raise ValueError(
-            f"Missing framework stats for FastWAM `{group}` keys {missing}. "
+            f"Missing framework stats for MagicBot_R0 `{group}` keys {missing}. "
             f"Available stats keys: {list(stats_payload.keys())}"
         )
     return converted
 
 
-def ensure_fastwam_stats_format(
+def ensure_magicbot_r0_stats_format(
     stats_payload: dict[str, Any],
     shape_meta: dict[str, Any] | None = None,
     *,
     require_state: bool = True,
 ) -> dict[str, Any]:
-    """Accept FastWAM stats or framework flat stats and return FastWAM stats."""
-    if "fastwam" in stats_payload:
-        stats_payload = stats_payload["fastwam"]
+    """Accept MagicBot_R0 stats or framework flat stats and return MagicBot_R0 stats."""
+    if "magicbot_r0" in stats_payload:
+        stats_payload = stats_payload["magicbot_r0"]
 
-    if _is_fastwam_stats_payload(stats_payload):
+    if _is_magicbot_r0_stats_payload(stats_payload):
         return stats_payload
 
     converted = {

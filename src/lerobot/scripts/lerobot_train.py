@@ -69,6 +69,18 @@ def _fastwam_policy_module(policy_type: str) -> str:
     return "MagicBot_R0" if policy_type == "MagicBot_R0" else "fastwam"
 
 
+def _fastwam_family_label(policy_type: str | None) -> str:
+    return "MagicBot_R0" if policy_type == "MagicBot_R0" else "FastWAM"
+
+
+def _fastwam_family_stats_key(policy_type: str | None) -> str:
+    return "magicbot_r0" if policy_type == "MagicBot_R0" else "fastwam"
+
+
+def _fastwam_family_trainer_state_file(policy_type: str | None) -> str:
+    return "magicbot_r0_trainer_state.json" if policy_type == "MagicBot_R0" else FASTWAM_TRAINER_STATE_FILE
+
+
 def _env_flag(name: str, default: bool = False) -> bool:
     value = os.environ.get(name)
     if value is None:
@@ -378,6 +390,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         data_stats = None
 
     if _is_fastwam_policy_type(cfg.policy.type):
+        policy_family_label = _fastwam_family_label(cfg.policy.type)
         cfg.policy.action_norm_use_stepwise = bool(getattr(cfg.dataset, "processor_use_stepwise_action_norm", False))
         cfg.policy.action_norm_default_mode = str(getattr(cfg.dataset, "processor_norm_default_mode", "min/max"))
         fastwam_max_steps = getattr(cfg.policy, "train_max_steps", None)
@@ -385,7 +398,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         if fastwam_max_steps is not None:
             cfg.steps = max(int(fastwam_max_steps), 1)
             if is_main_process:
-                logging.info("FastWAM training steps overridden by policy.train_max_steps=%d", cfg.steps)
+                logging.info("%s training steps overridden by policy.train_max_steps=%d", policy_family_label, cfg.steps)
         elif fastwam_num_epochs is not None:
             global_batch_size = max(cfg.batch_size * accelerator.num_processes, 1)
             micro_steps_per_epoch = max(ceil(len(dataset) / global_batch_size), 1)
@@ -396,8 +409,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             cfg.steps = max(opt_steps_per_epoch * int(fastwam_num_epochs), 1)
             if is_main_process:
                 logging.info(
-                    "FastWAM training steps derived from policy.train_num_epochs=%d: "
+                    "%s training steps derived from policy.train_num_epochs=%d: "
                     "micro_steps_per_epoch=%d, opt_steps_per_epoch=%d, total_steps=%d",
+                    policy_family_label,
                     int(fastwam_num_epochs),
                     micro_steps_per_epoch,
                     opt_steps_per_epoch,
@@ -413,7 +427,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     if _is_fastwam_policy_type(cfg.policy.type) and hasattr(policy, "set_action_postprocess_from_stats"):
         fastwam_stats = getattr(dataset, "dataset_stats", None)
         if fastwam_stats is None and isinstance(data_stats, dict):
-            fastwam_stats = data_stats.get("fastwam")
+            fastwam_stats = data_stats.get(_fastwam_family_stats_key(cfg.policy.type))
+            if fastwam_stats is None:
+                fastwam_stats = data_stats.get("fastwam")
         if fastwam_stats is not None:
             policy.set_action_postprocess_from_stats(fastwam_stats)
 
@@ -520,7 +536,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     fastwam_epoch = 0
     fastwam_batch_in_epoch = 0
     if cfg.resume and _is_fastwam_policy_type(cfg.policy.type) and cfg.checkpoint_path is not None:
-        fastwam_state_path = Path(cfg.checkpoint_path) / "training_state" / FASTWAM_TRAINER_STATE_FILE
+        fastwam_state_path = Path(cfg.checkpoint_path) / "training_state" / _fastwam_family_trainer_state_file(
+            cfg.policy.type
+        )
         if fastwam_state_path.is_file():
             fastwam_resume_state = load_json(fastwam_state_path)
             fastwam_epoch = int(fastwam_resume_state.get("epoch", 0))
@@ -530,7 +548,8 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                 fastwam_train_sampler.set_resume_batch_offset(fastwam_batch_in_epoch)
             if is_main_process:
                 logging.info(
-                    "Restored FastWAM dataloader progress: epoch=%d batch_in_epoch=%d sample_offset=%d",
+                    "Restored %s dataloader progress: epoch=%d batch_in_epoch=%d sample_offset=%d",
+                    _fastwam_family_label(cfg.policy.type),
                     fastwam_epoch,
                     fastwam_batch_in_epoch,
                     fastwam_batch_in_epoch * cfg.batch_size * accelerator.num_processes,
@@ -724,7 +743,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                             "epoch": fastwam_epoch,
                             "batch_in_epoch": fastwam_batch_in_epoch,
                         },
-                        checkpoint_dir / "training_state" / FASTWAM_TRAINER_STATE_FILE,
+                        checkpoint_dir / "training_state" / _fastwam_family_trainer_state_file(cfg.policy.type),
                     )
                 update_last_checkpoint(checkpoint_dir)
                 if wandb_logger:

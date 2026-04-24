@@ -9,7 +9,7 @@ from lerobot.configs.default import DatasetConfig
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
-from lerobot.optim.schedulers import FastWAMNativeSchedulerConfig
+from lerobot.optim.schedulers import MagicBotR0NativeSchedulerConfig
 from lerobot.policies.cubev2.da3_teacher import resolve_da3_backbone_defaults
 from lerobot.utils.constants import ACTION, OBS_STATE
 
@@ -130,7 +130,7 @@ class MagicBotR0DatasetConfig(DatasetConfig):
         super().__post_init__()
         if len(self.dataset_dirs) == 0 and self.repo_id_file is None:
             raise ValueError(
-                "FastWAM dataset needs either `dataset.dataset_dirs` or `dataset.repo_id_file` "
+                "MagicBot_R0 dataset needs either `dataset.dataset_dirs` or `dataset.repo_id_file` "
                 "with one local LeRobot v3.0 dataset path per line."
             )
         if not (
@@ -185,7 +185,7 @@ class MagicBotR0DatasetConfig(DatasetConfig):
 @PreTrainedConfig.register_subclass("MagicBot_R0")
 @dataclass
 class MagicBotR0Config(PreTrainedConfig):
-    variant: str = "fastwam"
+    variant: str = "magicbot_r0"
     model_id: str = "Wan-AI/Wan2.2-TI2V-5B"
     tokenizer_model_id: str = "Wan-AI/Wan2.1-T2V-1.3B"
     tokenizer_max_len: int = 128
@@ -260,10 +260,10 @@ class MagicBotR0Config(PreTrainedConfig):
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        if self.variant not in {"fastwam", "fastwam_joint"}:
+        if self.variant not in {"magicbot_r0", "magicbot_r0_joint"}:
             raise ValueError(
-                f"Unsupported FastWAM variant '{self.variant}'. "
-                "Expected one of: fastwam, fastwam_joint."
+                f"Unsupported MagicBot_R0 variant '{self.variant}'. "
+                "Expected one of: magicbot_r0, magicbot_r0_joint."
             )
         if self.video_dit_config is None:
             self.video_dit_config = _default_video_dit_config(self.action_dim)
@@ -349,7 +349,7 @@ class MagicBotR0Config(PreTrainedConfig):
         )
 
     def get_scheduler_preset(self):
-        return FastWAMNativeSchedulerConfig(
+        return MagicBotR0NativeSchedulerConfig(
             peak_lr=self.optimizer_lr,
             min_lr_ratio=self.scheduler_decay_lr / self.optimizer_lr,
             num_warmup_steps=self.scheduler_warmup_steps,

@@ -16,10 +16,10 @@ from torch.utils.data import Dataset
 from lerobot.datasets.compute_stats import aggregate_stats
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 
-from .configuration_fastwam import MagicBotR0DatasetConfig
+from .configuration_magicbot_r0 import MagicBotR0DatasetConfig
 from .core.data.dataset_utils import CenterCrop, Normalize, ResizeSmallestSideAspectPreserving
 from .core.data.lerobot.processors.base_processor import BaseProcessor
-from .core.data.lerobot.processors.fastwam_processor import FastWAMProcessor
+from .core.data.lerobot.processors.magicbot_r0_processor import MagicBotR0Processor
 from .core.data.lerobot.transforms.action_state_merger import ConcatLeftAlign
 from .core.data.lerobot.transforms.image import ToTensor
 from .core.data.lerobot.utils.normalizer import (
@@ -27,7 +27,7 @@ from .core.data.lerobot.utils.normalizer import (
     save_dataset_stats_to_json,
 )
 from .core.utils.logging_config import get_logger
-from .stats_adapter import ensure_fastwam_stats_format
+from .stats_adapter import ensure_magicbot_r0_stats_format
 from .text_cache import DEFAULT_PROMPT, build_text_embedding_cache_path
 
 logger = get_logger(__name__)
@@ -86,18 +86,18 @@ def _to_plain_dict(value: Any) -> Any:
     return value
 
 
-def resolve_fastwam_dataset_dirs(cfg: MagicBotR0DatasetConfig) -> list[str]:
+def resolve_magicbot_r0_dataset_dirs(cfg: MagicBotR0DatasetConfig) -> list[str]:
     if cfg.dataset_dirs:
         return list(cfg.dataset_dirs)
 
     if cfg.repo_id_file is None:
         raise ValueError(
-            "FastWAM dataset needs either `dataset.dataset_dirs` or `dataset.repo_id_file`."
+            "MagicBot_R0 dataset needs either `dataset.dataset_dirs` or `dataset.repo_id_file`."
         )
 
     repo_id_file = Path(cfg.repo_id_file)
     if not repo_id_file.is_file():
-        raise FileNotFoundError(f"FastWAM dataset repo_id_file does not exist: {repo_id_file}")
+        raise FileNotFoundError(f"MagicBot_R0 dataset repo_id_file does not exist: {repo_id_file}")
 
     dataset_dirs = []
     with repo_id_file.open("r", encoding="utf-8") as handle:
@@ -107,7 +107,7 @@ def resolve_fastwam_dataset_dirs(cfg: MagicBotR0DatasetConfig) -> list[str]:
                 dataset_dirs.append(dataset_dir)
 
     if not dataset_dirs:
-        raise ValueError(f"FastWAM dataset repo_id_file is empty: {repo_id_file}")
+        raise ValueError(f"MagicBot_R0 dataset repo_id_file is empty: {repo_id_file}")
 
     return dataset_dirs
 
@@ -125,7 +125,7 @@ def sliding_window_with_replication(x: torch.Tensor, window_size: int) -> torch.
     return x[indices]
 
 
-class FastWAMMultiLeRobotDatasetV3(Dataset):
+class MagicBotR0MultiLeRobotDatasetV3(Dataset):
     def __init__(
         self,
         dataset_dirs: list[str],
@@ -236,7 +236,7 @@ class FastWAMMultiLeRobotDatasetV3(Dataset):
         return result
 
 
-class FastWAMBaseLerobotDatasetV3(Dataset):
+class MagicBotR0BaseLerobotDatasetV3(Dataset):
     def __init__(
         self,
         dataset_dirs: list[str],
@@ -313,7 +313,7 @@ class FastWAMBaseLerobotDatasetV3(Dataset):
                 else:
                     episodes[str(meta.root)] = [episode_indices[i] for i in range(split_idx, meta.total_episodes)]
 
-        self.multi_dataset = FastWAMMultiLeRobotDatasetV3(
+        self.multi_dataset = MagicBotR0MultiLeRobotDatasetV3(
             dataset_dirs=self.dataset_dirs,
             episodes=episodes,
             delta_timestamps=delta_timestamps,
@@ -376,7 +376,7 @@ class FastWAMBaseLerobotDatasetV3(Dataset):
             actual_shape = list(shapes[0])
             if list(meta["raw_shape"]) != actual_shape:
                 logger.info(
-                    "Overriding FastWAM image raw_shape for %s from %s to dataset metadata shape %s.",
+                    "Overriding MagicBot_R0 image raw_shape for %s from %s to dataset metadata shape %s.",
                     meta["lerobot_key"],
                     meta["raw_shape"],
                     actual_shape,
@@ -394,7 +394,7 @@ class FastWAMBaseLerobotDatasetV3(Dataset):
             actual_dim = int(actual_shape[0]) if isinstance(actual_shape, (list, tuple)) else int(actual_shape)
             if int(meta["raw_shape"]) != actual_dim:
                 logger.info(
-                    "Overriding FastWAM state raw_shape for %s from %s to dataset metadata dim %s.",
+                    "Overriding MagicBot_R0 state raw_shape for %s from %s to dataset metadata dim %s.",
                     meta["lerobot_key"],
                     meta["raw_shape"],
                     actual_dim,
@@ -412,7 +412,7 @@ class FastWAMBaseLerobotDatasetV3(Dataset):
             actual_dim = int(actual_shape[0]) if isinstance(actual_shape, (list, tuple)) else int(actual_shape)
             if int(meta["raw_shape"]) != actual_dim:
                 logger.info(
-                    "Overriding FastWAM action raw_shape for %s from %s to dataset metadata dim %s.",
+                    "Overriding MagicBot_R0 action raw_shape for %s from %s to dataset metadata dim %s.",
                     meta["lerobot_key"],
                     meta["raw_shape"],
                     actual_dim,
@@ -642,7 +642,7 @@ class FastWAMBaseLerobotDatasetV3(Dataset):
         return stats
 
 
-class FastWAMRobotVideoDatasetV3(Dataset):
+class MagicBotR0RobotVideoDatasetV3(Dataset):
     def __init__(
         self,
         dataset_dirs: list[str],
@@ -666,7 +666,7 @@ class FastWAMRobotVideoDatasetV3(Dataset):
         return_future_3d_images: bool = False,
         future_3d_target_index: int = -1,
     ) -> None:
-        self.lerobot_dataset = FastWAMBaseLerobotDatasetV3(
+        self.lerobot_dataset = MagicBotR0BaseLerobotDatasetV3(
             dataset_dirs=dataset_dirs,
             shape_meta=shape_meta,
             obs_size=num_frames,
@@ -725,7 +725,7 @@ class FastWAMRobotVideoDatasetV3(Dataset):
                 if stats_path is not None:
                     stats_path.parent.mkdir(parents=True, exist_ok=True)
                     save_dataset_stats_to_json(dataset_stats, str(stats_path))
-            dataset_stats = ensure_fastwam_stats_format(
+            dataset_stats = ensure_magicbot_r0_stats_format(
                 dataset_stats,
                 self.lerobot_dataset.shape_meta,
                 require_state=True,
@@ -904,7 +904,7 @@ class FastWAMRobotVideoDatasetV3(Dataset):
         return data
 
 
-def build_fastwam_processor(cfg: MagicBotR0DatasetConfig) -> FastWAMProcessor:
+def build_magicbot_r0_processor(cfg: MagicBotR0DatasetConfig) -> MagicBotR0Processor:
     resize_shape = cfg.processor_resize_shape
     if resize_shape is None:
         resize_shape = tuple(cfg.image_shapes[0][1:])
@@ -924,7 +924,7 @@ def build_fastwam_processor(cfg: MagicBotR0DatasetConfig) -> FastWAMProcessor:
     if cfg.action_mode == "delta":
         action_state_transforms = [MaskedDeltaActionTransform(cfg.processor_delta_action_dim_mask)]
 
-    return FastWAMProcessor(
+    return MagicBotR0Processor(
         shape_meta=cfg.shape_meta,
         num_obs_steps=cfg.num_frames,
         num_output_cameras=num_output_cameras,
@@ -942,10 +942,13 @@ def build_fastwam_processor(cfg: MagicBotR0DatasetConfig) -> FastWAMProcessor:
     )
 
 
-def build_fastwam_dataset(cfg: MagicBotR0DatasetConfig, stats_cache_path: str | None = None) -> FastWAMRobotVideoDatasetV3:
-    processor = build_fastwam_processor(cfg)
-    dataset_dirs = resolve_fastwam_dataset_dirs(cfg)
-    return FastWAMRobotVideoDatasetV3(
+def build_magicbot_r0_dataset(
+    cfg: MagicBotR0DatasetConfig,
+    stats_cache_path: str | None = None,
+) -> MagicBotR0RobotVideoDatasetV3:
+    processor = build_magicbot_r0_processor(cfg)
+    dataset_dirs = resolve_magicbot_r0_dataset_dirs(cfg)
+    return MagicBotR0RobotVideoDatasetV3(
         dataset_dirs=dataset_dirs,
         shape_meta=cfg.shape_meta,
         num_frames=cfg.num_frames,

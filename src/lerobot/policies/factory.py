@@ -25,7 +25,7 @@ from lerobot.policies.InternVLA_A1_3B.configuration_internvla_a1 import QwenA1Co
 from lerobot.policies.InternVLA_A1_2B.configuration_internvla_a1 import InternA1Config
 from lerobot.policies.cubev2.configuration_cubev2 import CubeV2Config
 from lerobot.policies.fastwam.configuration_fastwam import FastWAMConfig
-from lerobot.policies.MagicBot_R0.configuration_fastwam import MagicBotR0Config
+from lerobot.policies.MagicBot_R0.configuration_magicbot_r0 import MagicBotR0Config
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.policies.pi05.configuration_pi05 import PI05Config
 from lerobot.policies.pretrained import PreTrainedPolicy
@@ -61,7 +61,7 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
 
         return FastWAMPolicy
     elif name == "MagicBot_R0":
-        from lerobot.policies.MagicBot_R0.modeling_fastwam import MagicBotR0Policy
+        from lerobot.policies.MagicBot_R0.modeling_magicbot_r0 import MagicBotR0Policy
 
         return MagicBotR0Policy
     

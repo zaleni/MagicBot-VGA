@@ -40,7 +40,7 @@ from lerobot.datasets.transformed_dataset import (
     MultiStreamingLeRobotDataset, 
 )
 from lerobot.policies.fastwam.configuration_fastwam import FastWAMDatasetConfig
-from lerobot.policies.MagicBot_R0.configuration_fastwam import MagicBotR0DatasetConfig
+from lerobot.policies.MagicBot_R0.configuration_magicbot_r0 import MagicBotR0DatasetConfig
 from lerobot.transforms.constants import get_feature_mapping, get_image_mapping
 from lerobot.utils.constants import ACTION, OBS_PREFIX, REWARD, OBS_STATE
 from lerobot.utils.constants import HF_LEROBOT_HOME
@@ -555,18 +555,28 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
     """
     if isinstance(cfg.dataset, (FastWAMDatasetConfig, MagicBotR0DatasetConfig)):
         if isinstance(cfg.dataset, MagicBotR0DatasetConfig):
-            from lerobot.policies.MagicBot_R0.dataset_fastwam import build_fastwam_dataset
+            from lerobot.policies.MagicBot_R0.dataset_magicbot_r0 import build_magicbot_r0_dataset
+
+            build_policy_dataset = build_magicbot_r0_dataset
+            policy_label = "MagicBot_R0"
+            stats_filename = "magicbot_r0_dataset_stats.json"
+            stats_key = "magicbot_r0"
         else:
             from lerobot.policies.fastwam.dataset_fastwam import build_fastwam_dataset
 
+            build_policy_dataset = build_fastwam_dataset
+            policy_label = "FastWAM"
+            stats_filename = "fastwam_dataset_stats.json"
+            stats_key = "fastwam"
+
         if cfg.dataset.dist_loading:
             raise ValueError(
-                "FastWAM training in this framework does not support `dataset.dist_loading=true`. "
+                f"{policy_label} training in this framework does not support `dataset.dist_loading=true`. "
                 "Leave it disabled so Accelerate can shard the dataloader correctly."
             )
         if cfg.dataset.text_embedding_cache_dir is None and not getattr(cfg.policy, "load_text_encoder", False):
             raise ValueError(
-                "FastWAM training needs either `dataset.text_embedding_cache_dir` for cached text embeddings "
+                f"{policy_label} training needs either `dataset.text_embedding_cache_dir` for cached text embeddings "
                 "or `policy.load_text_encoder=true` for on-the-fly prompt encoding."
             )
         if isinstance(cfg.dataset, MagicBotR0DatasetConfig) and float(getattr(cfg.policy, "lambda_3d", 0.0)) > 0.0:
@@ -588,9 +598,9 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
                 )
         stats_cache_path = cfg.dataset.normalization_stats_path
         if stats_cache_path is None and cfg.output_dir is not None:
-            stats_cache_path = str(Path(cfg.output_dir) / "fastwam_dataset_stats.json")
-        dataset = build_fastwam_dataset(cfg.dataset, stats_cache_path=stats_cache_path)
-        data_stats = {"fastwam": dataset.dataset_stats} if dataset.dataset_stats is not None else {}
+            stats_cache_path = str(Path(cfg.output_dir) / stats_filename)
+        dataset = build_policy_dataset(cfg.dataset, stats_cache_path=stats_cache_path)
+        data_stats = {stats_key: dataset.dataset_stats} if dataset.dataset_stats is not None else {}
         return dataset, data_stats
 
     image_transforms = (

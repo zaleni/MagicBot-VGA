@@ -34,24 +34,23 @@ export PYTHONPATH="${PROJ_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}"
 cd "${PROJ_ROOT}"
 
 POLICY="MagicBot_R0"
-MAGICBOT_R0_VARIANT="${MAGICBOT_R0_VARIANT:-${FASTWAM_VARIANT:-fastwam}}"
+MAGICBOT_R0_VARIANT="${MAGICBOT_R0_VARIANT:-magicbot_r0}"
 case "${MAGICBOT_R0_VARIANT}" in
-  fastwam|fastwam_joint)
+  magicbot_r0|magicbot_r0_joint)
     ;;
   *)
-    echo "Unsupported MagicBot_R0 variant=${MAGICBOT_R0_VARIANT}. Expected fastwam or fastwam_joint."
+    echo "Unsupported MagicBot_R0 variant=${MAGICBOT_R0_VARIANT}. Expected magicbot_r0 or magicbot_r0_joint."
     exit 1
     ;;
 esac
-FASTWAM_VARIANT="${MAGICBOT_R0_VARIANT}"
 
 WAN_MODEL_ID="${WAN_MODEL_ID:-Wan-AI/Wan2.2-TI2V-5B}"
 WAN_TOKENIZER_MODEL_ID="${WAN_TOKENIZER_MODEL_ID:-Wan-AI/Wan2.1-T2V-1.3B}"
-MAGICBOT_R0_REDIRECT_COMMON_FILES="${MAGICBOT_R0_REDIRECT_COMMON_FILES:-${FASTWAM_REDIRECT_COMMON_FILES:-true}}"
-MAGICBOT_R0_ASSET_ROOT="${MAGICBOT_R0_ASSET_ROOT:-${FASTWAM_ASSET_ROOT:-${PROJ_ROOT}/checkpoints/magicbot_r0}}"
+MAGICBOT_R0_REDIRECT_COMMON_FILES="${MAGICBOT_R0_REDIRECT_COMMON_FILES:-true}"
+MAGICBOT_R0_ASSET_ROOT="${MAGICBOT_R0_ASSET_ROOT:-${PROJ_ROOT}/checkpoints/magicbot_r0}"
 ACTION_DIT_PRETRAINED_PATH="${ACTION_DIT_PRETRAINED_PATH:-${MAGICBOT_R0_ASSET_ROOT}/ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt}"
 FUTURE_3D_PRETRAINED_PATH="${FUTURE_3D_PRETRAINED_PATH:-${MAGICBOT_R0_ASSET_ROOT}/Future3DExpert_linear_interp_Wan22_alphascale_768hdim.pt}"
-NATIVE_FASTWAM_CHECKPOINT_PATH="${NATIVE_FASTWAM_CHECKPOINT_PATH:-}"
+NATIVE_MAGICBOT_R0_CHECKPOINT_PATH="${NATIVE_MAGICBOT_R0_CHECKPOINT_PATH:-}"
 LOAD_TEXT_ENCODER="${LOAD_TEXT_ENCODER:-false}"
 
 ROBOTWIN_ROOT="${ROBOTWIN_ROOT:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/RoboTwin-LeRobot-v30}"
@@ -109,7 +108,7 @@ DA3_TEACHER_PROCESS_RES="${DA3_TEACHER_PROCESS_RES:-504}"
 LOG_DA3_TEACHER_TIMING="${LOG_DA3_TEACHER_TIMING:-true}"
 FUTURE_3D_TARGET_INDEX="${FUTURE_3D_TARGET_INDEX:--1}"
 DTYPE="${DTYPE:-bfloat16}"
-FASTWAM_CHECKPOINT_MIXED_ATTN="${FASTWAM_CHECKPOINT_MIXED_ATTN:-false}"
+MAGICBOT_R0_CHECKPOINT_MIXED_ATTN="${MAGICBOT_R0_CHECKPOINT_MIXED_ATTN:-false}"
 
 IMAGE_KEYS="${IMAGE_KEYS:-[\"head\",\"left\",\"right\"]}"
 IMAGE_RAW_SHAPES="${IMAGE_RAW_SHAPES:-[[3,480,640],[3,480,640],[3,480,640]]}"
@@ -297,7 +296,7 @@ ARGS=(
     --policy.future_3d_pretrained_path="${FUTURE_3D_PRETRAINED_PATH}"
     --policy.load_text_encoder="${LOAD_TEXT_ENCODER}"
     --policy.dtype="${DTYPE}"
-    --policy.mot_checkpoint_mixed_attn="${FASTWAM_CHECKPOINT_MIXED_ATTN}"
+    --policy.mot_checkpoint_mixed_attn="${MAGICBOT_R0_CHECKPOINT_MIXED_ATTN}"
     --policy.action_dim="${ACTION_DIM}"
     --policy.proprio_dim="${PROPRIO_DIM}"
     --policy.action_horizon="${ACTION_HORIZON}"
@@ -376,8 +375,8 @@ if [[ -n "${NORMALIZATION_STATS_PATH}" ]]; then
     ARGS+=(--dataset.normalization_stats_path="${NORMALIZATION_STATS_PATH}")
 fi
 
-if [[ -n "${NATIVE_FASTWAM_CHECKPOINT_PATH}" ]]; then
-    ARGS+=(--policy.native_checkpoint_path="${NATIVE_FASTWAM_CHECKPOINT_PATH}")
+if [[ -n "${NATIVE_MAGICBOT_R0_CHECKPOINT_PATH}" ]]; then
+    ARGS+=(--policy.native_checkpoint_path="${NATIVE_MAGICBOT_R0_CHECKPOINT_PATH}")
 fi
 
 if [[ -n "${VIDEO_BACKEND}" ]]; then

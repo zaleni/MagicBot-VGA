@@ -7,8 +7,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from lerobot.policies.MagicBot_R0.configuration_fastwam import MagicBotR0DatasetConfig
-from lerobot.policies.MagicBot_R0.dataset_fastwam import build_fastwam_dataset
+from lerobot.policies.MagicBot_R0.configuration_magicbot_r0 import MagicBotR0DatasetConfig
+from lerobot.policies.MagicBot_R0.dataset_magicbot_r0 import build_magicbot_r0_dataset
 
 
 def _json_arg(value: str, name: str) -> Any:
@@ -20,7 +20,7 @@ def _json_arg(value: str, name: str) -> Any:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Compute FastWAM/MagicBot_R0 normalization stats in the format expected by FastWAMProcessor."
+        description="Compute MagicBot_R0 normalization stats in the format expected by MagicBotR0Processor."
     )
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--repo-id-file", type=str, default=None, help="Text file with one local dataset path per line.")
@@ -97,7 +97,7 @@ def main() -> None:
         cfg_kwargs["video_backend"] = args.video_backend
 
     cfg = MagicBotR0DatasetConfig(**cfg_kwargs)
-    dataset = build_fastwam_dataset(cfg, stats_cache_path=str(output_path))
+    dataset = build_magicbot_r0_dataset(cfg, stats_cache_path=str(output_path))
 
     print("---------- done ----------")
     print(f"action_mode: {args.action_mode}")

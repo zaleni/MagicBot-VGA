@@ -10,7 +10,7 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
-from lerobot.policies.MagicBot_R0.configuration_fastwam import MagicBotR0Config
+from lerobot.policies.MagicBot_R0.configuration_magicbot_r0 import MagicBotR0Config
 from lerobot.policies.MagicBot_R0.core.models.wan22.action_dit import ActionDiT
 from lerobot.policies.MagicBot_R0.core.models.wan22.future_3d_expert import Future3DExpert
 from lerobot.policies.MagicBot_R0.core.models.wan22.helpers.loader import load_wan22_ti2v_5b_components

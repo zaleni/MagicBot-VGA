@@ -18,8 +18,8 @@ from lerobot.policies.cubev2.da3_teacher import DA3BackboneTeacher
 logger = get_logger(__name__)
 
 
-class FastWAM(torch.nn.Module):
-    """MoT world model with video/action experts."""
+class MagicBotR0(torch.nn.Module):
+    """MoT world model with video, future-3D, and action experts."""
 
     def __init__(
         self,
@@ -167,9 +167,9 @@ class FastWAM(torch.nn.Module):
         future_3d_view_attention_layout: str = "horizontal",
     ):
         if video_dit_config is None:
-            raise ValueError("`video_dit_config` is required for FastWAM.from_wan22_pretrained().")
+            raise ValueError("`video_dit_config` is required for MagicBotR0.from_wan22_pretrained().")
         if "text_dim" not in video_dit_config:
-            raise ValueError("`video_dit_config['text_dim']` is required for FastWAM.")
+            raise ValueError("`video_dit_config['text_dim']` is required for MagicBot_R0.")
 
         components = load_wan22_ti2v_5b_components(
             device=device,
@@ -361,7 +361,7 @@ class FastWAM(torch.nn.Module):
         video = sample["video"]
         if "context" not in sample or "context_mask" not in sample:
             raise ValueError(
-                "FastWAM training requires `sample['context']` and `sample['context_mask']`."
+                "MagicBot_R0 training requires `sample['context']` and `sample['context_mask']`."
             )
         context = sample["context"]
         context_mask = sample["context_mask"]
@@ -382,7 +382,7 @@ class FastWAM(torch.nn.Module):
             raise ValueError(f"Video T must be > 1 for action-conditioned training, got T={num_frames}")
 
         if "action" not in sample:
-            raise ValueError("`sample['action']` is required for FastWAM training.")
+            raise ValueError("`sample['action']` is required for MagicBot_R0 training.")
 
         action = sample["action"]
         if action.ndim != 3:
@@ -416,7 +416,7 @@ class FastWAM(torch.nn.Module):
                     "`sample['image_is_pad']` shape mismatch: "
                     f"got {tuple(image_is_pad.shape)} vs expected ({batch_size}, {num_frames})"
                 )
-        
+
         future_3d_images = sample.get("future_3d_images", None)
         future_3d_img_masks = sample.get("future_3d_img_masks", None)
         if future_3d_images is not None:

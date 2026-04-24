@@ -4,24 +4,24 @@ import torch
 
 from ...utils.logging_config import get_logger
 
-from .fastwam import FastWAM
+from .magicbot_r0 import MagicBotR0
 
 logger = get_logger(__name__)
 
 
-class FastWAMJoint(FastWAM):
-    """FastWAM variant where action attends to all video latent tokens."""
+class MagicBotR0Joint(MagicBotR0):
+    """MagicBot_R0 variant where action attends to all video latent tokens."""
 
     @classmethod
     def from_wan22_pretrained(cls, **kwargs):
         video_dit_config = kwargs.get("video_dit_config", None)
         if not isinstance(video_dit_config, dict):
             raise ValueError(
-                "`video_dit_config` must be provided as dict for FastWAMJoint."
+                "`video_dit_config` must be provided as dict for MagicBotR0Joint."
             )
         if bool(video_dit_config.get("action_conditioned", False)):
             raise ValueError(
-                "FastWAMJoint requires `video_dit_config['action_conditioned']=false`."
+                "MagicBotR0Joint requires `video_dit_config['action_conditioned']=false`."
             )
         return super().from_wan22_pretrained(**kwargs)
 
@@ -88,7 +88,7 @@ class FastWAMJoint(FastWAM):
     ) -> dict[str, Any]:
         if test_action_with_infer_action:
             logger.warning(
-                "`FastWAMJoint.infer_joint` ignores `test_action_with_infer_action=True` "
+                "`MagicBotR0Joint.infer_joint` ignores `test_action_with_infer_action=True` "
                 "and always runs with `test_action_with_infer_action=False`."
             )
         return super().infer_joint(
