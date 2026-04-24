@@ -40,6 +40,7 @@ from lerobot.datasets.transformed_dataset import (
     MultiStreamingLeRobotDataset, 
 )
 from lerobot.policies.fastwam.configuration_fastwam import FastWAMDatasetConfig
+from lerobot.policies.MagicBot_R0.configuration_fastwam import MagicBotR0DatasetConfig
 from lerobot.transforms.constants import get_feature_mapping, get_image_mapping
 from lerobot.utils.constants import ACTION, OBS_PREFIX, REWARD, OBS_STATE
 from lerobot.utils.constants import HF_LEROBOT_HOME
@@ -552,8 +553,11 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
     Returns:
         LeRobotDataset | MultiLeRobotDataset
     """
-    if isinstance(cfg.dataset, FastWAMDatasetConfig):
-        from lerobot.policies.fastwam.dataset_fastwam import build_fastwam_dataset
+    if isinstance(cfg.dataset, (FastWAMDatasetConfig, MagicBotR0DatasetConfig)):
+        if isinstance(cfg.dataset, MagicBotR0DatasetConfig):
+            from lerobot.policies.MagicBot_R0.dataset_fastwam import build_fastwam_dataset
+        else:
+            from lerobot.policies.fastwam.dataset_fastwam import build_fastwam_dataset
 
         if cfg.dataset.dist_loading:
             raise ValueError(
@@ -565,6 +569,23 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
                 "FastWAM training needs either `dataset.text_embedding_cache_dir` for cached text embeddings "
                 "or `policy.load_text_encoder=true` for on-the-fly prompt encoding."
             )
+        if isinstance(cfg.dataset, MagicBotR0DatasetConfig) and float(getattr(cfg.policy, "lambda_3d", 0.0)) > 0.0:
+            cfg.dataset.return_future_3d_images = True
+            if int(getattr(cfg.dataset, "processor_num_output_cameras", 0)) != int(
+                getattr(cfg.policy, "da3_num_views", 0)
+            ):
+                raise ValueError(
+                    "Future3DExpert needs policy.da3_num_views to match "
+                    "dataset.processor_num_output_cameras."
+                )
+            view_layout = getattr(cfg.policy, "future_3d_view_attention_layout", "horizontal")
+            concat_layout = getattr(cfg.dataset, "concat_multi_camera", "horizontal")
+            if view_layout != "full" and view_layout != concat_layout:
+                raise ValueError(
+                    "Future3DExpert view-aware attention layout must match dataset.concat_multi_camera: "
+                    f"policy.future_3d_view_attention_layout={view_layout!r}, "
+                    f"dataset.concat_multi_camera={concat_layout!r}."
+                )
         stats_cache_path = cfg.dataset.normalization_stats_path
         if stats_cache_path is None and cfg.output_dir is not None:
             stats_cache_path = str(Path(cfg.output_dir) / "fastwam_dataset_stats.json")

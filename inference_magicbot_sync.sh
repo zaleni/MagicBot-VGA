@@ -6,12 +6,12 @@ cd ~/research/MagicBot-VGA
 
 conda activate magicbot
 
-CHECKPOINT_DIR=/home/jiangjiahao/data/model/magicbot-lift2-0418 \
-QWEN3_VL_PRETRAINED_PATH=/home/jiangjiahao/data/model/Qwen3-VL-2B-Instruct \
-QWEN3_VL_PROCESSOR_PATH=/home/jiangjiahao/data/model/Qwen3-VL-2B-Instruct \
-COSMOS_TOKENIZER_PATH_OR_NAME=/home/jiangjiahao/data/model/Cosmos-Tokenizer-CI8x8 \
+CHECKPOINT_DIR=/home/jjhao/data/model/Lift2-Table_Clean-abs-0424 \
+QWEN3_VL_PRETRAINED_PATH=/home/jjhao/data/model/Qwen3-VL-2B-Instruct \
+QWEN3_VL_PROCESSOR_PATH=/home/jjhao/data/model/Qwen3-VL-2B-Instruct \
+COSMOS_TOKENIZER_PATH_OR_NAME=/home/jjhao/data/model/Cosmos-Tokenizer-CI8x8 \
 STATS_KEY=real_lift2 \
-ACTION_MODE=delta \
+ACTION_MODE=abs \
 DEVICE=cuda \
 LOAD_DEVICE=cuda \
 COSMOS_DEVICE=cuda \
@@ -25,7 +25,7 @@ bash evaluation/Real_Lift2/01_serve_magicbot_real_lift2.sh
 cd /home/arx/MagicBot-VGA
 
 RUN_ENV=act \
-WS_URL=ws://10.60.43.33:8102 \
+WS_URL=ws://10.60.45.31:8102 \
 PROMPT="Clear the junk and items off the desktop." \
 FRAME_RATE=24 \
 SEND_IMAGE_HEIGHT=240 \
@@ -41,7 +41,7 @@ source ~/.bashrc
 conda activate act
 
 REAL_LIFT2_RUNTIME_ROOT=/home/arx/ROS2_LIFT_Play/act \
-WS_URL=ws://10.60.43.33:8102 \
+WS_URL=ws://10.60.45.31:8102 \
 PROMPT="Clear the junk and items off the desktop." \
 FRAME_RATE=24 \
 IMAGE_HISTORY_INTERVAL=15 \

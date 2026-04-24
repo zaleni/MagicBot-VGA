@@ -16,6 +16,7 @@
 import logging
 import os
 import time
+from importlib import import_module
 from math import ceil
 from contextlib import nullcontext
 from datetime import timedelta
@@ -57,6 +58,15 @@ from lerobot.utils.utils import (
 )
 
 FASTWAM_TRAINER_STATE_FILE = "fastwam_trainer_state.json"
+FASTWAM_POLICY_TYPES = {"fastwam", "MagicBot_R0"}
+
+
+def _is_fastwam_policy_type(policy_type: str | None) -> bool:
+    return policy_type in FASTWAM_POLICY_TYPES
+
+
+def _fastwam_policy_module(policy_type: str) -> str:
+    return "MagicBot_R0" if policy_type == "MagicBot_R0" else "fastwam"
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -324,8 +334,11 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
     fastwam_worker_init_fn = None
     if cfg.seed is not None:
-        if cfg.policy is not None and cfg.policy.type == "fastwam":
-            from lerobot.policies.fastwam.core.utils.pytorch_utils import set_global_seed as set_fastwam_global_seed
+        if cfg.policy is not None and _is_fastwam_policy_type(cfg.policy.type):
+            fastwam_module = _fastwam_policy_module(cfg.policy.type)
+            set_fastwam_global_seed = import_module(
+                f"lerobot.policies.{fastwam_module}.core.utils.pytorch_utils"
+            ).set_global_seed
 
             fastwam_worker_init_fn = set_fastwam_global_seed(cfg.seed, get_worker_init_fn=True)
         else:
@@ -364,7 +377,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     else:
         data_stats = None
 
-    if cfg.policy.type == "fastwam":
+    if _is_fastwam_policy_type(cfg.policy.type):
         cfg.policy.action_norm_use_stepwise = bool(getattr(cfg.dataset, "processor_use_stepwise_action_norm", False))
         cfg.policy.action_norm_default_mode = str(getattr(cfg.dataset, "processor_norm_default_mode", "min/max"))
         fastwam_max_steps = getattr(cfg.policy, "train_max_steps", None)
@@ -397,7 +410,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         cfg=cfg.policy,
     )
 
-    if cfg.policy.type == "fastwam" and hasattr(policy, "set_action_postprocess_from_stats"):
+    if _is_fastwam_policy_type(cfg.policy.type) and hasattr(policy, "set_action_postprocess_from_stats"):
         fastwam_stats = getattr(dataset, "dataset_stats", None)
         if fastwam_stats is None and isinstance(data_stats, dict):
             fastwam_stats = data_stats.get("fastwam")
@@ -437,7 +450,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             "Effective batch size: "
             f"{cfg.batch_size} x {num_processes} x {cfg.gradient_accumulation_steps} = {effective_bs}"
         )
-        if cfg.policy.type == "fastwam":
+        if _is_fastwam_policy_type(cfg.policy.type):
             logging.info("policy info: %s", _format_policy_summary(policy))
             if _env_flag("PRINT_POLICY_STRUCTURE", default=False):
                 logging.info("policy structure:\n%s", policy)
@@ -446,8 +459,11 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
     # create dataloader for offline training
     fastwam_train_sampler = None
-    if cfg.policy.type == "fastwam":
-        from lerobot.policies.fastwam.core.utils.samplers import ResumableEpochSampler
+    if _is_fastwam_policy_type(cfg.policy.type):
+        fastwam_module = _fastwam_policy_module(cfg.policy.type)
+        ResumableEpochSampler = import_module(
+            f"lerobot.policies.{fastwam_module}.core.utils.samplers"
+        ).ResumableEpochSampler
 
         shuffle = False
         sampler = ResumableEpochSampler(
@@ -503,7 +519,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         )
     fastwam_epoch = 0
     fastwam_batch_in_epoch = 0
-    if cfg.resume and cfg.policy.type == "fastwam" and cfg.checkpoint_path is not None:
+    if cfg.resume and _is_fastwam_policy_type(cfg.policy.type) and cfg.checkpoint_path is not None:
         fastwam_state_path = Path(cfg.checkpoint_path) / "training_state" / FASTWAM_TRAINER_STATE_FILE
         if fastwam_state_path.is_file():
             fastwam_resume_state = load_json(fastwam_state_path)
@@ -519,14 +535,14 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                     fastwam_batch_in_epoch,
                     fastwam_batch_in_epoch * cfg.batch_size * accelerator.num_processes,
                 )
-    if cfg.policy.type == "fastwam":
+    if _is_fastwam_policy_type(cfg.policy.type):
         dl_iter = iter(dataloader)
     else:
         dl_iter = cycle(dataloader)
 
     policy.train()
 
-    if cfg.policy.type == "fastwam":
+    if _is_fastwam_policy_type(cfg.policy.type):
         train_metrics = {
             "loss": AverageMeter("loss", ":.3f"),
             "loss_action": AverageMeter("loss_action", ":.3f"),
@@ -536,6 +552,10 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             "update_s": AverageMeter("updt_s", ":.3f"),
             "dataloading_s": AverageMeter("data_s", ":.3f"),
         }
+        if cfg.policy.type == "MagicBot_R0":
+            train_metrics["loss_3d"] = AverageMeter("loss_3d", ":.3f")
+            if getattr(cfg.policy, "log_da3_teacher_timing", False):
+                train_metrics["time_3d_teacher_forward_s"] = AverageMeter("da3_s", ":.3f")
     elif cfg.policy.type in ["a1", "qwena1", "cubev2"]:
         train_metrics = {
             "loss": AverageMeter("loss", ":.3f"),
@@ -579,7 +599,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     accumulated_dataloading_time = 0.0
     while step < cfg.steps:
         start_time = time.perf_counter()
-        if cfg.policy.type == "fastwam":
+        if _is_fastwam_policy_type(cfg.policy.type):
             try:
                 batch = next(dl_iter)
                 fastwam_batch_in_epoch += 1
@@ -605,8 +625,8 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             cfg.optimizer.grad_clip_norm,
             accelerator=accelerator,
             lr_scheduler=lr_scheduler,
-            use_zero_grad_set_to_none=(cfg.policy.type == "fastwam"),
-            skip_scheduler_when_optimizer_step_skipped=(cfg.policy.type == "fastwam"),
+            use_zero_grad_set_to_none=_is_fastwam_policy_type(cfg.policy.type),
+            skip_scheduler_when_optimizer_step_skipped=_is_fastwam_policy_type(cfg.policy.type),
         )
         accumulated_update_time += update_time_s
 
@@ -698,7 +718,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                     scheduler=lr_scheduler,
                     data_stats=data_stats, 
                 )
-                if cfg.policy.type == "fastwam":
+                if _is_fastwam_policy_type(cfg.policy.type):
                     write_json(
                         {
                             "epoch": fastwam_epoch,
