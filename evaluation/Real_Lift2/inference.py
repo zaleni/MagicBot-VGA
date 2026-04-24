@@ -382,12 +382,14 @@ def maybe_run_first_safety_check(args, response, obs_dict, action_dim, *, auto_c
 class AsyncChunkPrefetcher:
     """Background websocket inference worker that can prefetch the next action chunk."""
 
-    def __init__(self, build_client):
+    def __init__(self, build_client, *, max_history: int):
         self._build_client = build_client
         self._request_queue: queue.Queue[dict | None] = queue.Queue(maxsize=1)
         self._result_queue: queue.Queue[dict] = queue.Queue(maxsize=1)
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
+        self._history_lock = threading.Lock()
+        self._pending_observations = deque(maxlen=max(1, int(max_history)))
         self._inflight = False
         self._thread = threading.Thread(target=self._worker_loop, daemon=True)
         self._thread.start()
@@ -405,6 +407,8 @@ class AsyncChunkPrefetcher:
                     return
 
                 try:
+                    for history_images in task.get("history_observations", []):
+                        client.observe(history_images)
                     response = client.infer_step(
                         images=task["images"],
                         qpos=task["qpos"],
@@ -413,6 +417,7 @@ class AsyncChunkPrefetcher:
                         inference_delay=task.get("inference_delay"),
                         prev_chunk_left_over=task.get("prev_chunk_left_over"),
                         prev_chunk_left_over_processed=task.get("prev_chunk_left_over_processed"),
+                        update_history=False,
                     )
                     result = {
                         "ok": True,
@@ -452,6 +457,28 @@ class AsyncChunkPrefetcher:
             except Exception:
                 pass
 
+    def observe(self, images) -> None:
+        snapshot = {
+            camera_name: np.asarray(image).copy()
+            for camera_name, image in images.items()
+        }
+        with self._history_lock:
+            self._pending_observations.append(snapshot)
+
+    def _snapshot_pending_observations(self) -> list[dict[str, np.ndarray]]:
+        with self._history_lock:
+            observations = list(self._pending_observations)
+            self._pending_observations.clear()
+        return observations
+
+    def _restore_pending_observations(self, observations: list[dict[str, np.ndarray]]) -> None:
+        if not observations:
+            return
+        with self._history_lock:
+            restored = list(observations) + list(self._pending_observations)
+            self._pending_observations.clear()
+            self._pending_observations.extend(restored[-self._pending_observations.maxlen :])
+
     def submit(
         self,
         *,
@@ -464,17 +491,20 @@ class AsyncChunkPrefetcher:
         prev_chunk_left_over_processed=None,
         action_index_before_inference: int | None = None,
     ) -> bool:
+        self.observe(images)
         with self._lock:
             if self._inflight or self._stop_event.is_set():
                 return False
             self._inflight = True
 
+        history_observations = self._snapshot_pending_observations()
         task = {
             "images": images,
             "qpos": np.asarray(qpos, dtype=np.float32).reshape(-1),
             "timestep": int(timestep),
             "prompt": prompt,
             "action_index_before_inference": action_index_before_inference,
+            "history_observations": history_observations,
         }
         if inference_delay is not None:
             task["inference_delay"] = int(inference_delay)
@@ -490,6 +520,7 @@ class AsyncChunkPrefetcher:
             self._request_queue.put_nowait(task)
             return True
         except queue.Full:
+            self._restore_pending_observations(history_observations)
             with self._lock:
                 self._inflight = False
             return False
@@ -523,6 +554,17 @@ class AsyncChunkPrefetcher:
         except queue.Full:
             pass
         self._thread.join(timeout=1.0)
+
+
+def update_image_history(history_target, args, shm_dict, shapes, *, warning_state: dict[str, bool]) -> None:
+    """Keep image history in control-frame units, not request/chunk units."""
+    try:
+        obs_dict = read_observation_snapshot(args, shm_dict, shapes)
+        history_target.observe(obs_dict["images"])
+    except Exception as exc:
+        if not warning_state.get("emitted", False):
+            print(f"[MagicBot] Failed to update image history during chunk execution: {exc}")
+            warning_state["emitted"] = True
 
 
 def inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_command):
@@ -606,11 +648,12 @@ def inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_comm
         timestep = 0
         episode_restart_requested = False
         if args.inference_mode == "async":
-            prefetcher = AsyncChunkPrefetcher(build_client)
+            prefetcher = AsyncChunkPrefetcher(build_client, max_history=args.image_history_interval + 1)
             current_response = None
             current_obs = None
             next_response = None
             last_round_trip_ms = None
+            async_history_warning = {"emitted": False}
 
             try:
                 while timestep < args.max_publish_step and ros_proc.is_alive():
@@ -725,6 +768,7 @@ def inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_comm
                         if timestep >= args.max_publish_step or (not ros_proc.is_alive()):
                             break
 
+                        history_updated_this_step = False
                         manual_home_restart, manual_home_auto_confirm = maybe_enter_manual_home_pause(
                             args,
                             ros_proc,
@@ -751,6 +795,7 @@ def inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_comm
                                 timestep=timestep,
                                 prompt=args.prompt,
                             )
+                            history_updated_this_step = True
 
                         maybe_result = prefetcher.poll()
                         if maybe_result is not None:
@@ -762,6 +807,14 @@ def inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_comm
                                 if reconnect_exc is not None:
                                     print(f"[MagicBot] reconnect failed: {reconnect_exc}")
 
+                        if not history_updated_this_step:
+                            update_image_history(
+                                prefetcher,
+                                args,
+                                shm_dict,
+                                shapes,
+                                warning_state=async_history_warning,
+                            )
                         action = step_action
                         robot_action(action, shm_dict)
                         timestep += 1
@@ -772,14 +825,16 @@ def inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_comm
             finally:
                 prefetcher.stop()
         elif args.inference_mode == "rtc":
-            prefetcher = AsyncChunkPrefetcher(build_client)
+            prefetcher = AsyncChunkPrefetcher(build_client, max_history=args.image_history_interval + 1)
             latency_tracker = LatencyTracker(maxlen=args.rtc_latency_lookback)
             action_queue = RTCActionQueue()
             pending_obs = None
             rtc_queue_warning_emitted = False
+            rtc_history_warning = {"emitted": False}
 
             try:
                 while timestep < args.max_publish_step and ros_proc.is_alive():
+                    history_updated_this_step = False
                     manual_home_restart, manual_home_auto_confirm = maybe_enter_manual_home_pause(
                         args,
                         ros_proc,
@@ -815,6 +870,7 @@ def inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_comm
                             prev_chunk_left_over_processed=prev_chunk_left_over_processed,
                             action_index_before_inference=action_queue.get_action_index(),
                         )
+                        history_updated_this_step = True
                         if not submitted:
                             pending_obs = None
 
@@ -922,6 +978,14 @@ def inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_comm
                                     )
                         pending_obs = None
 
+                    if not history_updated_this_step:
+                        update_image_history(
+                            prefetcher,
+                            args,
+                            shm_dict,
+                            shapes,
+                            warning_state=rtc_history_warning,
+                        )
                     next_action = action_queue.get()
                     if next_action is None:
                         action = write_zero_action(shm_dict, action_dim)
@@ -936,6 +1000,7 @@ def inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_comm
         else:
             client = build_client()
             client.reset()
+            sync_history_warning = {"emitted": False}
             while timestep < args.max_publish_step and ros_proc.is_alive():
                 manual_home_restart, manual_home_auto_confirm = maybe_enter_manual_home_pause(
                     args,
@@ -1027,6 +1092,7 @@ def inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_comm
                         auto_confirm_next_first_chunk = manual_home_auto_confirm
                         break
 
+                    update_image_history(client, args, shm_dict, shapes, warning_state=sync_history_warning)
                     action = step_action
                     robot_action(action, shm_dict)
                     timestep += 1

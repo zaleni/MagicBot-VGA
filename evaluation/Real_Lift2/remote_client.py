@@ -39,6 +39,17 @@ class RealLift2RemoteClient:
         self._image_histories: dict[str, list[np.ndarray]] = defaultdict(list)
         self._send_reset = True
 
+    def _append_images_to_history(self, images: Mapping[str, Any]) -> None:
+        for camera_name, image in images.items():
+            prepared = prepare_history_frame(
+                image,
+                send_image_height=self._send_image_height,
+                send_image_width=self._send_image_width,
+            )
+            self._image_histories[camera_name].append(prepared)
+            if len(self._image_histories[camera_name]) > self._max_history:
+                self._image_histories[camera_name].pop(0)
+
     @property
     def metadata(self) -> dict:
         return self._policy.get_server_metadata()
@@ -46,6 +57,10 @@ class RealLift2RemoteClient:
     def reset(self) -> None:
         self._image_histories.clear()
         self._send_reset = True
+
+    def observe(self, images: Mapping[str, Any]) -> None:
+        """Update local image history without sending a websocket request."""
+        self._append_images_to_history(images)
 
     def close(self) -> None:
         self._policy.close()
@@ -60,16 +75,10 @@ class RealLift2RemoteClient:
         inference_delay: int | None = None,
         prev_chunk_left_over: np.ndarray | None = None,
         prev_chunk_left_over_processed: np.ndarray | None = None,
+        update_history: bool = True,
     ) -> dict:
-        for camera_name, image in images.items():
-            prepared = prepare_history_frame(
-                image,
-                send_image_height=self._send_image_height,
-                send_image_width=self._send_image_width,
-            )
-            self._image_histories[camera_name].append(prepared)
-            if len(self._image_histories[camera_name]) > self._max_history:
-                self._image_histories[camera_name].pop(0)
+        if update_history:
+            self._append_images_to_history(images)
 
         request = build_cubev2_request(
             qpos=qpos,

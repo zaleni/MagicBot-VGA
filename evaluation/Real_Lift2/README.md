@@ -81,7 +81,7 @@ If your MagicBot training/eval environment is already working, the main deep-lea
 The most common extra runtime packages needed by the websocket `serve` side are:
 
 ```bash
-pip install "websockets>=14" msgpack pyyaml draccus huggingface_hub datasets pandas pyarrow pillow packaging einops
+pip install tyro matplotlib mediapy "websockets>=14" msgpack pyyaml draccus huggingface_hub datasets pandas pyarrow pillow packaging einops
 ```
 
 In most setups you should not reinstall `torch`, `torchvision`, or `transformers` here unless your existing MagicBot environment is missing them.
@@ -91,10 +91,14 @@ In most setups you should not reinstall `torch`, `torchvision`, or `transformers
 ```bash
 CHECKPOINT_DIR=/path/to/outputs_real/.../checkpoints/060000 \
 STATS_KEY=real_lift2 \
-ACTION_MODE=delta \
-INFER_HORIZON=30 \
+ACTION_MODE=abs \
+INFER_HORIZON=50 \
 bash evaluation/Real_Lift2/01_serve_magicbot_real_lift2.sh
 ```
+
+For a delta-action checkpoint, set `ACTION_MODE=delta` instead. The server will
+also compare this with `train_config.dataset.action_mode` when available, so a
+mismatched checkpoint/action-mode pair fails before robot execution.
 
 If `CHECKPOINT_DIR` points to:
 
@@ -116,12 +120,13 @@ Typical `serve`-machine checklist:
 ```bash
 WS_URL=ws://127.0.0.1:8000 \
 PROMPT="Clear the junk and items off the desktop." \
-SEND_IMAGE_HEIGHT=240 \
-SEND_IMAGE_WIDTH=320 \
+FRAME_RATE=24 \
+IMAGE_HISTORY_INTERVAL=15 \
+INFERENCE_MODE=sync \
 bash evaluation/Real_Lift2/run_real_lift2_inference.sh
 ```
 
-If `sync` mode is stable but chunk boundaries still pause for too long, the safest first optimization is usually reducing the robot-side websocket image size, for example `240x320`. The server will still resize/pad again to the model input size.
+By default this sends the original robot camera resolution to the server and lets the server-side preprocessing match the training pipeline. Only set `SEND_IMAGE_HEIGHT` and `SEND_IMAGE_WIDTH` deliberately if you want a robot-side bandwidth/latency tradeoff.
 
 `main.py` + `inference.py` + `runtime.py` follow the same broad structure as the existing robot deployment loop:
 
