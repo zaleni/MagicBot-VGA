@@ -66,30 +66,42 @@ pip install torchcodec numpy scipy transformers==4.57.1 mediapy loguru pytest om
 pip install -e .
 ```
 
-## 3. Qwen3-VL Dependency
+### Optional: install real-robot serving dependencies
 
-For `CubeV2`, the recommended dependency is the official Hugging Face `Qwen3-VL`
-implementation provided by `transformers>=4.57.0`.
+If you want to run real-robot evaluation with the serve interface, install the
+extra serving and visualization dependencies:
 
-In this repository, `CubeV2` imports Qwen3-VL directly from:
+```bash
+pip install tyro matplotlib mediapy websockets msgpack
+```
+
+## 3. Patch Qwen3-VL in Transformers
+
+For `CubeV2`, install `transformers==4.57.1` first, then patch the installed
+Qwen3-VL implementation with the repository copy:
+
+```bash
+TRANSFORMERS_DIR=${CONDA_PREFIX}/lib/python3.10/site-packages/transformers/
+
+cp -r src/lerobot/policies/cubev2/transformers_replace/models  ${TRANSFORMERS_DIR}
+```
+
+`CubeV2` imports Qwen3-VL directly from the installed `transformers` package:
 
 ```python
 from transformers.models.qwen3_vl import modeling_qwen3_vl
 from transformers.models.qwen3_vl import Qwen3VLForConditionalGeneration, Qwen3VLTextModel
 ```
 
-So for standard evaluation, you do not need to patch `transformers` if your environment
-already uses a recent enough official version such as `transformers==4.57.1`.
-
-This repo also contains a vendored replacement file under:
+The repository patch lives under:
 
 ```text
 src/lerobot/policies/cubev2/transformers_replace/models/qwen3_vl/modeling_qwen3_vl.py
 ```
 
-That file is best understood as a repo-side override copy. Most users evaluating
-`zaleni/MagicBot-VGA-Robotwin` should not need it unless they intentionally want to
-reproduce a specific local patched behavior.
+Training mostly runs the model without KV cache, but inference uses cached decoding
+with `past_key_values`. The patched file keeps that inference path compatible with
+the custom `CubeV2` attention flow, so it should be copied during installation.
 
 ## 4. Prepare RoboTwin for Evaluation
 

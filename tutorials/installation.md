@@ -51,6 +51,7 @@ We replace the default implementations of several model modules
 TRANSFORMERS_DIR=${CONDA_PREFIX}/lib/python3.10/site-packages/transformers/
 
 cp -r src/lerobot/policies/pi0/transformers_replace/models        ${TRANSFORMERS_DIR}
+cp -r src/lerobot/policies/cubev2/transformers_replace/models     ${TRANSFORMERS_DIR}
 cp -r src/lerobot/policies/InternVLA_A1_3B/transformers_replace/models  ${TRANSFORMERS_DIR}
 cp -r src/lerobot/policies/InternVLA_A1_2B/transformers_replace/models  ${TRANSFORMERS_DIR}
 ```

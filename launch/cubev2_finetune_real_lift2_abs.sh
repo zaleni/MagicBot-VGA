@@ -218,7 +218,7 @@ else
         --policy.gradient_checkpointing=false
         --policy.dtype=bfloat16
         --policy.optimizer_lr=5.0e-5
-        --policy.scheduler_warmup_steps=2000
+        --policy.scheduler_warmup_steps=1000
         --policy.scheduler_decay_steps="${STEPS}"
         --policy.scheduler_decay_lr=5.0e-6
         --policy.freeze_vision_encoder=false
