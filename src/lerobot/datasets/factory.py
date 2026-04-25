@@ -580,20 +580,32 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
                 "or `policy.load_text_encoder=true` for on-the-fly prompt encoding."
             )
         if isinstance(cfg.dataset, MagicBotR0DatasetConfig) and float(getattr(cfg.policy, "lambda_3d", 0.0)) > 0.0:
+            from lerobot.policies.MagicBot_R0.dataset_magicbot_r0 import resolve_magicbot_r0_concat_layout
+
             cfg.dataset.return_future_3d_images = True
-            if int(getattr(cfg.dataset, "processor_num_output_cameras", 0)) != int(
-                getattr(cfg.policy, "da3_num_views", 0)
-            ):
+            num_views = int(getattr(cfg.policy, "da3_num_views", 0))
+            num_output_cameras = int(getattr(cfg.dataset, "processor_num_output_cameras", 0))
+            if num_output_cameras != num_views:
                 raise ValueError(
                     "Future3DExpert needs policy.da3_num_views to match "
                     "dataset.processor_num_output_cameras."
                 )
-            view_layout = getattr(cfg.policy, "future_3d_view_attention_layout", "horizontal")
-            concat_layout = getattr(cfg.dataset, "concat_multi_camera", "horizontal")
+            view_layout = getattr(cfg.policy, "future_3d_view_attention_layout", "auto")
+            concat_layout = resolve_magicbot_r0_concat_layout(
+                num_output_cameras,
+                getattr(cfg.dataset, "concat_multi_camera", "auto"),
+            )
+            if view_layout == "auto":
+                if num_views <= 1:
+                    view_layout = "full"
+                elif num_views == 3:
+                    view_layout = "robotwin"
+                else:
+                    view_layout = "horizontal"
             if view_layout != "full" and view_layout != concat_layout:
                 raise ValueError(
                     "Future3DExpert view-aware attention layout must match dataset.concat_multi_camera: "
-                    f"policy.future_3d_view_attention_layout={view_layout!r}, "
+                    f"effective policy.future_3d_view_attention_layout={view_layout!r}, "
                     f"dataset.concat_multi_camera={concat_layout!r}."
                 )
         stats_cache_path = cfg.dataset.normalization_stats_path

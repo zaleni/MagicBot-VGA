@@ -10,7 +10,7 @@ logger = get_logger(__name__)
 
 
 class MagicBotR0Joint(MagicBotR0):
-    """MagicBot_R0 variant where action attends to all video latent tokens."""
+    """MagicBot_R0 joint variant where the 3D scene also reads future 2D tokens."""
 
     @classmethod
     def from_wan22_pretrained(cls, **kwargs):
@@ -25,46 +25,9 @@ class MagicBotR0Joint(MagicBotR0):
             )
         return super().from_wan22_pretrained(**kwargs)
 
-    @torch.no_grad()
-    def _build_mot_attention_mask(
-        self,
-        video_seq_len: int,
-        action_seq_len: int,
-        video_tokens_per_frame: int,
-        device: torch.device,
-        future_3d_seq_len: int = 0,
-        video_grid_size: tuple[int, int, int] | None = None,
-    ) -> torch.Tensor:
-        total_seq_len = video_seq_len + future_3d_seq_len + action_seq_len
-        mask = torch.zeros((total_seq_len, total_seq_len), dtype=torch.bool, device=device)
-
-        # video -> video
-        mask[:video_seq_len, :video_seq_len] = self.video_expert.build_video_to_video_mask(
-            video_seq_len=video_seq_len,
-            video_tokens_per_frame=video_tokens_per_frame,
-            device=device,
-        )
-        future_3d_start = video_seq_len
-        future_3d_end = future_3d_start + future_3d_seq_len
-        action_start = future_3d_end
-        first_frame_tokens = min(video_tokens_per_frame, video_seq_len)
-
-        if future_3d_seq_len > 0:
-            self._fill_future_3d_attention(
-                mask=mask,
-                future_3d_start=future_3d_start,
-                future_3d_end=future_3d_end,
-                video_tokens_per_frame=first_frame_tokens,
-                video_grid_size=video_grid_size,
-            )
-
-        # action -> action
-        mask[action_start:, action_start:] = True
-        # action -> full video
-        mask[action_start:, :video_seq_len] = True
-        if future_3d_seq_len > 0:
-            mask[action_start:, future_3d_start:future_3d_end] = True
-        return mask
+    def _future_3d_video_read_seq_len(self, video_seq_len: int, current_2d_end: int) -> int:
+        del current_2d_end
+        return video_seq_len
 
     @torch.no_grad()
     def infer_joint(

@@ -17,7 +17,7 @@ from lerobot.datasets.compute_stats import aggregate_stats
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 
 from .configuration_magicbot_r0 import MagicBotR0DatasetConfig
-from .core.data.dataset_utils import CenterCrop, Normalize, ResizeSmallestSideAspectPreserving
+from .core.data.dataset_utils import Normalize
 from .core.data.lerobot.processors.base_processor import BaseProcessor
 from .core.data.lerobot.processors.magicbot_r0_processor import MagicBotR0Processor
 from .core.data.lerobot.transforms.action_state_merger import ConcatLeftAlign
@@ -33,6 +33,41 @@ from .text_cache import DEFAULT_PROMPT, build_text_embedding_cache_path
 logger = get_logger(__name__)
 
 MAX_GETITEM_ATTEMPT = 5
+STANDARD_VIDEO_SIZE_BY_NUM_CAMERAS = {
+    1: (224, 224),
+    2: (224, 448),
+    3: (384, 320),
+}
+STANDARD_CONCAT_LAYOUT_BY_NUM_CAMERAS = {
+    1: "single",
+    2: "horizontal",
+    3: "robotwin",
+}
+
+
+def resolve_magicbot_r0_concat_layout(num_cameras: int, concat_multi_camera: str) -> str:
+    if num_cameras <= 0:
+        raise ValueError(f"num_cameras must be positive, got {num_cameras}.")
+    if num_cameras == 1:
+        return "single"
+    if concat_multi_camera == "auto":
+        return STANDARD_CONCAT_LAYOUT_BY_NUM_CAMERAS.get(num_cameras, "horizontal")
+    return concat_multi_camera
+
+
+def resolve_magicbot_r0_video_size(
+    num_cameras: int,
+    requested_video_size: tuple[int, int],
+    standardize_video_size_by_cameras: bool = True,
+) -> tuple[int, int]:
+    if standardize_video_size_by_cameras and num_cameras in STANDARD_VIDEO_SIZE_BY_NUM_CAMERAS:
+        return STANDARD_VIDEO_SIZE_BY_NUM_CAMERAS[num_cameras]
+    if len(requested_video_size) != 2:
+        raise ValueError(f"video_size must be (height, width), got {requested_video_size}.")
+    height, width = (int(value) for value in requested_video_size)
+    if height <= 0 or width <= 0:
+        raise ValueError(f"video_size values must be positive, got {requested_video_size}.")
+    return height, width
 
 
 class MaskedDeltaActionTransform:
@@ -649,6 +684,7 @@ class MagicBotR0RobotVideoDatasetV3(Dataset):
         shape_meta: dict[str, Any],
         num_frames: int = 33,
         video_size: tuple[int, int] = (224, 448),
+        standardize_video_size_by_cameras: bool = True,
         camera_key: str | None = None,
         processor: BaseProcessor | None = None,
         text_embedding_cache_dir: str | None = None,
@@ -691,7 +727,8 @@ class MagicBotR0RobotVideoDatasetV3(Dataset):
         self.camera_key = camera_key
         self.lerobot_dataset._set_return_images(True)
 
-        self.video_size = video_size
+        self.video_size = tuple(int(value) for value in video_size)
+        self.standardize_video_size_by_cameras = standardize_video_size_by_cameras
         self.text_embedding_cache_dir = text_embedding_cache_dir
         self.context_len = context_len
         self.skip_padding_as_possible = skip_padding_as_possible
@@ -701,12 +738,6 @@ class MagicBotR0RobotVideoDatasetV3(Dataset):
         self.return_future_3d_images = return_future_3d_images
         self.future_3d_target_index = int(future_3d_target_index)
 
-        self.resize_transform = ResizeSmallestSideAspectPreserving(
-            args={"img_w": self.video_size[1], "img_h": self.video_size[0]},
-        )
-        self.crop_transform = CenterCrop(
-            args={"img_w": self.video_size[1], "img_h": self.video_size[0]},
-        )
         self.normalize_transform = Normalize(args={"mean": 0.5, "std": 0.5})
 
         self.dataset_stats = None
@@ -748,6 +779,78 @@ class MagicBotR0RobotVideoDatasetV3(Dataset):
 
     def __len__(self) -> int:
         return len(self.lerobot_dataset)
+
+    @staticmethod
+    def _resize_video_view(video: torch.Tensor, size: tuple[int, int]) -> torch.Tensor:
+        return transforms_f.resize(
+            video,
+            size=list(size),
+            interpolation=transforms_f.InterpolationMode.BILINEAR,
+            antialias=True,
+        )
+
+    def _concat_camera_views(
+        self,
+        video: torch.Tensor,
+        num_cameras: int,
+        target_video_size: tuple[int, int],
+        concat_layout: str,
+    ) -> torch.Tensor:
+        target_h, target_w = target_video_size
+        if concat_layout == "single":
+            if num_cameras != 1:
+                raise ValueError(f"`single` camera layout requires 1 camera, got {num_cameras}.")
+            return self._resize_video_view(video[0], target_video_size)
+
+        if concat_layout == "horizontal":
+            if target_w % num_cameras != 0:
+                raise ValueError(
+                    "horizontal camera layout requires target width divisible by camera count: "
+                    f"width={target_w}, num_cameras={num_cameras}."
+                )
+            tile_w = target_w // num_cameras
+            views = [
+                self._resize_video_view(video[view_idx], (target_h, tile_w))
+                for view_idx in range(num_cameras)
+            ]
+            return torch.cat(views, dim=-1)
+
+        if concat_layout == "vertical":
+            if target_h % num_cameras != 0:
+                raise ValueError(
+                    "vertical camera layout requires target height divisible by camera count: "
+                    f"height={target_h}, num_cameras={num_cameras}."
+                )
+            tile_h = target_h // num_cameras
+            views = [
+                self._resize_video_view(video[view_idx], (tile_h, target_w))
+                for view_idx in range(num_cameras)
+            ]
+            return torch.cat(views, dim=-2)
+
+        if concat_layout == "robotwin":
+            if num_cameras != 3:
+                raise ValueError(
+                    f"`concat_multi_camera='robotwin'` requires exactly 3 cameras, got {num_cameras}."
+                )
+            if target_h % 3 != 0 or target_w % 2 != 0:
+                raise ValueError(
+                    "robotwin camera layout requires target height divisible by 3 and width divisible by 2: "
+                    f"height={target_h}, width={target_w}."
+                )
+            bottom_h = target_h // 3
+            top_h = target_h - bottom_h
+            half_w = target_w // 2
+            cam_top = self._resize_video_view(video[0], (top_h, target_w))
+            cam_left = self._resize_video_view(video[1], (bottom_h, half_w))
+            cam_right = self._resize_video_view(video[2], (bottom_h, half_w))
+            bottom = torch.cat([cam_left, cam_right], dim=-1)
+            return torch.cat([cam_top, bottom], dim=-2)
+
+        raise ValueError(
+            f"Invalid concat_multi_camera: {concat_layout}. "
+            "Expected one of: auto, horizontal, vertical, robotwin."
+        )
 
     def _get(self, idx: int) -> dict[str, Any]:
         sample_idx = idx
@@ -799,37 +902,13 @@ class MagicBotR0RobotVideoDatasetV3(Dataset):
                 dtype=torch.bool,
                 device=future_3d_images.device,
             )
-        if self.concat_multi_camera == "robotwin":
-            if num_cameras != 3:
-                raise ValueError(
-                    f"`concat_multi_camera='robotwin'` requires exactly 3 cameras, got {num_cameras}"
-                )
-            cam_top = transforms_f.resize(
-                video[0], size=[256, 320], interpolation=transforms_f.InterpolationMode.BILINEAR, antialias=True
-            )
-            cam_left = transforms_f.resize(
-                video[1], size=[128, 160], interpolation=transforms_f.InterpolationMode.BILINEAR, antialias=True
-            )
-            cam_right = transforms_f.resize(
-                video[2], size=[128, 160], interpolation=transforms_f.InterpolationMode.BILINEAR, antialias=True
-            )
-            bottom = torch.cat([cam_left, cam_right], dim=-1)
-            video = torch.cat([cam_top, bottom], dim=-2)
-        elif num_cameras > 1:
-            if self.concat_multi_camera == "horizontal":
-                video = torch.cat([video[i] for i in range(num_cameras)], dim=-1)
-            elif self.concat_multi_camera == "vertical":
-                video = torch.cat([video[i] for i in range(num_cameras)], dim=-2)
-            else:
-                raise ValueError(
-                    f"Invalid concat_multi_camera: {self.concat_multi_camera}. "
-                    "Expected one of: horizontal, vertical, robotwin."
-                )
-        else:
-            video = video.squeeze(0)
-
-        video = self.resize_transform(video)
-        video = self.crop_transform(video)
+        target_video_size = resolve_magicbot_r0_video_size(
+            num_cameras,
+            self.video_size,
+            self.standardize_video_size_by_cameras,
+        )
+        concat_layout = resolve_magicbot_r0_concat_layout(num_cameras, self.concat_multi_camera)
+        video = self._concat_camera_views(video, num_cameras, target_video_size, concat_layout)
         video = self.normalize_transform(video)
         video = video.permute(1, 0, 2, 3)
 
@@ -953,6 +1032,7 @@ def build_magicbot_r0_dataset(
         shape_meta=cfg.shape_meta,
         num_frames=cfg.num_frames,
         video_size=cfg.video_size,
+        standardize_video_size_by_cameras=cfg.standardize_video_size_by_cameras,
         camera_key=cfg.camera_key,
         processor=processor,
         text_embedding_cache_dir=cfg.text_embedding_cache_dir,

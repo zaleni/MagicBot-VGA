@@ -49,14 +49,15 @@ class MagicBotR0(torch.nn.Module):
         da3_teacher_layers: tuple[int, ...] | None = None,
         da3_layer_weights: tuple[float, ...] = (1.0, 1.2, 1.4, 1.6),
         log_da3_teacher_timing: bool = False,
-        future_3d_view_attention_layout: str = "horizontal",
+        future_3d_view_attention_layout: str = "auto",
     ):
         super().__init__()
         if future_3d_expert is None:
             raise ValueError("MagicBot_R0 requires a Future3DExpert.")
-        if future_3d_view_attention_layout not in {"horizontal", "vertical", "robotwin", "full"}:
+        if future_3d_view_attention_layout not in {"auto", "horizontal", "vertical", "robotwin", "full"}:
             raise ValueError(
-                "future_3d_view_attention_layout must be one of: horizontal, vertical, robotwin, full"
+                "future_3d_view_attention_layout must be one of: "
+                "auto, horizontal, vertical, robotwin, full"
             )
         self.video_expert = video_expert
         self.action_expert = action_expert
@@ -164,7 +165,7 @@ class MagicBotR0(torch.nn.Module):
         da3_teacher_layers: tuple[int, ...] | None = None,
         da3_layer_weights: tuple[float, ...] = (1.0, 1.2, 1.4, 1.6),
         log_da3_teacher_timing: bool = False,
-        future_3d_view_attention_layout: str = "horizontal",
+        future_3d_view_attention_layout: str = "auto",
     ):
         if video_dit_config is None:
             raise ValueError("`video_dit_config` is required for MagicBotR0.from_wan22_pretrained().")
@@ -492,6 +493,19 @@ class MagicBotR0(torch.nn.Module):
         }
 
     @torch.no_grad()
+    def _resolve_future_3d_view_attention_layout(self) -> str:
+        layout = self.future_3d_view_attention_layout
+        if layout != "auto":
+            return layout
+
+        num_views = int(self.future_3d_expert.da3_num_views)
+        if num_views <= 1:
+            return "full"
+        if num_views == 3:
+            return "robotwin"
+        return "horizontal"
+
+    @torch.no_grad()
     def _first_frame_view_token_indices(
         self,
         video_grid_size: tuple[int, int, int] | Sequence[int] | None,
@@ -499,7 +513,7 @@ class MagicBotR0(torch.nn.Module):
         device: torch.device,
     ) -> list[torch.Tensor] | None:
         num_views = int(self.future_3d_expert.da3_num_views)
-        layout = self.future_3d_view_attention_layout
+        layout = self._resolve_future_3d_view_attention_layout()
         if layout == "full" or num_views <= 1:
             return None
         if video_grid_size is None:
@@ -558,22 +572,62 @@ class MagicBotR0(torch.nn.Module):
         raise ValueError(f"Unsupported future_3d_view_attention_layout={layout!r}")
 
     @torch.no_grad()
+    def _view_video_token_indices(
+        self,
+        video_grid_size: tuple[int, int, int] | Sequence[int] | None,
+        video_tokens_per_frame: int,
+        video_seq_len: int,
+        device: torch.device,
+    ) -> list[torch.Tensor] | None:
+        frame_view_indices = self._first_frame_view_token_indices(
+            video_grid_size=video_grid_size,
+            video_tokens_per_frame=video_tokens_per_frame,
+            device=device,
+        )
+        if frame_view_indices is None:
+            return None
+        if video_seq_len % video_tokens_per_frame != 0:
+            raise ValueError(
+                "View-aware video token span must be frame-aligned: "
+                f"video_seq_len={video_seq_len}, tokens_per_frame={video_tokens_per_frame}."
+            )
+
+        num_frames = video_seq_len // video_tokens_per_frame
+        frame_offsets = torch.arange(num_frames, device=device) * int(video_tokens_per_frame)
+        view_token_indices = []
+        for indices in frame_view_indices:
+            view_token_indices.append((indices.unsqueeze(0) + frame_offsets[:, None]).reshape(-1))
+        return view_token_indices
+
+    def _future_3d_video_read_seq_len(self, video_seq_len: int, current_2d_end: int) -> int:
+        del video_seq_len
+        return current_2d_end
+
+    @torch.no_grad()
     def _fill_future_3d_attention(
         self,
         mask: torch.Tensor,
         future_3d_start: int,
         future_3d_end: int,
+        video_seq_len: int,
+        current_2d_end: int,
+        action_start: int,
         video_tokens_per_frame: int,
         video_grid_size: tuple[int, int, int] | Sequence[int] | None,
     ) -> None:
+        video_read_seq_len = self._future_3d_video_read_seq_len(
+            video_seq_len=video_seq_len,
+            current_2d_end=current_2d_end,
+        )
         future_3d_seq_len = future_3d_end - future_3d_start
-        view_token_indices = self._first_frame_view_token_indices(
+        view_token_indices = self._view_video_token_indices(
             video_grid_size=video_grid_size,
             video_tokens_per_frame=video_tokens_per_frame,
+            video_seq_len=video_read_seq_len,
             device=mask.device,
         )
         if view_token_indices is None:
-            mask[future_3d_start:future_3d_end, :video_tokens_per_frame] = True
+            mask[future_3d_start:future_3d_end, :video_read_seq_len] = True
         else:
             num_views = len(view_token_indices)
             if future_3d_seq_len % num_views != 0:
@@ -582,13 +636,13 @@ class MagicBotR0(torch.nn.Module):
                     f"query_tokens={future_3d_seq_len}, views={num_views}."
                 )
             query_tokens_per_view = future_3d_seq_len // num_views
-            for view_idx, first_frame_indices in enumerate(view_token_indices):
+            for view_idx, video_indices in enumerate(view_token_indices):
                 query_start = future_3d_start + view_idx * query_tokens_per_view
                 query_end = query_start + query_tokens_per_view
-                mask[query_start:query_end, first_frame_indices] = True
+                mask[query_start:query_end, video_indices] = True
 
-        # Query groups communicate bidirectionally after each group has read its own view.
         mask[future_3d_start:future_3d_end, future_3d_start:future_3d_end] = True
+        mask[future_3d_start:future_3d_end, action_start:] = True
 
     @torch.no_grad()
     def _build_mot_attention_mask(
@@ -613,17 +667,28 @@ class MagicBotR0(torch.nn.Module):
         future_3d_end = future_3d_start + future_3d_seq_len
         action_start = future_3d_end
         first_frame_tokens = min(video_tokens_per_frame, video_seq_len)
+        if video_seq_len > first_frame_tokens:
+            mask[:first_frame_tokens, first_frame_tokens:video_seq_len] = False
+            mask[first_frame_tokens:video_seq_len, :video_seq_len] = True
 
         if future_3d_seq_len > 0:
-            # Each per-view query group reads only its matching f0 camera region,
-            # then the full query block communicates internally before action reads it.
+            # Main FastWAM-like mask:
+            # current 2D -> current 2D
+            # subgoal 2D -> current/subgoal 2D + subgoal 3D
+            # subgoal 3D -> current 2D + subgoal 3D + action
+            # action -> current 2D + subgoal 3D + action
             self._fill_future_3d_attention(
                 mask=mask,
                 future_3d_start=future_3d_start,
                 future_3d_end=future_3d_end,
-                video_tokens_per_frame=first_frame_tokens,
+                video_seq_len=video_seq_len,
+                current_2d_end=first_frame_tokens,
+                action_start=action_start,
+                video_tokens_per_frame=video_tokens_per_frame,
                 video_grid_size=video_grid_size,
             )
+            if video_seq_len > first_frame_tokens:
+                mask[first_frame_tokens:video_seq_len, future_3d_start:future_3d_end] = True
 
         # action -> action
         mask[action_start:, action_start:] = True
@@ -1136,48 +1201,6 @@ class MagicBotR0(torch.nn.Module):
         return pred_action
 
     @torch.no_grad()
-    def _predict_action_noise_with_cache(
-        self,
-        latents_action: torch.Tensor,
-        timestep_action: torch.Tensor,
-        context: torch.Tensor,
-        context_mask: torch.Tensor,
-        prefix_kv_cache: list[dict[str, torch.Tensor]] | None = None,
-        attention_mask: torch.Tensor | None = None,
-        prefix_seq_len: int | None = None,
-        video_kv_cache: list[dict[str, torch.Tensor]] | None = None,
-        video_seq_len: int | None = None,
-    ) -> torch.Tensor:
-        if prefix_kv_cache is None:
-            prefix_kv_cache = video_kv_cache
-        if prefix_seq_len is None:
-            prefix_seq_len = video_seq_len
-        if prefix_kv_cache is None or prefix_seq_len is None:
-            raise ValueError("`prefix_kv_cache`/`prefix_seq_len` are required for cached action denoising.")
-        if attention_mask is None:
-            raise ValueError("`attention_mask` is required for cached action denoising.")
-
-        action_pre = self.action_expert.pre_dit(
-            action_tokens=latents_action,
-            timestep=timestep_action,
-            context=context,
-            context_mask=context_mask,
-        )
-        action_tokens = self.mot.forward_action_with_prefix_cache(
-            action_tokens=action_pre["tokens"],
-            action_freqs=action_pre["freqs"],
-            action_t_mod=action_pre["t_mod"],
-            action_context_payload={
-                "context": action_pre["context"],
-                "mask": action_pre["context_mask"],
-            },
-            prefix_kv_cache=prefix_kv_cache,
-            attention_mask=attention_mask,
-            prefix_seq_len=prefix_seq_len,
-        )
-        return self.action_expert.post_dit(action_tokens, action_pre)
-
-    @torch.no_grad()
     def infer_joint(
         self,
         prompt: Optional[str],
@@ -1375,10 +1398,6 @@ class MagicBotR0(torch.nn.Module):
         tiled: bool = False,
     ) -> dict[str, Any]:
         self.eval()
-        if str(getattr(self.video_expert, "video_attention_mask_mode", "")) != "first_frame_causal":
-            raise ValueError(
-                "`infer_action` requires `video_attention_mask_mode='first_frame_causal'`."
-            )
 
         if input_image.ndim == 3:
             input_image = input_image.unsqueeze(0)
@@ -1445,63 +1464,6 @@ class MagicBotR0(torch.nn.Module):
                 proprio=proprio,
             )
 
-        timestep_video = torch.zeros(
-            (first_frame_latents.shape[0],),
-            dtype=first_frame_latents.dtype,
-            device=self.device,
-        )
-        video_pre = self.video_expert.pre_dit(
-            x=first_frame_latents,
-            timestep=timestep_video,
-            context=context,
-            context_mask=context_mask,
-            action=None,
-            fuse_vae_embedding_in_latents=fuse_flag,
-        )
-        video_seq_len = int(video_pre["tokens"].shape[1])
-        future_3d_pre = None
-        future_3d_seq_len = 0
-        if self.future_3d_expert is not None:
-            future_3d_pre = self.future_3d_expert.pre_dit(
-                batch_size=first_frame_latents.shape[0],
-                device=self.device,
-                dtype=self.torch_dtype,
-            )
-            future_3d_seq_len = int(future_3d_pre["tokens"].shape[1])
-        attention_mask = self._build_mot_attention_mask(
-            video_seq_len=video_seq_len,
-            action_seq_len=latents_action.shape[1],
-            video_tokens_per_frame=int(video_pre["meta"]["tokens_per_frame"]),
-            device=video_pre["tokens"].device,
-            future_3d_seq_len=future_3d_seq_len,
-            video_grid_size=video_pre["meta"]["grid_size"],
-        )
-        video_kv_cache = self.mot.prefill_video_cache(
-            video_tokens=video_pre["tokens"],
-            video_freqs=video_pre["freqs"],
-            video_t_mod=video_pre["t_mod"],
-            video_context_payload={
-                "context": video_pre["context"],
-                "mask": video_pre["context_mask"],
-            },
-            video_attention_mask=attention_mask[:video_seq_len, :video_seq_len],
-        )
-        prefix_kv_cache = video_kv_cache
-        prefix_seq_len = video_seq_len
-        if future_3d_pre is not None:
-            future_3d_cache = self.mot.prefill_expert_with_prefix_cache(
-                expert_name="future_3d",
-                expert_tokens=future_3d_pre["tokens"],
-                expert_freqs=future_3d_pre["freqs"],
-                expert_t_mod=future_3d_pre["t_mod"],
-                expert_context_payload=None,
-                prefix_kv_cache=video_kv_cache,
-                attention_mask=attention_mask,
-                prefix_seq_len=video_seq_len,
-            )
-            prefix_kv_cache = self.mot.concat_kv_caches(video_kv_cache, future_3d_cache)
-            prefix_seq_len = video_seq_len + future_3d_seq_len
-
         infer_timesteps_action, infer_deltas_action = self.infer_action_scheduler.build_inference_schedule(
             num_inference_steps=num_inference_steps,
             device=self.device,
@@ -1511,14 +1473,13 @@ class MagicBotR0(torch.nn.Module):
         for step_t_action, step_delta_action in zip(infer_timesteps_action, infer_deltas_action):
             timestep_action = step_t_action.unsqueeze(0).to(dtype=latents_action.dtype, device=self.device)
 
-            pred_action_posi = self._predict_action_noise_with_cache(
+            pred_action_posi = self._predict_action_noise(
+                first_frame_latents=first_frame_latents,
                 latents_action=latents_action,
                 timestep_action=timestep_action,
                 context=context,
                 context_mask=context_mask,
-                prefix_kv_cache=prefix_kv_cache,
-                attention_mask=attention_mask,
-                prefix_seq_len=prefix_seq_len,
+                fuse_vae_embedding_in_latents=fuse_flag,
             )
             pred_action = pred_action_posi
 

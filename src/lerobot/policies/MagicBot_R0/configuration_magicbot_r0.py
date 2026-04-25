@@ -102,11 +102,12 @@ class MagicBotR0DatasetConfig(DatasetConfig):
     global_sample_stride: int = 1
     action_video_freq_ratio: int = 4
     video_size: tuple[int, int] = (224, 448)
+    standardize_video_size_by_cameras: bool = True
     camera_key: str | None = None
     val_set_proportion: float = 0.0
     skip_padding_as_possible: bool = False
     max_padding_retry: int = 3
-    concat_multi_camera: str = "horizontal"
+    concat_multi_camera: str = "auto"
     override_instruction: str | None = None
     return_future_3d_images: bool = True
     future_3d_target_index: int = -1
@@ -145,6 +146,13 @@ class MagicBotR0DatasetConfig(DatasetConfig):
             len(self.state_keys) == len(self.state_raw_shapes) == len(self.state_shapes)
         ):
             raise ValueError("State metadata lengths must match.")
+        if len(self.video_size) != 2:
+            raise ValueError("video_size must be a pair of (height, width).")
+        self.video_size = tuple(int(value) for value in self.video_size)
+        if self.video_size[0] <= 0 or self.video_size[1] <= 0:
+            raise ValueError("video_size values must be positive.")
+        if self.concat_multi_camera not in {"auto", "horizontal", "vertical", "robotwin"}:
+            raise ValueError("concat_multi_camera must be one of: auto, horizontal, vertical, robotwin.")
 
     @property
     def shape_meta(self) -> dict[str, Any]:
@@ -217,7 +225,7 @@ class MagicBotR0Config(PreTrainedConfig):
     da3_tokens_per_view: int = 1296
     da3_num_views: int = 2
     future_3d_tokens_per_view: int = 144
-    future_3d_view_attention_layout: str = "horizontal"
+    future_3d_view_attention_layout: str = "auto"
     da3_model_path_or_name: str = "depth-anything/DA3-LARGE-1.1"
     da3_model_name: str | None = None
     da3_code_root: str | None = None
@@ -288,9 +296,10 @@ class MagicBotR0Config(PreTrainedConfig):
             raise ValueError("da3_tokens_per_view must be positive")
         if self.future_3d_tokens_per_view <= 0:
             raise ValueError("future_3d_tokens_per_view must be positive")
-        if self.future_3d_view_attention_layout not in {"horizontal", "vertical", "robotwin", "full"}:
+        if self.future_3d_view_attention_layout not in {"auto", "horizontal", "vertical", "robotwin", "full"}:
             raise ValueError(
-                "future_3d_view_attention_layout must be one of: horizontal, vertical, robotwin, full"
+                "future_3d_view_attention_layout must be one of: "
+                "auto, horizontal, vertical, robotwin, full"
             )
         if len(self.da3_teacher_layers) != len(self.da3_layer_weights):
             raise ValueError("da3_layer_weights must align with da3_teacher_layers")
