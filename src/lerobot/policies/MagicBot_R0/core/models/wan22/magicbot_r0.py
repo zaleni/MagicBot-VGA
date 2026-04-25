@@ -859,6 +859,58 @@ class MagicBotR0(torch.nn.Module):
             total_loss = total_loss / len(predicted_queries)
         return total_loss, loss_logs
 
+    def _future_3d_query_noise_sigma(
+        self,
+        batch_size: int,
+        timestep: torch.Tensor | None,
+        scheduler: WanContinuousFlowMatchScheduler | None,
+        dtype: torch.dtype,
+    ) -> torch.Tensor | None:
+        if self.future_3d_expert is None:
+            return None
+        if getattr(self.future_3d_expert, "query_mode", "query_token") == "query_token":
+            return None
+        min_sigma = float(getattr(self.future_3d_expert, "query_noise_min_sigma", 0.0))
+        max_sigma = float(getattr(self.future_3d_expert, "query_noise_max_sigma", 1.0))
+        sigma_source = getattr(self.future_3d_expert, "query_sigma_source", "constant")
+        if sigma_source == "constant":
+            return torch.full((batch_size,), max_sigma, device=self.device, dtype=dtype)
+        if timestep is None or scheduler is None:
+            return None
+        sigma = timestep.to(device=self.device, dtype=torch.float32) / float(scheduler.num_train_timesteps)
+        return sigma.clamp(min_sigma, max_sigma).to(dtype=dtype)
+
+    def _future_3d_pre_dit(
+        self,
+        batch_size: int,
+        dtype: torch.dtype,
+        timestep: torch.Tensor | None = None,
+        scheduler: WanContinuousFlowMatchScheduler | None = None,
+    ) -> tuple[dict[str, Any], torch.Tensor | None]:
+        if self.future_3d_expert is None:
+            raise RuntimeError("Future3DExpert is not enabled.")
+        query_noise_sigma = self._future_3d_query_noise_sigma(
+            batch_size=batch_size,
+            timestep=timestep,
+            scheduler=scheduler,
+            dtype=dtype,
+        )
+        if getattr(self.future_3d_expert, "query_mode", "query_token") == "query_token":
+            timestep = None
+        elif query_noise_sigma is not None and scheduler is not None:
+            timestep = (
+                query_noise_sigma.to(device=self.device, dtype=torch.float32)
+                * float(scheduler.num_train_timesteps)
+            ).to(dtype=dtype)
+        pre = self.future_3d_expert.pre_dit(
+            batch_size=batch_size,
+            device=self.device,
+            dtype=dtype,
+            timestep=timestep,
+            query_noise_sigma=query_noise_sigma,
+        )
+        return pre, query_noise_sigma
+
     def training_loss(self, sample, tiled: bool = False):
         inputs = self.build_inputs(sample, tiled=tiled)
         input_latents = inputs["input_latents"]
@@ -908,11 +960,13 @@ class MagicBotR0(torch.nn.Module):
             context_mask=context_mask,
         )
         future_3d_pre = None
+        future_3d_query_sigma = None
         if self.future_3d_expert is not None:
-            future_3d_pre = self.future_3d_expert.pre_dit(
+            future_3d_pre, future_3d_query_sigma = self._future_3d_pre_dit(
                 batch_size=batch_size,
-                device=self.device,
                 dtype=self.torch_dtype,
+                timestep=timestep_video,
+                scheduler=self.train_video_scheduler,
             )
 
         video_tokens = video_pre["tokens"]
@@ -1026,6 +1080,8 @@ class MagicBotR0(torch.nn.Module):
             "loss_action": self.loss_lambda_action * float(loss_action.detach().item()),
             "loss_3d": float(loss_3d.detach().item()),
         }
+        if future_3d_query_sigma is not None:
+            loss_dict["future_3d_query_sigma"] = float(future_3d_query_sigma.detach().float().mean().item())
         for key, value in loss_3d_logs.items():
             loss_dict[key] = float(value.detach().item())
         return loss_total, loss_dict
@@ -1058,10 +1114,11 @@ class MagicBotR0(torch.nn.Module):
         )
         future_3d_pre = None
         if self.future_3d_expert is not None:
-            future_3d_pre = self.future_3d_expert.pre_dit(
+            future_3d_pre, _ = self._future_3d_pre_dit(
                 batch_size=latents_action.shape[0],
-                device=self.device,
                 dtype=self.torch_dtype,
+                timestep=timestep_video,
+                scheduler=self.infer_video_scheduler,
             )
         future_3d_seq_len = 0 if future_3d_pre is None else int(future_3d_pre["tokens"].shape[1])
 
@@ -1144,10 +1201,11 @@ class MagicBotR0(torch.nn.Module):
         )
         future_3d_pre = None
         if self.future_3d_expert is not None:
-            future_3d_pre = self.future_3d_expert.pre_dit(
+            future_3d_pre, _ = self._future_3d_pre_dit(
                 batch_size=latents_action.shape[0],
-                device=self.device,
                 dtype=self.torch_dtype,
+                timestep=timestep_action,
+                scheduler=self.infer_action_scheduler,
             )
         future_3d_seq_len = 0 if future_3d_pre is None else int(future_3d_pre["tokens"].shape[1])
 

@@ -14,6 +14,10 @@ from lerobot.policies.cubev2.da3_teacher import resolve_da3_backbone_defaults
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 
+FUTURE_3D_QUERY_MODES = ("query_token", "noised_query_token", "slot_noise")
+FUTURE_3D_QUERY_SIGMA_SOURCES = ("constant", "video")
+
+
 def _default_video_dit_config(action_dim: int) -> dict[str, Any]:
     return {
         "has_image_input": False,
@@ -60,6 +64,12 @@ def _default_future_3d_config(
     da3_num_views: int,
     da3_tokens_per_view: int,
     future_3d_tokens_per_view: int,
+    query_mode: str,
+    query_noise_scale: float,
+    query_noise_min_sigma: float,
+    query_noise_max_sigma: float,
+    query_sigma_source: str,
+    slot_pos_scale: float,
 ) -> dict[str, Any]:
     return {
         "hidden_dim": 768,
@@ -76,6 +86,12 @@ def _default_future_3d_config(
         "da3_query_dim": da3_query_dim,
         "query_layer_indices": (13, 19, 23, 27),
         "future_query_init_std": 0.02,
+        "query_mode": query_mode,
+        "query_noise_scale": query_noise_scale,
+        "query_noise_min_sigma": query_noise_min_sigma,
+        "query_noise_max_sigma": query_noise_max_sigma,
+        "query_sigma_source": query_sigma_source,
+        "slot_pos_scale": slot_pos_scale,
         "use_gradient_checkpointing": True,
     }
 
@@ -232,6 +248,12 @@ class MagicBotR0Config(PreTrainedConfig):
     da3_teacher_process_res: int = 504
     da3_layer_weights: tuple[float, ...] = (1.0, 1.2, 1.4, 1.6)
     future_query_init_std: float = 0.02
+    future_3d_query_mode: str = "query_token"
+    future_3d_query_noise_scale: float = 0.5
+    future_3d_query_noise_min_sigma: float = 0.0
+    future_3d_query_noise_max_sigma: float = 0.5
+    future_3d_query_sigma_source: str = "constant"
+    future_3d_slot_pos_scale: float = 0.5
     log_da3_teacher_timing: bool = False
     video_scheduler: dict[str, Any] = field(
         default_factory=lambda: {
@@ -301,6 +323,23 @@ class MagicBotR0Config(PreTrainedConfig):
                 "future_3d_view_attention_layout must be one of: "
                 "auto, horizontal, vertical, robotwin, full"
             )
+        if self.future_3d_query_mode not in FUTURE_3D_QUERY_MODES:
+            raise ValueError(
+                f"future_3d_query_mode must be one of {FUTURE_3D_QUERY_MODES}, "
+                f"got {self.future_3d_query_mode!r}"
+            )
+        if self.future_3d_query_sigma_source not in FUTURE_3D_QUERY_SIGMA_SOURCES:
+            raise ValueError(
+                f"future_3d_query_sigma_source must be one of {FUTURE_3D_QUERY_SIGMA_SOURCES}, "
+                f"got {self.future_3d_query_sigma_source!r}"
+            )
+        if self.future_3d_query_noise_scale < 0:
+            raise ValueError("future_3d_query_noise_scale must be non-negative")
+        if not (0.0 <= self.future_3d_query_noise_min_sigma <= self.future_3d_query_noise_max_sigma <= 1.0):
+            raise ValueError(
+                "future_3d_query_noise_min_sigma and future_3d_query_noise_max_sigma must satisfy "
+                "0 <= min <= max <= 1"
+            )
         if len(self.da3_teacher_layers) != len(self.da3_layer_weights):
             raise ValueError("da3_layer_weights must align with da3_teacher_layers")
         if self.future_3d_config is None:
@@ -309,6 +348,12 @@ class MagicBotR0Config(PreTrainedConfig):
                 da3_num_views=self.da3_num_views,
                 da3_tokens_per_view=self.da3_tokens_per_view,
                 future_3d_tokens_per_view=self.future_3d_tokens_per_view,
+                query_mode=self.future_3d_query_mode,
+                query_noise_scale=self.future_3d_query_noise_scale,
+                query_noise_min_sigma=self.future_3d_query_noise_min_sigma,
+                query_noise_max_sigma=self.future_3d_query_noise_max_sigma,
+                query_sigma_source=self.future_3d_query_sigma_source,
+                slot_pos_scale=self.future_3d_slot_pos_scale,
             )
         else:
             default_future_3d_config = _default_future_3d_config(
@@ -316,6 +361,12 @@ class MagicBotR0Config(PreTrainedConfig):
                 da3_num_views=self.da3_num_views,
                 da3_tokens_per_view=self.da3_tokens_per_view,
                 future_3d_tokens_per_view=self.future_3d_tokens_per_view,
+                query_mode=self.future_3d_query_mode,
+                query_noise_scale=self.future_3d_query_noise_scale,
+                query_noise_min_sigma=self.future_3d_query_noise_min_sigma,
+                query_noise_max_sigma=self.future_3d_query_noise_max_sigma,
+                query_sigma_source=self.future_3d_query_sigma_source,
+                slot_pos_scale=self.future_3d_slot_pos_scale,
             )
             default_future_3d_config.update(dict(self.future_3d_config))
             self.future_3d_config = default_future_3d_config
@@ -323,6 +374,13 @@ class MagicBotR0Config(PreTrainedConfig):
             self.future_3d_config.setdefault("da3_num_views", self.da3_num_views)
             self.future_3d_config.setdefault("da3_tokens_per_view", self.da3_tokens_per_view)
             self.future_3d_config.setdefault("future_query_init_std", self.future_query_init_std)
+        self.future_3d_config["future_query_init_std"] = float(self.future_query_init_std)
+        self.future_3d_config["query_mode"] = self.future_3d_query_mode
+        self.future_3d_config["query_noise_scale"] = float(self.future_3d_query_noise_scale)
+        self.future_3d_config["query_noise_min_sigma"] = float(self.future_3d_query_noise_min_sigma)
+        self.future_3d_config["query_noise_max_sigma"] = float(self.future_3d_query_noise_max_sigma)
+        self.future_3d_config["query_sigma_source"] = self.future_3d_query_sigma_source
+        self.future_3d_config["slot_pos_scale"] = float(self.future_3d_slot_pos_scale)
         self.future_3d_config["query_layer_indices"] = tuple(
             int(idx) for idx in self.future_3d_config.get("query_layer_indices", (13, 19, 23, 27))
         )

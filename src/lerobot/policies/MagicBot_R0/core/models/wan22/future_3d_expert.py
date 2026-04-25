@@ -118,8 +118,11 @@ class Future3DBlock(nn.Module):
 
 
 class Future3DExpert(nn.Module):
+    QUERY_MODES = ("query_token", "noised_query_token", "slot_noise")
+    QUERY_SIGMA_SOURCES = ("constant", "video")
     FUTURE_3D_BACKBONE_SKIP_PREFIXES = (
         "query_tokens",
+        "inference_noise_tokens",
         "layer_norms.",
         "output_queries",
         "output_decoder.",
@@ -150,10 +153,24 @@ class Future3DExpert(nn.Module):
         da3_query_dim: int = 2048,
         query_layer_indices: tuple[int, ...] = (13, 19, 23, 27),
         future_query_init_std: float = 0.02,
+        query_mode: str = "query_token",
+        query_noise_scale: float = 1.0,
+        query_noise_min_sigma: float = 0.0,
+        query_noise_max_sigma: float = 0.5,
+        query_sigma_source: str = "constant",
+        slot_pos_scale: float = 1.0,
         use_gradient_checkpointing: bool = False,
     ):
         super().__init__()
         del text_dim
+        query_mode = str(query_mode)
+        if query_mode not in self.QUERY_MODES:
+            raise ValueError(f"`query_mode` must be one of {self.QUERY_MODES}, got {query_mode!r}")
+        query_sigma_source = str(query_sigma_source)
+        if query_sigma_source not in self.QUERY_SIGMA_SOURCES:
+            raise ValueError(
+                f"`query_sigma_source` must be one of {self.QUERY_SIGMA_SOURCES}, got {query_sigma_source!r}"
+            )
         if num_query_tokens <= 0:
             raise ValueError(f"`num_query_tokens` must be positive, got {num_query_tokens}")
         if da3_num_views <= 0:
@@ -176,8 +193,31 @@ class Future3DExpert(nn.Module):
         self.da3_query_dim = da3_query_dim
         self.query_layer_indices = tuple(int(idx) for idx in query_layer_indices)
         self.query_tokens_per_view = num_query_tokens // da3_num_views
+        self.query_mode = query_mode
+        self.query_noise_scale = float(query_noise_scale)
+        self.query_noise_min_sigma = float(query_noise_min_sigma)
+        self.query_noise_max_sigma = float(query_noise_max_sigma)
+        self.query_sigma_source = query_sigma_source
+        self.slot_pos_scale = float(slot_pos_scale)
+        if self.query_noise_scale < 0:
+            raise ValueError("`query_noise_scale` must be non-negative.")
+        if not (0.0 <= self.query_noise_min_sigma <= self.query_noise_max_sigma <= 1.0):
+            raise ValueError(
+                "`query_noise_min_sigma` and `query_noise_max_sigma` must satisfy "
+                "0 <= min <= max <= 1."
+            )
 
-        self.query_tokens = nn.Parameter(torch.randn(1, num_query_tokens, hidden_dim) * future_query_init_std)
+        query_tokens = torch.randn(1, num_query_tokens, hidden_dim) * future_query_init_std
+        if self.query_mode == "slot_noise":
+            self.register_buffer("query_tokens", query_tokens)
+        else:
+            self.query_tokens = nn.Parameter(query_tokens)
+        slot_positions = torch.arange(num_query_tokens, dtype=torch.float32)
+        slot_pos_embed = sinusoidal_embedding_1d(hidden_dim, slot_positions).unsqueeze(0)
+        self.register_buffer("slot_pos_embed", slot_pos_embed, persistent=False)
+        inference_noise = torch.empty(1, num_query_tokens, hidden_dim)
+        inference_noise.normal_(generator=torch.Generator().manual_seed(0))
+        self.register_buffer("inference_noise_tokens", inference_noise, persistent=False)
         self.time_embedding = nn.Sequential(
             nn.Linear(freq_dim, hidden_dim),
             nn.SiLU(),
@@ -334,12 +374,56 @@ class Future3DExpert(nn.Module):
         future_expert.load_state_dict(merged_state, strict=True)
         return future_expert.to(device=device, dtype=torch_dtype)
 
+    def _query_noise(self, batch_size: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+        if self.training and torch.is_grad_enabled():
+            return torch.randn(batch_size, self.num_query_tokens, self.hidden_dim, device=device, dtype=dtype)
+        return self.inference_noise_tokens.expand(batch_size, -1, -1).to(device=device, dtype=dtype)
+
+    def _prepare_query_tokens(
+        self,
+        batch_size: int,
+        device: torch.device,
+        dtype: torch.dtype,
+        query_noise_sigma: torch.Tensor | None,
+    ) -> torch.Tensor:
+        clean_query = self.query_tokens.expand(batch_size, -1, -1).to(device=device, dtype=dtype)
+        if self.query_mode == "query_token":
+            return clean_query
+
+        if query_noise_sigma is None:
+            default_sigma = self.query_noise_max_sigma if self.training else self.query_noise_max_sigma
+            sigma = torch.full((batch_size,), default_sigma, device=device, dtype=dtype)
+        else:
+            sigma = query_noise_sigma.to(device=device, dtype=dtype)
+            if sigma.ndim == 0:
+                sigma = sigma.expand(batch_size)
+            if sigma.ndim != 1 or sigma.shape[0] not in (1, batch_size):
+                raise ValueError(
+                    "`query_noise_sigma` must be scalar or 1D [B], "
+                    f"got shape {tuple(query_noise_sigma.shape)}"
+                )
+            if sigma.shape[0] == 1 and batch_size > 1:
+                sigma = sigma.expand(batch_size)
+        sigma = sigma.clamp(min=self.query_noise_min_sigma, max=self.query_noise_max_sigma)
+        sigma = sigma.view(batch_size, 1, 1)
+
+        noise = self._query_noise(batch_size=batch_size, device=device, dtype=dtype) * self.query_noise_scale
+        if self.query_mode == "noised_query_token":
+            return (1.0 - sigma) * clean_query + sigma * noise
+
+        if self.query_mode == "slot_noise":
+            slot_pos = self.slot_pos_embed.expand(batch_size, -1, -1).to(device=device, dtype=dtype)
+            return slot_pos * self.slot_pos_scale + sigma * noise
+
+        raise RuntimeError(f"Unsupported future-3D query mode: {self.query_mode!r}")
+
     def pre_dit(
         self,
         batch_size: int,
         device: torch.device,
         dtype: torch.dtype,
         timestep: torch.Tensor | None = None,
+        query_noise_sigma: torch.Tensor | None = None,
     ) -> Dict[str, Any]:
         if timestep is None:
             timestep = torch.zeros((batch_size,), device=device, dtype=dtype)
@@ -352,7 +436,12 @@ class Future3DExpert(nn.Module):
         if timestep.shape[0] != batch_size:
             raise ValueError(f"`timestep` length must be {batch_size}, got {timestep.shape[0]}")
 
-        tokens = self.query_tokens.expand(batch_size, -1, -1).to(device=device, dtype=dtype)
+        tokens = self._prepare_query_tokens(
+            batch_size=batch_size,
+            device=device,
+            dtype=dtype,
+            query_noise_sigma=query_noise_sigma,
+        )
         t = self.time_embedding(sinusoidal_embedding_1d(self.freq_dim, timestep))
         t_mod = self.time_projection(t).unflatten(1, (6, self.hidden_dim))
         freqs = self.freqs[: self.num_query_tokens].view(self.num_query_tokens, 1, -1).to(device)
@@ -366,6 +455,7 @@ class Future3DExpert(nn.Module):
             "meta": {
                 "batch_size": batch_size,
                 "seq_len": self.num_query_tokens,
+                "query_mode": self.query_mode,
             },
         }
 
