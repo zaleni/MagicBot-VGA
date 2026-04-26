@@ -151,7 +151,7 @@ class Future3DExpert(nn.Module):
         da3_num_views: int = 2,
         da3_tokens_per_view: int = 1296,
         da3_query_dim: int = 2048,
-        query_layer_indices: tuple[int, ...] = (13, 19, 23, 27),
+        query_layer_indices: tuple[int, ...] = (14, 19, 24, 29),
         future_query_init_std: float = 0.02,
         query_mode: str = "query_token",
         query_noise_scale: float = 1.0,

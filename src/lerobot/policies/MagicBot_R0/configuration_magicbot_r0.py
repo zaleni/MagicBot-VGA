@@ -84,7 +84,7 @@ def _default_future_3d_config(
         "da3_num_views": da3_num_views,
         "da3_tokens_per_view": da3_tokens_per_view,
         "da3_query_dim": da3_query_dim,
-        "query_layer_indices": (13, 19, 23, 27),
+        "query_layer_indices": (14, 19, 24, 29),
         "future_query_init_std": 0.02,
         "query_mode": query_mode,
         "query_noise_scale": query_noise_scale,
@@ -385,7 +385,7 @@ class MagicBotR0Config(PreTrainedConfig):
         self.future_3d_config["query_sigma_source"] = self.future_3d_query_sigma_source
         self.future_3d_config["slot_pos_scale"] = float(self.future_3d_slot_pos_scale)
         self.future_3d_config["query_layer_indices"] = tuple(
-            int(idx) for idx in self.future_3d_config.get("query_layer_indices", (13, 19, 23, 27))
+            int(idx) for idx in self.future_3d_config.get("query_layer_indices", (14, 19, 24, 29))
         )
         if len(self.future_3d_config["query_layer_indices"]) != len(self.da3_teacher_layers):
             raise ValueError("future_3d_config.query_layer_indices and da3_teacher_layers must have the same length")

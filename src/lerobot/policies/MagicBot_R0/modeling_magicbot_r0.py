@@ -155,6 +155,7 @@ class MagicBotR0Policy(PreTrainedPolicy):
             f"  - Query sigma range   : [{future_3d.query_noise_min_sigma}, {future_3d.query_noise_max_sigma}]",
             f"  - Query sigma source  : {future_3d.query_sigma_source}",
             f"  - Slot pos scale      : {future_3d.slot_pos_scale}",
+            f"  - Query layers        : {future_3d.query_layer_indices}",
             f"  - Views               : {future_3d.da3_num_views}",
             f"  - Query tokens/view   : {future_3d.query_tokens_per_view}",
             f"  - DA3 tokens/view     : {future_3d.da3_tokens_per_view}",
