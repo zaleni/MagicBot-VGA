@@ -76,7 +76,7 @@ NORM_DEFAULT_MODE="${NORM_DEFAULT_MODE:-q01q99}"
 BATCH_SIZE="${BATCH_SIZE:-16}"
 GRAD_ACCUM_STEPS="${GRAD_ACCUM_STEPS:-1}"
 STEPS="${STEPS:-1}"
-NUM_EPOCHS="${NUM_EPOCHS:-10}"
+NUM_EPOCHS="${NUM_EPOCHS-10}"
 TRAIN_MAX_STEPS="${TRAIN_MAX_STEPS:-}"
 SAVE_FREQ="${SAVE_FREQ:-2000}"
 LOG_FREQ="${LOG_FREQ:-10}"
@@ -214,6 +214,9 @@ echo "ACTION_VIDEO_FREQ_RATIO=${ACTION_VIDEO_FREQ_RATIO}"
 echo "CONCAT_MULTI_CAMERA=${CONCAT_MULTI_CAMERA}"
 echo "STANDARDIZE_VIDEO_SIZE_BY_CAMERAS=${STANDARDIZE_VIDEO_SIZE_BY_CAMERAS}"
 echo "NORM_DEFAULT_MODE=${NORM_DEFAULT_MODE}"
+echo "STEPS=${STEPS}"
+echo "NUM_EPOCHS=${NUM_EPOCHS:-<disabled>}"
+echo "TRAIN_MAX_STEPS=${TRAIN_MAX_STEPS:-<disabled>}"
 echo "Future3D: LAMBDA_3D=${LAMBDA_3D}, DA3_NUM_VIEWS=${DA3_NUM_VIEWS}, TOKENS_PER_VIEW=${FUTURE_3D_TOKENS_PER_VIEW}, VIEW_LAYOUT=${FUTURE_3D_VIEW_ATTENTION_LAYOUT}"
 echo "OUTPUT_DIR=${OUTPUT_DIR}"
 
@@ -260,7 +263,6 @@ ARGS=(
     --policy.action_norm_default_mode="${NORM_DEFAULT_MODE}"
     --policy.optimizer_lr="${LR}"
     --policy.optimizer_weight_decay="${WEIGHT_DECAY}"
-    --policy.train_num_epochs="${NUM_EPOCHS}"
 
     --dataset.type=${POLICY}
     --dataset.repo_id="multidata_from_file"
@@ -290,6 +292,10 @@ ARGS=(
     --wandb.project=MagicBot_R0
     --wandb.mode=${WANDB_MODE}
 )
+
+if [[ -n "${NUM_EPOCHS}" ]]; then
+    ARGS+=(--policy.train_num_epochs="${NUM_EPOCHS}")
+fi
 
 if [[ -n "${TEXT_EMBED_CACHE_DIR}" ]]; then
     ARGS+=(--dataset.text_embedding_cache_dir="${TEXT_EMBED_CACHE_DIR}")
