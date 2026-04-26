@@ -248,6 +248,7 @@ class Qwen3VLWithExpertModel(
         self,
         vlm_config,
         action_expert_config,
+        qwen3_vl_pretrained_path: str,
         precision: Literal["bfloat16", "float32"] = "bfloat16",
     ):
         super().__init__()
@@ -275,7 +276,7 @@ class Qwen3VLWithExpertModel(
         
         # self.und_expert = Qwen3VLForConditionalGeneration(config=vlm_config_hf)
         self.und_expert = Qwen3VLForConditionalGeneration.from_pretrained(
-            "Qwen/Qwen3-VL-2B-Instruct", 
+            qwen3_vl_pretrained_path,
             config=vlm_config_hf, 
             ignore_mismatched_sizes=True
         )
@@ -455,17 +456,17 @@ class QwenA1(nn.Module):
         self.qwen3_vl_with_expert = Qwen3VLWithExpertModel(
             vlm_config,
             action_expert_config,
+            qwen3_vl_pretrained_path=config.qwen3_vl_pretrained_path,
             precision=config.dtype,
         )
 
-        if not os.path.exists(f"{HF_HOME}/hub/Cosmos-Tokenizer-CI8x8/encoder.jit"):
-            logging.warning(f"Cosmos-Tokenizer-CI8x8 not found, downloading...")
-            from huggingface_hub import snapshot_download
-            snapshot_download(repo_id="nvidia/Cosmos-Tokenizer-CI8x8", local_dir=f"{HF_HOME}/hub/Cosmos-Tokenizer-CI8x8")
+        cosmos_tokenizer_dir = self._resolve_cosmos_tokenizer_dir(config.cosmos_tokenizer_path_or_name)
+        cosmos_device = config.cosmos_device or config.device or "cuda"
 
         self.cosmos = ImageTokenizer(
-            checkpoint_enc=f"{HF_HOME}/hub/Cosmos-Tokenizer-CI8x8/encoder.jit", 
-            checkpoint_dec=f"{HF_HOME}/hub/Cosmos-Tokenizer-CI8x8/decoder.jit", 
+            checkpoint_enc=os.path.join(cosmos_tokenizer_dir, "encoder.jit"),
+            checkpoint_dec=os.path.join(cosmos_tokenizer_dir, "decoder.jit"),
+            device=cosmos_device,
         )
 
         vae_dim = 16
@@ -501,6 +502,36 @@ class QwenA1(nn.Module):
             self.forward = torch.compile(self.forward, mode=config.compile_mode)
         
         self.set_requires_grad()
+
+    @staticmethod
+    def _resolve_cosmos_tokenizer_dir(path_or_name: str) -> str:
+        candidate_dir = os.path.expanduser(path_or_name)
+        if os.path.isdir(candidate_dir):
+            enc_path = os.path.join(candidate_dir, "encoder.jit")
+            dec_path = os.path.join(candidate_dir, "decoder.jit")
+            if not os.path.exists(enc_path) or not os.path.exists(dec_path):
+                raise FileNotFoundError(
+                    f"Cosmos tokenizer directory '{candidate_dir}' must contain encoder.jit and decoder.jit."
+                )
+            return candidate_dir
+
+        legacy_cache_dir = os.path.join(HF_HOME, "hub", path_or_name.split("/")[-1])
+        enc_path = os.path.join(legacy_cache_dir, "encoder.jit")
+        dec_path = os.path.join(legacy_cache_dir, "decoder.jit")
+        if os.path.exists(enc_path) and os.path.exists(dec_path):
+            return legacy_cache_dir
+
+        from huggingface_hub import snapshot_download
+
+        logging.warning("Cosmos tokenizer '%s' not found locally, resolving via Hugging Face Hub.", path_or_name)
+        downloaded_dir = snapshot_download(repo_id=path_or_name)
+        enc_path = os.path.join(downloaded_dir, "encoder.jit")
+        dec_path = os.path.join(downloaded_dir, "decoder.jit")
+        if not os.path.exists(enc_path) or not os.path.exists(dec_path):
+            raise FileNotFoundError(
+                f"Resolved cosmos tokenizer '{path_or_name}' to '{downloaded_dir}', but encoder.jit/decoder.jit were not found."
+            )
+        return downloaded_dir
     
     def set_requires_grad(self):
         if self.config.freeze_vision_encoder:
