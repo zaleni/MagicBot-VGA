@@ -55,7 +55,7 @@ LIBERO_ROOT="${LIBERO_ROOT:-/home/jiangjiahao/data/LIBERO/libero_v30}"
 if [[ "${LOAD_TEXT_ENCODER}" == "true" ]]; then
   TEXT_EMBED_CACHE_DIR="${TEXT_EMBED_CACHE_DIR:-}"
 else
-  TEXT_EMBED_CACHE_DIR="${TEXT_EMBED_CACHE_DIR:-${PROJ_ROOT}/outputs/magicbot_r0/text_embeds/libero}"
+  TEXT_EMBED_CACHE_DIR="${TEXT_EMBED_CACHE_DIR:-${PROJ_ROOT}/outputs/MagicBot_R0/text_embeds/libero}"
 fi
 NORMALIZATION_STATS_PATH="${NORMALIZATION_STATS_PATH:-}"
 VALIDATE_DATASETS="${VALIDATE_DATASETS:-true}"
