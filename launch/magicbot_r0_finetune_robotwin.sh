@@ -219,8 +219,10 @@ fi
 
 if [[ "${LOAD_TEXT_ENCODER}" != "true" && ! -d "${TEXT_EMBED_CACHE_DIR}" ]]; then
   echo "LOAD_TEXT_ENCODER=false but TEXT_EMBED_CACHE_DIR does not exist: ${TEXT_EMBED_CACHE_DIR}"
-  echo "Precompute text embeddings with:"
-  echo "  python src/lerobot/scripts/magicbot_r0_precompute_text_embeds.py --repo-id-file <repo_id_file.txt> --text-embedding-cache-dir \"${TEXT_EMBED_CACHE_DIR}\" --device cuda"
+  echo "Generate a RoboTwin repo list first with:"
+  echo "  python src/lerobot/scripts/magicbot_r0_discover_robotwin_repos.py --robotwin-root \"${ROBOTWIN_ROOT}\" --output-file outputs/MagicBot_R0/_repo_id_files/robotwin.txt --require-three-cameras ${ROBOTWIN_REQUIRE_THREE_CAMERAS}"
+  echo "Then precompute text embeddings with:"
+  echo "  python src/lerobot/scripts/magicbot_r0_precompute_text_embeds.py --repo-id-file outputs/MagicBot_R0/_repo_id_files/robotwin.txt --text-embedding-cache-dir \"${TEXT_EMBED_CACHE_DIR}\" --device cuda"
   echo "Or set LOAD_TEXT_ENCODER=true."
   exit 1
 fi
