@@ -146,6 +146,11 @@ def _read_unique_prompts(dataset_dirs: list[str]) -> list[str]:
         len(dataset_dirs),
         len(prompts),
     )
+    print(
+        "Text cache prompt summary: "
+        f"task_rows={total_task_rows}, datasets={len(dataset_dirs)}, unique_prompts={len(prompts)}",
+        flush=True,
+    )
     return prompts
 
 
