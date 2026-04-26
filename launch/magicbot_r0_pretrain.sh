@@ -59,9 +59,13 @@ ROBOCHALLENGE_ROOT="${ROBOCHALLENGE_ROOT:-/inspire/qb-ilm/project/embodied-basic
 AGIBOT_ROOT="${AGIBOT_ROOT:-/inspire/qb-ilm/project/embodied-basic-model/zhangjianing-253108140206/DATASET/Agibotv3.0}"
 EGODEX_LEROBOT_ROOT="${EGODEX_LEROBOT_ROOT:-/inspire/qb-ilm/project/embodied-basic-model/zhangjianing-253108140206/DATASET/Egodex_v_taskrepos_v30}"
 DATASET_EXTERNAL_STATS_ROOT="${DATASET_EXTERNAL_STATS_ROOT:-norm_stats}"
+WEIGHT_RULES_PATH="${WEIGHT_RULES_PATH:-configs/weight_rules_cubev2_multi.yaml}"
 VALIDATE_DATASETS="${VALIDATE_DATASETS:-false}"
 VIDEO_BACKEND="${VIDEO_BACKEND:-pyav}"
-USE_DIST_LOADING="${USE_DIST_LOADING:-false}"
+USE_DIST_LOADING="${USE_DIST_LOADING:-true}"
+DDP_TIMEOUT_SEC="${DDP_TIMEOUT_SEC:-3600}"
+
+export LEROBOT_DDP_TIMEOUT_SEC="${DDP_TIMEOUT_SEC}"
 
 if [[ "${LOAD_TEXT_ENCODER}" == "true" ]]; then
   TEXT_EMBED_CACHE_DIR="${TEXT_EMBED_CACHE_DIR:-}"
@@ -208,17 +212,16 @@ if [[ -z "${DATASET_EXTERNAL_STATS_ROOT}" || ! -d "${DATASET_EXTERNAL_STATS_ROOT
   exit 1
 fi
 
+if [[ -n "${WEIGHT_RULES_PATH}" && ! -f "${WEIGHT_RULES_PATH}" ]]; then
+  echo "WEIGHT_RULES_PATH does not exist: ${WEIGHT_RULES_PATH}"
+  exit 1
+fi
+
 if [[ "${LOAD_TEXT_ENCODER}" != "true" && ! -d "${TEXT_EMBED_CACHE_DIR}" ]]; then
   echo "LOAD_TEXT_ENCODER=false but TEXT_EMBED_CACHE_DIR does not exist: ${TEXT_EMBED_CACHE_DIR}"
   echo "Precompute text embeddings with:"
   echo "  python src/lerobot/scripts/magicbot_r0_precompute_text_embeds.py --repo-id-file \"${REPO_ID_FILE}\" --text-embedding-cache-dir \"${TEXT_EMBED_CACHE_DIR}\" --device cuda"
   echo "Or set LOAD_TEXT_ENCODER=true."
-  exit 1
-fi
-
-if [[ "${USE_DIST_LOADING}" == "true" ]]; then
-  echo "USE_DIST_LOADING=true is not supported for MagicBot_R0 custom dataset yet."
-  echo "Leave USE_DIST_LOADING=false so Accelerate can shard the dataloader."
   exit 1
 fi
 
@@ -250,6 +253,7 @@ echo "EGODEX_LEROBOT_ROOT=${EGODEX_LEROBOT_ROOT}"
 echo "ACTION_TYPE=${ACTION_TYPE}"
 echo "ACTION_DIM=${ACTION_DIM}, PROPRIO_DIM=${PROPRIO_DIM}"
 echo "DATASET_EXTERNAL_STATS_ROOT=${DATASET_EXTERNAL_STATS_ROOT}"
+echo "WEIGHT_RULES_PATH=${WEIGHT_RULES_PATH:-<disabled>}"
 echo "TEXT_EMBED_CACHE_DIR=${TEXT_EMBED_CACHE_DIR:-<text-encoder-on-the-fly>}"
 echo "ACTION_DIT_PRETRAINED_PATH=${ACTION_DIT_PRETRAINED_PATH}"
 echo "FUTURE_3D_PRETRAINED_PATH=${FUTURE_3D_PRETRAINED_PATH}"
@@ -257,6 +261,7 @@ echo "NUM_FRAMES=${NUM_FRAMES}, ACTION_HORIZON=${ACTION_HORIZON}, ACTION_VIDEO_F
 echo "VIDEO_SIZE=[${VIDEO_HEIGHT},${VIDEO_WIDTH}], CONCAT_MULTI_CAMERA=${CONCAT_MULTI_CAMERA}"
 echo "NUM_EPOCHS=${NUM_EPOCHS:-<disabled>}"
 echo "TRAIN_MAX_STEPS=${TRAIN_MAX_STEPS:-<disabled>}"
+echo "USE_DIST_LOADING=${USE_DIST_LOADING}, DDP_TIMEOUT_SEC=${DDP_TIMEOUT_SEC}"
 echo "Future3D: LAMBDA_3D=${LAMBDA_3D}, DA3_NUM_VIEWS=${DA3_NUM_VIEWS}, TOKENS_PER_VIEW=${FUTURE_3D_TOKENS_PER_VIEW}, VIEW_LAYOUT=${FUTURE_3D_VIEW_ATTENTION_LAYOUT}"
 echo "Future3D query: MODE=${FUTURE_3D_QUERY_MODE}, NOISE_SCALE=${FUTURE_3D_QUERY_NOISE_SCALE}, SIGMA=[${FUTURE_3D_QUERY_NOISE_MIN_SIGMA},${FUTURE_3D_QUERY_NOISE_MAX_SIGMA}], SIGMA_SOURCE=${FUTURE_3D_QUERY_SIGMA_SOURCE}, SLOT_POS_SCALE=${FUTURE_3D_SLOT_POS_SCALE}"
 echo "OUTPUT_DIR=${OUTPUT_DIR}"
@@ -304,6 +309,7 @@ ARGS=(
     --policy.future_3d_query_noise_max_sigma="${FUTURE_3D_QUERY_NOISE_MAX_SIGMA}"
     --policy.future_3d_query_sigma_source="${FUTURE_3D_QUERY_SIGMA_SOURCE}"
     --policy.future_3d_slot_pos_scale="${FUTURE_3D_SLOT_POS_SCALE}"
+    --policy.future_3d_target_index="${FUTURE_3D_TARGET_INDEX}"
     --policy.da3_model_path_or_name="${DA3_MODEL_PATH_OR_NAME}"
     --policy.da3_variant="${DA3_VARIANT}"
     --policy.da3_teacher_process_res="${DA3_TEACHER_PROCESS_RES}"
@@ -357,6 +363,14 @@ ARGS=(
 
 if [[ -n "${TEXT_EMBED_CACHE_DIR}" ]]; then
     ARGS+=(--dataset.text_embedding_cache_dir="${TEXT_EMBED_CACHE_DIR}")
+fi
+
+if [[ -n "${WEIGHT_RULES_PATH}" ]]; then
+    ARGS+=(--dataset.weight_rules_path="${WEIGHT_RULES_PATH}")
+fi
+
+if [[ "${USE_DIST_LOADING}" == "true" ]]; then
+    ARGS+=(--dataset.dist_loading=true)
 fi
 
 if [[ -n "${WARMUP_STEPS}" ]]; then

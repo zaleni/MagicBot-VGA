@@ -231,6 +231,7 @@ class MagicBotR0MultiLeRobotDatasetV3(Dataset):
         video_backend: str | None = None,
         drop_non_intersection_features: bool = True,
         aggregate_metadata_stats: bool = True,
+        dataset_weights: list[float] | None = None,
     ) -> None:
         super().__init__()
         self.dataset_dirs = dataset_dirs
@@ -258,8 +259,32 @@ class MagicBotR0MultiLeRobotDatasetV3(Dataset):
             raise ValueError("At least one dataset directory is required.")
 
         fps_list = [dataset.fps for dataset in self._datasets]
-        if len(set(fps_list)) != 1:
-            raise ValueError(f"All dataset_dirs must have the same fps, got {fps_list}")
+        if delta_timestamps_by_dataset is None and len(set(fps_list)) != 1:
+            raise ValueError(
+                "All dataset_dirs must have the same fps when using shared delta_timestamps, "
+                f"got {fps_list}"
+            )
+
+        self._lengths = [dataset.num_frames for dataset in self._datasets]
+        self._cum_lengths = []
+        running = 0
+        for length in self._lengths:
+            running += int(length)
+            self._cum_lengths.append(running)
+
+        if dataset_weights is None:
+            self.dataset_weights = None
+        else:
+            if len(dataset_weights) != len(self._datasets):
+                raise ValueError(
+                    f"dataset_weights must have length {len(self._datasets)}, got {len(dataset_weights)}."
+                )
+            weights = torch.as_tensor(dataset_weights, dtype=torch.float32)
+            if (weights < 0).any():
+                raise ValueError("dataset_weights must be non-negative.")
+            if float(weights.sum().item()) <= 0.0:
+                raise ValueError("At least one dataset weight must be positive.")
+            self.dataset_weights = weights / weights.sum()
 
         self.disabled_features: set[str] = set()
         if drop_non_intersection_features:
@@ -285,6 +310,14 @@ class MagicBotR0MultiLeRobotDatasetV3(Dataset):
     def num_episodes(self) -> int:
         return sum(dataset.num_episodes for dataset in self._datasets)
 
+    @property
+    def dataset_lengths(self) -> list[int]:
+        return list(self._lengths)
+
+    @property
+    def dataset_cum_lengths(self) -> list[int]:
+        return list(self._cum_lengths)
+
     def __len__(self) -> int:
         return self.num_frames
 
@@ -293,12 +326,11 @@ class MagicBotR0MultiLeRobotDatasetV3(Dataset):
             raise IndexError(f"Index {idx} out of bounds.")
         start_idx = 0
         dataset_idx = 0
-        for dataset in self._datasets:
-            if idx >= start_idx + dataset.num_frames:
-                start_idx += dataset.num_frames
-                dataset_idx += 1
-                continue
-            break
+        for cum_length in self._cum_lengths:
+            if idx < cum_length:
+                break
+            start_idx = cum_length
+            dataset_idx += 1
         item = self._datasets[dataset_idx][idx - start_idx]
         item["dataset_index"] = torch.tensor(dataset_idx)
         for data_key in self.disabled_features:
@@ -361,6 +393,7 @@ class MagicBotR0BaseLerobotDatasetV3(Dataset):
         external_stats_root: str | None = None,
         action_mode: str = "abs",
         image_resize_shape: tuple[int, int] | None = None,
+        dataset_weights: list[float] | None = None,
     ) -> None:
         if len(dataset_dirs) == 0:
             raise ValueError("At least one dataset directory is required")
@@ -386,8 +419,8 @@ class MagicBotR0BaseLerobotDatasetV3(Dataset):
 
         metas = [LeRobotDatasetMetadata(repo_id=str(Path(ds_dir)), root=Path(ds_dir)) for ds_dir in dataset_dirs]
         fps_list = [meta.fps for meta in metas]
-        if len(set(fps_list)) != 1:
-            raise ValueError(f"All dataset_dirs must have the same fps, got {fps_list}")
+        if not self.pretrain_multi_embodiment and len(set(fps_list)) != 1:
+            raise ValueError(f"All dataset_dirs must have the same fps for shared-schema loading, got {fps_list}")
         fps = fps_list[0]
 
         self.image_meta = shape_meta["images"]
@@ -402,10 +435,10 @@ class MagicBotR0BaseLerobotDatasetV3(Dataset):
                 raise ValueError("pretrain_multi_embodiment requires max_action_dim and max_state_dim.")
             self.embodiment_adapters = self._build_multi_embodiment_adapters(metas)
             delta_timestamps_by_dataset = {}
-            for dataset_dir, adapter in zip(dataset_dirs, self.embodiment_adapters, strict=True):
+            for dataset_dir, adapter, meta in zip(dataset_dirs, self.embodiment_adapters, metas, strict=True):
                 delta_timestamps_by_dataset[str(Path(dataset_dir))] = self._build_multi_embodiment_delta_timestamps(
                     adapter=adapter,
-                    fps=fps,
+                    fps=meta.fps,
                     global_sample_stride=global_sample_stride,
                     obs_size=obs_size,
                     action_size=action_size,
@@ -455,6 +488,7 @@ class MagicBotR0BaseLerobotDatasetV3(Dataset):
             video_backend=video_backend,
             drop_non_intersection_features=not self.pretrain_multi_embodiment,
             aggregate_metadata_stats=not self.pretrain_multi_embodiment,
+            dataset_weights=dataset_weights,
         )
 
         episode_from = []
@@ -1088,6 +1122,7 @@ class MagicBotR0RobotVideoDatasetV3(Dataset):
         norm_default_mode: str = "z-score",
         external_stats_root: str | None = None,
         action_mode: str = "abs",
+        dataset_weights: list[float] | None = None,
     ) -> None:
         self.lerobot_dataset = MagicBotR0BaseLerobotDatasetV3(
             dataset_dirs=dataset_dirs,
@@ -1105,6 +1140,7 @@ class MagicBotR0RobotVideoDatasetV3(Dataset):
             external_stats_root=external_stats_root,
             action_mode=action_mode,
             image_resize_shape=tuple(shape_meta["images"][0]["shape"][1:]),
+            dataset_weights=dataset_weights,
         )
         self.clip_num_frames = num_frames
         self.action_video_freq_ratio = action_video_freq_ratio
@@ -1179,6 +1215,18 @@ class MagicBotR0RobotVideoDatasetV3(Dataset):
     @property
     def num_frames_total(self) -> int:
         return self.num_frames
+
+    @property
+    def dataset_weights(self) -> torch.Tensor | None:
+        return self.lerobot_dataset.multi_dataset.dataset_weights
+
+    @property
+    def dataset_lengths(self) -> list[int]:
+        return self.lerobot_dataset.multi_dataset.dataset_lengths
+
+    @property
+    def dataset_cum_lengths(self) -> list[int]:
+        return self.lerobot_dataset.multi_dataset.dataset_cum_lengths
 
     def __len__(self) -> int:
         return len(self.lerobot_dataset)
@@ -1355,7 +1403,6 @@ class MagicBotR0RobotVideoDatasetV3(Dataset):
         if self.text_embedding_cache_dir is not None:
             context, context_mask = self._get_cached_text_context(instruction)
             context[~context_mask] = 0.0
-            context_mask = torch.ones_like(context_mask)
             data["context"] = context
             data["context_mask"] = context_mask
         return data
@@ -1484,4 +1531,5 @@ def build_magicbot_r0_dataset(
         norm_default_mode=cfg.processor_norm_default_mode,
         external_stats_root=cfg.external_stats_root,
         action_mode=cfg.action_mode,
+        dataset_weights=cfg.dataset_sampling_weights or None,
     )

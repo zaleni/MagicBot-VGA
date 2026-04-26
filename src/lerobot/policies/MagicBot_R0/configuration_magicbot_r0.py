@@ -143,6 +143,7 @@ class MagicBotR0DatasetConfig(DatasetConfig):
     text_embedding_cache_dir: str | None = None
     context_len: int = 128
     normalization_stats_path: str | None = None
+    dataset_sampling_weights: list[float] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -255,6 +256,7 @@ class MagicBotR0Config(PreTrainedConfig):
     future_3d_query_noise_max_sigma: float = 0.5
     future_3d_query_sigma_source: str = "constant"
     future_3d_slot_pos_scale: float = 0.5
+    future_3d_target_index: int = -1
     log_da3_teacher_timing: bool = False
     video_scheduler: dict[str, Any] = field(
         default_factory=lambda: {

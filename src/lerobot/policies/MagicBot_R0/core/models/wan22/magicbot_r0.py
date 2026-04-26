@@ -957,6 +957,7 @@ class MagicBotR0(torch.nn.Module):
         context_mask = inputs["context_mask"]
         action = inputs["action"]
         action_is_pad = inputs["action_is_pad"]
+        action_dim_is_pad = inputs["action_dim_is_pad"]
         sample_action_loss_mask = inputs.get("sample_action_loss_mask", None)
         image_is_pad = inputs["image_is_pad"]
         future_3d_images = inputs["future_3d_images"]
@@ -1091,11 +1092,21 @@ class MagicBotR0(torch.nn.Module):
         )
         loss_video = (loss_video_per_sample * video_weight).mean()
 
-        action_loss_token = F.mse_loss(
+        action_loss_element = F.mse_loss(
             pred_action.float(),
             target_action.float(),
             reduction="none",
-        ).mean(dim=2)  # [B, T]
+        )  # [B, T, D]
+        if action_dim_is_pad is not None:
+            valid_action_dims = (~action_dim_is_pad).to(
+                device=action_loss_element.device,
+                dtype=action_loss_element.dtype,
+            )
+            valid_action_dims = valid_action_dims[:, None, :]
+            valid_dim_count = valid_action_dims.sum(dim=2).clamp(min=1.0)
+            action_loss_token = (action_loss_element * valid_action_dims).sum(dim=2) / valid_dim_count
+        else:
+            action_loss_token = action_loss_element.mean(dim=2)
         if action_is_pad is not None:
             valid = (~action_is_pad).to(device=action_loss_token.device, dtype=action_loss_token.dtype)
             valid_sum = valid.sum(dim=1).clamp(min=1.0)

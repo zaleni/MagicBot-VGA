@@ -555,7 +555,10 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
     """
     if isinstance(cfg.dataset, (FastWAMDatasetConfig, MagicBotR0DatasetConfig)):
         if isinstance(cfg.dataset, MagicBotR0DatasetConfig):
-            from lerobot.policies.MagicBot_R0.dataset_magicbot_r0 import build_magicbot_r0_dataset
+            from lerobot.policies.MagicBot_R0.dataset_magicbot_r0 import (
+                build_magicbot_r0_dataset,
+                resolve_magicbot_r0_dataset_dirs,
+            )
 
             build_policy_dataset = build_magicbot_r0_dataset
             policy_label = "MagicBot_R0"
@@ -569,7 +572,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
             stats_filename = "fastwam_dataset_stats.json"
             stats_key = "fastwam"
 
-        if cfg.dataset.dist_loading:
+        if cfg.dataset.dist_loading and not isinstance(cfg.dataset, MagicBotR0DatasetConfig):
             raise ValueError(
                 f"{policy_label} training in this framework does not support `dataset.dist_loading=true`. "
                 "Leave it disabled so Accelerate can shard the dataloader correctly."
@@ -608,6 +611,84 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
                     f"effective policy.future_3d_view_attention_layout={view_layout!r}, "
                     f"dataset.concat_multi_camera={concat_layout!r}."
                 )
+        if isinstance(cfg.dataset, MagicBotR0DatasetConfig):
+            all_repo_ids = resolve_magicbot_r0_dataset_dirs(cfg.dataset)
+            repo_ids = all_repo_ids
+            repo_weights_map = None
+            frames_map = None
+            episodes_map = None
+            weight_cfg = None
+            rank, world_size = get_rank_and_world_size()
+
+            if cfg.dataset.weight_rules_path is not None:
+                frames_map, episodes_map = load_info_for_repos(cfg, all_repo_ids)
+                weight_cfg = OmegaConf.load(cfg.dataset.weight_rules_path)
+                repo_weights_map = compute_repo_weights(
+                    all_repo_ids,
+                    frames_map,
+                    episodes_map,
+                    weight_cfg,
+                )
+
+            if cfg.dataset.dist_loading:
+                if world_size <= 1:
+                    raise ValueError("dist_loading is not supported when num_processes is 1")
+                if frames_map is None or episodes_map is None:
+                    frames_map, episodes_map = load_info_for_repos(cfg, all_repo_ids)
+                try:
+                    if weight_cfg is not None:
+                        rank_to_repos = compute_group_balanced_repo_assignment(
+                            all_repo_ids,
+                            frames_map,
+                            world_size,
+                            weight_cfg,
+                        )
+                        logging.info(
+                            "[make_dataset] MagicBot_R0 dist_loading=True, using source-aware "
+                            "total_frames-balanced assignment."
+                        )
+                    else:
+                        rank_to_repos = compute_balanced_repo_assignment(
+                            all_repo_ids,
+                            frames_map,
+                            world_size,
+                        )
+                        logging.info(
+                            "[make_dataset] MagicBot_R0 dist_loading=True, using "
+                            "total_frames-balanced assignment."
+                        )
+                    repo_ids = rank_to_repos[rank]
+                except Exception as e:
+                    logging.warning(
+                        "[make_dataset] MagicBot_R0 total_frames-based balancing failed with error: %s. "
+                        "Falling back to simple rank-based assignment.",
+                        e,
+                    )
+                    repo_ids = assign_repo_ids_for_rank(all_repo_ids, rank, world_size)
+
+                cfg.dataset.dataset_dirs = list(repo_ids)
+                cfg.dataset.repo_id_file = None
+
+            if repo_weights_map is not None:
+                cfg.dataset.dataset_sampling_weights = [repo_weights_map[rid] for rid in repo_ids]
+                logging.info(
+                    "[make_dataset] MagicBot_R0 weighted sampling enabled from %s",
+                    cfg.dataset.weight_rules_path,
+                )
+                print(
+                    f"[rank={rank:02d}/{world_size:02d}], MagicBot_R0 repo_ids_for_this_rank:\n"
+                    + "\n".join(
+                        f"[rank {rank}] repo_id = {rid}, weight = {repo_weights_map[rid]:.6f}"
+                        for rid in repo_ids
+                    )
+                )
+            else:
+                cfg.dataset.dataset_sampling_weights = []
+                print(
+                    f"[rank={rank:02d}/{world_size:02d}], MagicBot_R0 repo_ids_for_this_rank:\n"
+                    + "\n".join(f"[rank {rank}] repo_id = {rid}" for rid in repo_ids)
+                )
+
         stats_cache_path = cfg.dataset.normalization_stats_path
         if stats_cache_path is None and cfg.output_dir is not None:
             stats_cache_path = str(Path(cfg.output_dir) / stats_filename)
