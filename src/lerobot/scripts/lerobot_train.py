@@ -468,6 +468,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         )
         if _is_fastwam_policy_type(cfg.policy.type):
             logging.info("policy info: %s", _format_policy_summary(policy))
+            startup_summary = getattr(policy, "startup_summary", None)
+            if callable(startup_summary):
+                logging.info("policy startup summary:\n%s", startup_summary())
             if _env_flag("PRINT_POLICY_STRUCTURE", default=False):
                 logging.info("policy structure:\n%s", policy)
         else:

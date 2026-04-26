@@ -12,6 +12,7 @@ from torch import Tensor
 
 from lerobot.datasets.utils import serialize_dict, write_json
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.utils.utils import format_big_number
 
 from .configuration_magicbot_r0 import MagicBotR0Config
 from .core.data.lerobot.utils.normalizer import (
@@ -94,6 +95,85 @@ class MagicBotR0Policy(PreTrainedPolicy):
             for key, value in state_dict.items()
             if key.startswith(self._save_prefixes)
         }
+
+    @staticmethod
+    def _count_params(module: torch.nn.Module | None, *, trainable_only: bool = False) -> int:
+        if module is None:
+            return 0
+        return sum(
+            param.numel()
+            for param in module.parameters()
+            if not trainable_only or param.requires_grad
+        )
+
+    @staticmethod
+    def _format_path(path: str | None) -> str:
+        if not path:
+            return "<none>"
+        return str(path)
+
+    def startup_summary(self) -> str:
+        """Compact startup summary for training logs."""
+        model = self.model
+        future_3d = model.future_3d_expert
+        mot = model.mot
+
+        total_params = self._count_params(self)
+        trainable_params = self._count_params(self, trainable_only=True)
+        optimizer_params = sum(param.numel() for param in self.get_optim_params())
+        video_params = self._count_params(model.video_expert)
+        future_3d_params = self._count_params(future_3d)
+        action_params = self._count_params(model.action_expert)
+        da3_params = self._count_params(getattr(model, "da3_teacher", None))
+
+        lines = [
+            "=" * 60,
+            f"Policy: {self.__class__.__name__}",
+            f"Variant: {self.config.variant}",
+            "",
+            "Parameter statistics:",
+            f"  - Total params        : {total_params} ({format_big_number(total_params)})",
+            f"  - Trainable params    : {trainable_params} ({format_big_number(trainable_params)})",
+            f"  - Optimizer params    : {optimizer_params} ({format_big_number(optimizer_params)})",
+            f"  - Video expert params : {video_params} ({format_big_number(video_params)})",
+            f"  - Future3D params     : {future_3d_params} ({format_big_number(future_3d_params)})",
+            f"  - Action expert params: {action_params} ({format_big_number(action_params)})",
+            "",
+            "MoT:",
+            f"  - Experts             : {', '.join(mot.expert_order)}",
+            f"  - Layers              : {mot.num_layers}",
+            f"  - Heads / head dim    : {mot.num_heads} / {mot.attn_head_dim}",
+            f"  - Mixed checkpointing : {mot.mot_checkpoint_mixed_attn}",
+            "",
+            "Objectives:",
+            f"  - Lambda video/action/3D: {model.loss_lambda_video} / {model.loss_lambda_action} / {model.loss_lambda_3d}",
+            "",
+            "Future 3D:",
+            f"  - FUTURE_3D_QUERY_MODE: {future_3d.query_mode}",
+            f"  - Query noise scale   : {future_3d.query_noise_scale}",
+            f"  - Query sigma range   : [{future_3d.query_noise_min_sigma}, {future_3d.query_noise_max_sigma}]",
+            f"  - Query sigma source  : {future_3d.query_sigma_source}",
+            f"  - Slot pos scale      : {future_3d.slot_pos_scale}",
+            f"  - Views               : {future_3d.da3_num_views}",
+            f"  - Query tokens/view   : {future_3d.query_tokens_per_view}",
+            f"  - DA3 tokens/view     : {future_3d.da3_tokens_per_view}",
+            f"  - Attention layout    : {model.future_3d_view_attention_layout}",
+            f"  - Target frame index  : {self.config.future_3d_target_index}",
+            "",
+            "DA3 teacher:",
+            f"  - Source              : {self.config.da3_model_path_or_name}",
+            f"  - Variant             : {self.config.da3_variant}",
+            f"  - Process resolution  : {self.config.da3_teacher_process_res}",
+            f"  - Teacher layers      : {model.da3_teacher_layers}",
+            f"  - Params              : {da3_params} ({format_big_number(da3_params)})",
+            "",
+            "Initialization:",
+            f"  - Action backbone     : {self._format_path(self.config.action_dit_pretrained_path)}",
+            f"  - Future3D backbone   : {self._format_path(self.config.future_3d_pretrained_path)}",
+            f"  - Native checkpoint   : {self._format_path(self.config.native_checkpoint_path)}",
+            "=" * 60,
+        ]
+        return "\n".join(lines)
 
     def _save_pretrained(self, save_directory: Path) -> None:
         self._save_pretrained_artifacts(save_directory)
