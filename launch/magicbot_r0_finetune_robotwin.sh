@@ -60,9 +60,10 @@ if [[ "${LOAD_TEXT_ENCODER}" == "true" ]]; then
 else
   TEXT_EMBED_CACHE_DIR="${TEXT_EMBED_CACHE_DIR:-${PROJ_ROOT}/outputs/MagicBot_R0/text_embeds/robotwin}"
 fi
+USE_EXTERNAL_STATS="${USE_EXTERNAL_STATS:-false}"
 NORMALIZATION_STATS_PATH="${NORMALIZATION_STATS_PATH:-}"
 DATASET_EXTERNAL_STATS_PATH="${DATASET_EXTERNAL_STATS_PATH:-}"
-DATASET_EXTERNAL_STATS_ROOT="${DATASET_EXTERNAL_STATS_ROOT:-}"
+DATASET_EXTERNAL_STATS_ROOT="${DATASET_EXTERNAL_STATS_ROOT:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/Foundation-Moodel/norm_stats}"
 DATASET_EXTERNAL_STATS_ROBOT_TYPE="${DATASET_EXTERNAL_STATS_ROBOT_TYPE:-aloha}"
 VALIDATE_DATASETS="${VALIDATE_DATASETS:-true}"
 VIDEO_BACKEND="${VIDEO_BACKEND:-}"
@@ -137,12 +138,31 @@ case "${ACTION_TYPE}" in
     ;;
 esac
 
-if [[ -z "${NORMALIZATION_STATS_PATH}" ]]; then
-  if [[ -n "${DATASET_EXTERNAL_STATS_PATH}" ]]; then
-    NORMALIZATION_STATS_PATH="${DATASET_EXTERNAL_STATS_PATH}"
-  elif [[ -n "${DATASET_EXTERNAL_STATS_ROOT}" ]]; then
-    NORMALIZATION_STATS_PATH="${DATASET_EXTERNAL_STATS_ROOT}/${DATASET_EXTERNAL_STATS_ROBOT_TYPE}/${ACTION_TYPE}/stats.json"
+case "${USE_EXTERNAL_STATS}" in
+  true|false)
+    ;;
+  *)
+    echo "Unsupported USE_EXTERNAL_STATS=${USE_EXTERNAL_STATS}. Expected true or false."
+    exit 1
+    ;;
+esac
+
+if [[ "${USE_EXTERNAL_STATS}" == "true" ]]; then
+  if [[ -z "${NORMALIZATION_STATS_PATH}" ]]; then
+    if [[ -n "${DATASET_EXTERNAL_STATS_PATH}" ]]; then
+      NORMALIZATION_STATS_PATH="${DATASET_EXTERNAL_STATS_PATH}"
+    elif [[ -n "${DATASET_EXTERNAL_STATS_ROOT}" ]]; then
+      NORMALIZATION_STATS_PATH="${DATASET_EXTERNAL_STATS_ROOT}/${DATASET_EXTERNAL_STATS_ROBOT_TYPE}/${ACTION_TYPE}/stats.json"
+    fi
   fi
+
+  if [[ -z "${NORMALIZATION_STATS_PATH}" ]]; then
+    echo "USE_EXTERNAL_STATS=true but no normalization stats path could be resolved."
+    echo "Set NORMALIZATION_STATS_PATH, DATASET_EXTERNAL_STATS_PATH, or DATASET_EXTERNAL_STATS_ROOT."
+    exit 1
+  fi
+else
+  NORMALIZATION_STATS_PATH=""
 fi
 
 case "${DTYPE}" in
@@ -264,6 +284,7 @@ echo "MAGICBOT_R0_VARIANT=${MAGICBOT_R0_VARIANT}"
 echo "ACTION_TYPE=${ACTION_TYPE}"
 echo "ACTION_DIM=${ACTION_DIM}, PROPRIO_DIM=${PROPRIO_DIM}"
 echo "NORM_DEFAULT_MODE=${NORM_DEFAULT_MODE}"
+echo "USE_EXTERNAL_STATS=${USE_EXTERNAL_STATS}"
 echo "NORMALIZATION_STATS_PATH=${NORMALIZATION_STATS_PATH:-<auto-compute>}"
 echo "ACTION_DIT_PRETRAINED_PATH=${ACTION_DIT_PRETRAINED_PATH}"
 echo "FUTURE_3D_PRETRAINED_PATH=${FUTURE_3D_PRETRAINED_PATH}"
@@ -329,6 +350,7 @@ ARGS=(
     --dataset.repo_id="multidata_from_file"
     --dataset.repo_id_file="${REPO_ID_FILE}"
     --dataset.action_mode="${ACTION_TYPE}"
+    --dataset.use_external_stats="${USE_EXTERNAL_STATS}"
     --dataset.image_keys="${IMAGE_KEYS}"
     --dataset.image_raw_shapes="${IMAGE_RAW_SHAPES}"
     --dataset.image_shapes="${IMAGE_SHAPES}"
