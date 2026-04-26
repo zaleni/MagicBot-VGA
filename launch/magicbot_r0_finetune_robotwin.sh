@@ -342,6 +342,7 @@ ARGS=(
     --policy.da3_variant="${DA3_VARIANT}"
     --policy.da3_teacher_process_res="${DA3_TEACHER_PROCESS_RES}"
     --policy.log_da3_teacher_timing="${LOG_DA3_TEACHER_TIMING}"
+    --policy.action_norm_default_mode="${NORM_DEFAULT_MODE}"
     --policy.optimizer_lr="${LR}"
     --policy.optimizer_weight_decay="${WEIGHT_DECAY}"
     --policy.train_num_epochs="${NUM_EPOCHS}"

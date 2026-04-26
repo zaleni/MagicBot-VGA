@@ -71,6 +71,7 @@ VIDEO_HEIGHT="${VIDEO_HEIGHT:-224}"
 VIDEO_WIDTH="${VIDEO_WIDTH:-448}"
 CONCAT_MULTI_CAMERA="${CONCAT_MULTI_CAMERA:-horizontal}"
 STANDARDIZE_VIDEO_SIZE_BY_CAMERAS="${STANDARDIZE_VIDEO_SIZE_BY_CAMERAS:-true}"
+NORM_DEFAULT_MODE="${NORM_DEFAULT_MODE:-q01q99}"
 
 BATCH_SIZE="${BATCH_SIZE:-16}"
 GRAD_ACCUM_STEPS="${GRAD_ACCUM_STEPS:-1}"
@@ -212,6 +213,7 @@ echo "ACTION_HORIZON=${ACTION_HORIZON}"
 echo "ACTION_VIDEO_FREQ_RATIO=${ACTION_VIDEO_FREQ_RATIO}"
 echo "CONCAT_MULTI_CAMERA=${CONCAT_MULTI_CAMERA}"
 echo "STANDARDIZE_VIDEO_SIZE_BY_CAMERAS=${STANDARDIZE_VIDEO_SIZE_BY_CAMERAS}"
+echo "NORM_DEFAULT_MODE=${NORM_DEFAULT_MODE}"
 echo "Future3D: LAMBDA_3D=${LAMBDA_3D}, DA3_NUM_VIEWS=${DA3_NUM_VIEWS}, TOKENS_PER_VIEW=${FUTURE_3D_TOKENS_PER_VIEW}, VIEW_LAYOUT=${FUTURE_3D_VIEW_ATTENTION_LAYOUT}"
 echo "OUTPUT_DIR=${OUTPUT_DIR}"
 
@@ -255,6 +257,7 @@ ARGS=(
     --policy.da3_model_path_or_name="${DA3_MODEL_PATH_OR_NAME}"
     --policy.da3_variant="${DA3_VARIANT}"
     --policy.da3_teacher_process_res="${DA3_TEACHER_PROCESS_RES}"
+    --policy.action_norm_default_mode="${NORM_DEFAULT_MODE}"
     --policy.optimizer_lr="${LR}"
     --policy.optimizer_weight_decay="${WEIGHT_DECAY}"
     --policy.train_num_epochs="${NUM_EPOCHS}"
@@ -273,6 +276,7 @@ ARGS=(
     --dataset.processor_num_output_cameras="${PROCESSOR_NUM_OUTPUT_CAMERAS}"
     --dataset.processor_action_output_dim=7
     --dataset.processor_proprio_output_dim=8
+    --dataset.processor_norm_default_mode="${NORM_DEFAULT_MODE}"
     --dataset.future_3d_target_index="${FUTURE_3D_TARGET_INDEX}"
 
     --seed=42

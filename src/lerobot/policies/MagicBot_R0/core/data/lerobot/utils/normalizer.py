@@ -14,7 +14,13 @@ from ....utils.pytorch_utils import dict_apply
 logger = get_logger(__name__)
 
 ConstConstStr = Annotated[str, "format: 'const_min/const_max', where const_min and const_max give the constant range"]
-NormMode = Union[Literal["min/max", "q01/q99", "z-score"], ConstConstStr]
+NormMode = Union[Literal["min/max", "q01/q99", "q01q99", "z-score"], ConstConstStr]
+
+
+def canonicalize_norm_mode(mode: NormMode) -> str:
+    if mode == "q01q99":
+        return "q01/q99"
+    return str(mode)
 
 class LinearNormalizer:
     def __init__(
@@ -95,6 +101,7 @@ class SingleFieldLinearNormalizer:
     output_min = -1.0
     def __init__(self, stats, mode: NormMode="min/max"):
         self.stats = stats
+        mode = canonicalize_norm_mode(mode)
         self.mode = mode
 
         if mode == "z-score":
@@ -105,6 +112,12 @@ class SingleFieldLinearNormalizer:
             if mode == "min/max":
                 input_min, input_max = stats["min"], stats["max"]
             elif mode == "q01/q99":
+                missing = [key for key in ("q01", "q99") if key not in stats]
+                if missing:
+                    raise KeyError(
+                        "Normalization mode `q01q99` requires `q01` and `q99` statistics. "
+                        f"Missing {missing}; run the LeRobot v3 quantile stats augmentation or provide stats with q01/q99."
+                    )
                 input_min, input_max = stats["q01"], stats["q99"]
             else: 
                 # parse const_min/const_max
