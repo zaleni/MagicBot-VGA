@@ -14,7 +14,7 @@ DEFAULT_ROBOTWIN_ROOT = (
     "DATASET/RoboTwin-LeRobot-v30"
 )
 DEFAULT_OUTPUT_FILE = "outputs/MagicBot_R0/_repo_id_files/robotwin.txt"
-DEFAULT_CAMERA_KEYS = ("head", "left", "right")
+DEFAULT_CAMERA_KEYS = ("cam_high", "cam_left_wrist", "cam_right_wrist")
 BASE_REQUIRED_FEATURES = ("observation.state", "action")
 
 
@@ -108,7 +108,7 @@ def parse_args() -> argparse.Namespace:
         "--require-three-cameras",
         type=_parse_bool,
         default=True,
-        help="Require observation.images.<head/left/right> features by default.",
+        help="Require observation.images.<camera-key> features by default.",
     )
     parser.add_argument(
         "--camera-keys",

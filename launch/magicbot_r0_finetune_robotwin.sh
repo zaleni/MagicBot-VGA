@@ -117,7 +117,7 @@ FUTURE_3D_TARGET_INDEX="${FUTURE_3D_TARGET_INDEX:--1}"
 DTYPE="${DTYPE:-bfloat16}"
 MAGICBOT_R0_CHECKPOINT_MIXED_ATTN="${MAGICBOT_R0_CHECKPOINT_MIXED_ATTN:-false}"
 
-IMAGE_KEYS="${IMAGE_KEYS:-[\"head\",\"left\",\"right\"]}"
+IMAGE_KEYS="${IMAGE_KEYS:-[\"cam_high\",\"cam_left_wrist\",\"cam_right_wrist\"]}"
 IMAGE_RAW_SHAPES="${IMAGE_RAW_SHAPES:-[[3,480,640],[3,480,640],[3,480,640]]}"
 IMAGE_SHAPES="${IMAGE_SHAPES:-[[3,240,320],[3,240,320],[3,240,320]]}"
 ACTION_KEYS="${ACTION_KEYS:-[\"default\"]}"
@@ -176,16 +176,12 @@ discover_dataset_dirs() {
         if [[ "${ROBOTWIN_REQUIRE_THREE_CAMERAS}" == "true" ]]; then
           python -c 'import json, sys
 info = json.load(open(sys.argv[1], encoding="utf-8"))
+image_keys = json.loads(sys.argv[2])
 features = set(info.get("features", {}).keys())
-required = {
-    "observation.images.head",
-    "observation.images.left",
-    "observation.images.right",
-    "observation.state",
-    "action",
-}
+required = {"observation.state", "action"}
+required.update(f"observation.images.{key}" for key in image_keys)
 raise SystemExit(0 if required.issubset(features) else 1)
-' "${info_path}" || continue
+' "${info_path}" "${IMAGE_KEYS}" || continue
         fi
         echo "${ds_dir}"
       done \
@@ -197,7 +193,7 @@ mapfile -t DATASET_REPO_IDS < <(discover_dataset_dirs "${ROBOTWIN_ROOT}")
 if [[ ${#DATASET_REPO_IDS[@]} -eq 0 ]]; then
   echo "No valid RoboTwin LeRobot datasets found under ROBOTWIN_ROOT=${ROBOTWIN_ROOT}"
   if [[ "${ROBOTWIN_REQUIRE_THREE_CAMERAS}" == "true" ]]; then
-    echo "The default filter keeps only datasets with head/left/right cameras."
+    echo "The default filter keeps only datasets with IMAGE_KEYS=${IMAGE_KEYS}."
     echo "Set ROBOTWIN_REQUIRE_THREE_CAMERAS=false if you intentionally want to include other layouts."
   fi
   exit 1
@@ -238,19 +234,15 @@ if [[ "${VALIDATE_DATASETS}" == "true" ]]; then
     info_path="${ds_dir}/meta/info.json"
     python -c 'import json, sys
 info = json.load(open(sys.argv[1], encoding="utf-8"))
+image_keys = json.loads(sys.argv[3])
 features = set(info.get("features", {}).keys())
-required = {
-    "observation.images.head",
-    "observation.images.left",
-    "observation.images.right",
-    "observation.state",
-    "action",
-}
+required = {"observation.state", "action"}
+required.update(f"observation.images.{key}" for key in image_keys)
 print("{} -> robot_type={}, features={}".format(sys.argv[2], info.get("robot_type"), len(features)))
 missing = sorted(required - features)
 if missing:
     raise SystemExit(f"Missing required MagicBot_R0 RobotWin features for {sys.argv[2]}: {missing}")
-' "${info_path}" "${ds_dir}"
+' "${info_path}" "${ds_dir}" "${IMAGE_KEYS}"
   done
 else
   echo "Skipping per-dataset validation (VALIDATE_DATASETS=${VALIDATE_DATASETS})."
