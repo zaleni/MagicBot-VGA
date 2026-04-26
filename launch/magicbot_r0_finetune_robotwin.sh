@@ -60,7 +60,7 @@ if [[ "${LOAD_TEXT_ENCODER}" == "true" ]]; then
 else
   TEXT_EMBED_CACHE_DIR="${TEXT_EMBED_CACHE_DIR:-${PROJ_ROOT}/outputs/MagicBot_R0/text_embeds/robotwin}"
 fi
-USE_EXTERNAL_STATS="${USE_EXTERNAL_STATS:-false}"
+USE_EXTERNAL_STATS="${USE_EXTERNAL_STATS:-true}"
 NORMALIZATION_STATS_PATH="${NORMALIZATION_STATS_PATH:-}"
 DATASET_EXTERNAL_STATS_PATH="${DATASET_EXTERNAL_STATS_PATH:-}"
 DATASET_EXTERNAL_STATS_ROOT="${DATASET_EXTERNAL_STATS_ROOT:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/Foundation-Moodel/norm_stats}"
@@ -69,7 +69,7 @@ VALIDATE_DATASETS="${VALIDATE_DATASETS:-true}"
 VIDEO_BACKEND="${VIDEO_BACKEND:-}"
 USE_DIST_LOADING="${USE_DIST_LOADING:-false}"
 
-ACTION_TYPE="${ACTION_TYPE:-abs}"
+ACTION_TYPE="${ACTION_TYPE:-delta}"
 ACTION_DIM="${ACTION_DIM:-24}"
 PROPRIO_DIM="${PROPRIO_DIM:-24}"
 ACTION_HORIZON="${ACTION_HORIZON:-32}"
@@ -293,6 +293,7 @@ echo "VIDEO_SIZE=[${VIDEO_HEIGHT},${VIDEO_WIDTH}], CONCAT_MULTI_CAMERA=${CONCAT_
 echo "STANDARDIZE_VIDEO_SIZE_BY_CAMERAS=${STANDARDIZE_VIDEO_SIZE_BY_CAMERAS}"
 echo "NUM_EPOCHS=${NUM_EPOCHS:-<disabled>}"
 echo "TRAIN_MAX_STEPS=${TRAIN_MAX_STEPS:-<disabled>}"
+echo "USE_DIST_LOADING=${USE_DIST_LOADING}"
 echo "Future3D: LAMBDA_3D=${LAMBDA_3D}, DA3_NUM_VIEWS=${DA3_NUM_VIEWS}, TOKENS_PER_VIEW=${FUTURE_3D_TOKENS_PER_VIEW}, VIEW_LAYOUT=${FUTURE_3D_VIEW_ATTENTION_LAYOUT}"
 echo "Future3D query: MODE=${FUTURE_3D_QUERY_MODE}, NOISE_SCALE=${FUTURE_3D_QUERY_NOISE_SCALE}, SIGMA=[${FUTURE_3D_QUERY_NOISE_MIN_SIGMA},${FUTURE_3D_QUERY_NOISE_MAX_SIGMA}], SIGMA_SOURCE=${FUTURE_3D_QUERY_SIGMA_SOURCE}, SLOT_POS_SCALE=${FUTURE_3D_SLOT_POS_SCALE}"
 echo "OUTPUT_DIR=${OUTPUT_DIR}"
@@ -340,6 +341,7 @@ ARGS=(
     --policy.future_3d_query_noise_max_sigma="${FUTURE_3D_QUERY_NOISE_MAX_SIGMA}"
     --policy.future_3d_query_sigma_source="${FUTURE_3D_QUERY_SIGMA_SOURCE}"
     --policy.future_3d_slot_pos_scale="${FUTURE_3D_SLOT_POS_SCALE}"
+    --policy.future_3d_target_index="${FUTURE_3D_TARGET_INDEX}"
     --policy.da3_model_path_or_name="${DA3_MODEL_PATH_OR_NAME}"
     --policy.da3_variant="${DA3_VARIANT}"
     --policy.da3_teacher_process_res="${DA3_TEACHER_PROCESS_RES}"
@@ -426,9 +428,7 @@ if [[ -n "${DA3_CODE_ROOT}" ]]; then
 fi
 
 if [[ "${USE_DIST_LOADING}" == "true" ]]; then
-    echo "USE_DIST_LOADING=true is not supported for MagicBot_R0 in this framework."
-    echo "Leave USE_DIST_LOADING=false so Accelerate can shard the dataloader correctly."
-    exit 1
+    ARGS+=(--dataset.dist_loading=true)
 fi
 
 accelerate launch "${ARGS[@]}"

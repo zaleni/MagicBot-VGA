@@ -13,6 +13,7 @@ import numpy as np
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
+from lerobot.datasets.transforms import Pi05StyleAugment
 from lerobot.transforms.utils import resize_with_pad, resize_center_crop
 from lerobot.utils.constants import OBS_IMAGE, OBS_IMAGES, OBS_STATE, ACTION
 from .constants import (
@@ -149,6 +150,26 @@ class ResizeShortestCenterCropFn(DataTransformFn):
         for k, v in data.items():
             if k.startswith(OBS_IMAGES) or k == OBS_IMAGE or "image" in k:
                 data[k] = resize_center_crop(v, self.height, self.width, self.mode)
+        return data
+
+
+@DataTransformFn.register_subclass("pi05_image_augment")
+@dataclass
+class Pi05ImageAugmentFn(DataTransformFn):
+    """Apply pi0.5-style training image augmentation to image tensors."""
+
+    def __post_init__(self):
+        self.augment = Pi05StyleAugment()
+
+    def __call__(self, data: DataDict) -> DataDict:
+        if not hasattr(self, "augment"):
+            self.augment = Pi05StyleAugment()
+        for k, v in data.items():
+            if "is_pad" in k:
+                continue
+            if k.startswith(OBS_IMAGES) or k == OBS_IMAGE or "image" in k:
+                self.augment.set_current_key(k)
+                data[k] = self.augment(v)
         return data
 
 

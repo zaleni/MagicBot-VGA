@@ -848,6 +848,7 @@ class MagicBotR0BaseLerobotDatasetV3(Dataset):
         state_concat_raw = torch.cat(state_tensors, dim=-1)
 
         has_action = bool(adapter["has_action"])
+        use_action_loss = has_action and adapter["resolved_robot_type"] != "egodex_v"
         if has_action:
             action_tensors = [self._as_sequence_vector(lerobot_sample[key]) for key in adapter["action_keys"]]
             action_tensors, action_sizes = self._align_for_cat(action_tensors)
@@ -868,7 +869,7 @@ class MagicBotR0BaseLerobotDatasetV3(Dataset):
             action_concat = torch.cat(action_tensors, dim=-1)
             action, action_dim_is_pad = self._pad_vector_with_dim_mask(action_concat, self.max_action_dim)
             action_is_pad = self._combined_padding_mask(lerobot_sample, adapter["action_keys"], self.action_size)
-            sample_action_loss_mask = torch.tensor([1.0], dtype=torch.float32)
+            sample_action_loss_mask = torch.tensor([1.0 if use_action_loss else 0.0], dtype=torch.float32)
         else:
             action = torch.zeros(self.action_size, self.max_action_dim, dtype=torch.float32)
             action_dim_is_pad = torch.ones(self.max_action_dim, dtype=torch.bool)

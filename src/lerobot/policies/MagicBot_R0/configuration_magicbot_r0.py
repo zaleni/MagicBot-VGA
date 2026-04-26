@@ -96,6 +96,24 @@ def _default_future_3d_config(
     }
 
 
+def _percent_aligned_future_3d_query_layers(
+    da3_teacher_layers: tuple[int, ...],
+    future_3d_num_layers: int,
+) -> tuple[int, ...]:
+    if future_3d_num_layers <= 0:
+        raise ValueError("future_3d_config.num_layers must be positive")
+    if len(da3_teacher_layers) == 0:
+        raise ValueError("da3_teacher_layers must not be empty")
+    max_teacher_layer = max(int(idx) for idx in da3_teacher_layers)
+    if max_teacher_layer <= 0:
+        raise ValueError(f"Cannot percent-align DA3 teacher layers {da3_teacher_layers}.")
+    max_future_layer = future_3d_num_layers - 1
+    return tuple(
+        min(max_future_layer, max(0, round(int(layer_idx) / max_teacher_layer * max_future_layer)))
+        for layer_idx in da3_teacher_layers
+    )
+
+
 @DatasetConfig.register_subclass("MagicBot_R0")
 @dataclass
 class MagicBotR0DatasetConfig(DatasetConfig):
@@ -345,6 +363,9 @@ class MagicBotR0Config(PreTrainedConfig):
             )
         if len(self.da3_teacher_layers) != len(self.da3_layer_weights):
             raise ValueError("da3_layer_weights must align with da3_teacher_layers")
+        has_explicit_future_3d_query_layers = (
+            self.future_3d_config is not None and "query_layer_indices" in self.future_3d_config
+        )
         if self.future_3d_config is None:
             self.future_3d_config = _default_future_3d_config(
                 da3_query_dim=self.da3_query_dim,
@@ -384,11 +405,25 @@ class MagicBotR0Config(PreTrainedConfig):
         self.future_3d_config["query_noise_max_sigma"] = float(self.future_3d_query_noise_max_sigma)
         self.future_3d_config["query_sigma_source"] = self.future_3d_query_sigma_source
         self.future_3d_config["slot_pos_scale"] = float(self.future_3d_slot_pos_scale)
-        self.future_3d_config["query_layer_indices"] = tuple(
-            int(idx) for idx in self.future_3d_config.get("query_layer_indices", (14, 19, 24, 29))
-        )
+        future_3d_num_layers = int(self.future_3d_config["num_layers"])
+        if has_explicit_future_3d_query_layers:
+            query_layer_indices = self.future_3d_config["query_layer_indices"]
+        else:
+            query_layer_indices = _percent_aligned_future_3d_query_layers(
+                self.da3_teacher_layers,
+                future_3d_num_layers,
+            )
+        self.future_3d_config["query_layer_indices"] = tuple(int(idx) for idx in query_layer_indices)
         if len(self.future_3d_config["query_layer_indices"]) != len(self.da3_teacher_layers):
             raise ValueError("future_3d_config.query_layer_indices and da3_teacher_layers must have the same length")
+        invalid_query_layers = [
+            idx for idx in self.future_3d_config["query_layer_indices"] if idx < 0 or idx >= future_3d_num_layers
+        ]
+        if invalid_query_layers:
+            raise ValueError(
+                "future_3d_config.query_layer_indices must be valid 0-based layer indices for "
+                f"num_layers={future_3d_num_layers}; got invalid indices {invalid_query_layers}."
+            )
         if self.future_3d_config["num_query_tokens"] % self.da3_num_views != 0:
             raise ValueError("future_3d_config.num_query_tokens must be divisible by da3_num_views")
         if self.scheduler_decay_lr is None:

@@ -400,8 +400,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             if is_main_process:
                 logging.info("%s training steps overridden by policy.train_max_steps=%d", policy_family_label, cfg.steps)
         elif fastwam_num_epochs is not None:
-            global_batch_size = max(cfg.batch_size * accelerator.num_processes, 1)
-            micro_steps_per_epoch = max(ceil(len(dataset) / global_batch_size), 1)
+            sampler_processes = 1 if cfg.dataset.dist_loading else accelerator.num_processes
+            effective_batch_size_for_epoch = max(cfg.batch_size * sampler_processes, 1)
+            micro_steps_per_epoch = max(ceil(len(dataset) / effective_batch_size_for_epoch), 1)
             opt_steps_per_epoch = max(
                 ceil(micro_steps_per_epoch / cfg.gradient_accumulation_steps),
                 1,
@@ -489,7 +490,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             dataset=dataset,
             seed=0 if cfg.seed is None else cfg.seed,
             batch_size=cfg.batch_size,
-            num_processes=accelerator.num_processes,
+            num_processes=1 if cfg.dataset.dist_loading else accelerator.num_processes,
         )
         num_workers = cfg.num_workers
         prefetch_factor = 2 if cfg.num_workers > 0 else None
@@ -555,7 +556,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                     _fastwam_family_label(cfg.policy.type),
                     fastwam_epoch,
                     fastwam_batch_in_epoch,
-                    fastwam_batch_in_epoch * cfg.batch_size * accelerator.num_processes,
+                    fastwam_batch_in_epoch
+                    * cfg.batch_size
+                    * (1 if cfg.dataset.dist_loading else accelerator.num_processes),
                 )
     if _is_fastwam_policy_type(cfg.policy.type):
         dl_iter = iter(dataloader)

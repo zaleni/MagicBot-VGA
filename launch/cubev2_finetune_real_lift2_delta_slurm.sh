@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=cubev2-real-lift2-delta
 #SBATCH --nodes=2
-#SBATCH -p h100x
+#SBATCH -p hx
 #SBATCH --ntasks-per-node=1
 #SBATCH --gres=gpu:8
 #SBATCH --cpus-per-task=56
@@ -36,11 +36,12 @@ DA3_MODEL_PATH_OR_NAME="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/model/D
 DATASET_DIR="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/data/zhenji/table_clean_100_filter"
 NORM_STATS_ROOT="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/data/zhenji/norm_stats"
 ACTION_TYPE="${ACTION_TYPE:-delta}"
-JOB_NAME="real_lift2-table_clean-${ACTION_TYPE}-chunk50-imgaug-finetune-$(date +'%Y_%m_%d_%H_%M_%S')"
+JOB_NAME="real_lift2-table_clean-${ACTION_TYPE}-chunk50-imgaugpi-finetune-$(date +'%Y_%m_%d_%H_%M_%S')"
 ENABLE_IMAGE_AUG=true
+IMAGE_AUG_PRESET="${IMAGE_AUG_PRESET:-pi05}"
 BATCH_SIZE=8
 GRADIENT_ACCUMULATION_STEPS=1
-STEPS=50000
+STEPS=60000
 SAVE_FREQ=10000
 NUM_WORKERS=8
 
@@ -111,6 +112,7 @@ export NORM_STATS_ROOT
 export ACTION_TYPE
 export JOB_NAME
 export ENABLE_IMAGE_AUG
+export IMAGE_AUG_PRESET
 export BATCH_SIZE
 export GRADIENT_ACCUMULATION_STEPS
 export STEPS
@@ -133,6 +135,7 @@ echo "NORM_STATS_ROOT=${NORM_STATS_ROOT}"
 echo "ACTION_TYPE=${ACTION_TYPE}"
 echo "JOB_NAME=${JOB_NAME:-<auto>}"
 echo "ENABLE_IMAGE_AUG=${ENABLE_IMAGE_AUG}"
+echo "IMAGE_AUG_PRESET=${IMAGE_AUG_PRESET}"
 echo "BATCH_SIZE=${BATCH_SIZE}"
 echo "GRADIENT_ACCUMULATION_STEPS=${GRADIENT_ACCUMULATION_STEPS}"
 echo "STEPS=${STEPS}"

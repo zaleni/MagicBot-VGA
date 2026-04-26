@@ -64,6 +64,18 @@ class CubeV2DatasetConfig(DatasetConfig):
     def __post_init__(self):
         super().__post_init__()
         inputs = list(self.data_transforms.inputs)
+        uses_pi05_image_aug = (
+            self.image_transforms.enable
+            and self.image_transforms.preset in {"pi05", "pi0.5", "pi05_style"}
+        )
+        inputs = [t for t in inputs if not isinstance(t, Pi05ImageAugmentFn)]
+        if uses_pi05_image_aug:
+            insert_idx = next(
+                (idx + 1 for idx, transform in enumerate(inputs) if isinstance(transform, ResizeImagesWithPadFn)),
+                0,
+            )
+            inputs.insert(insert_idx, Pi05ImageAugmentFn())
+
         for idx, transform in enumerate(inputs):
             if isinstance(transform, Qwen3_VLProcessorTransformFn):
                 inputs[idx] = replace(

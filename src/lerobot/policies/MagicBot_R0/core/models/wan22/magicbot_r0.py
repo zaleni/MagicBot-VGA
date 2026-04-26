@@ -956,7 +956,6 @@ class MagicBotR0(torch.nn.Module):
         context = inputs["context"]
         context_mask = inputs["context_mask"]
         action = inputs["action"]
-        action_is_pad = inputs["action_is_pad"]
         sample_action_loss_mask = inputs.get("sample_action_loss_mask", None)
         image_is_pad = inputs["image_is_pad"]
         future_3d_images = inputs["future_3d_images"]
@@ -1091,17 +1090,13 @@ class MagicBotR0(torch.nn.Module):
         )
         loss_video = (loss_video_per_sample * video_weight).mean()
 
-        action_loss_token = F.mse_loss(
+        action_loss_raw = F.mse_loss(
             pred_action.float(),
             target_action.float(),
             reduction="none",
-        ).mean(dim=2)  # [B, T]
-        if action_is_pad is not None:
-            valid = (~action_is_pad).to(device=action_loss_token.device, dtype=action_loss_token.dtype)
-            valid_sum = valid.sum(dim=1).clamp(min=1.0)
-            action_loss_per_sample = (action_loss_token * valid).sum(dim=1) / valid_sum
-        else:
-            action_loss_per_sample = action_loss_token.mean(dim=1)
+        )
+        action_loss_token = action_loss_raw.mean(dim=2)  # [B, T]
+        action_loss_per_sample = action_loss_token.mean(dim=1)
 
         action_weight = self.train_action_scheduler.training_weight(timestep_action).to(
             action_loss_per_sample.device, dtype=action_loss_per_sample.dtype
@@ -1118,6 +1113,17 @@ class MagicBotR0(torch.nn.Module):
                 loss_action = weighted_action_loss.new_zeros(())
         else:
             loss_action = weighted_action_loss.mean()
+        dim_weight = torch.ones_like(action_loss_token, dtype=action_loss_raw.dtype)
+        action_weight_for_dim = action_weight.to(device=dim_weight.device, dtype=dim_weight.dtype)
+        if action_weight_for_dim.ndim == 0:
+            action_weight_for_dim = action_weight_for_dim.expand(action_loss_raw.shape[0])
+        dim_weight = dim_weight * action_weight_for_dim[:, None]
+        if sample_action_loss_mask is not None:
+            dim_weight = dim_weight * (
+                sample_action_loss_mask.to(device=dim_weight.device, dtype=dim_weight.dtype) > 0.5
+            )[:, None].to(dtype=dim_weight.dtype)
+        dim_denom = dim_weight.sum(dim=(0, 1)).clamp(min=1.0)
+        loss_action_by_dim = (action_loss_raw * dim_weight[:, :, None]).sum(dim=(0, 1)) / dim_denom
         loss_3d, loss_3d_logs = self._compute_future_3d_loss(
             future_3d_layer_tokens=future_3d_layer_tokens,
             future_images=future_3d_images,
@@ -1134,6 +1140,8 @@ class MagicBotR0(torch.nn.Module):
             "loss_action": self.loss_lambda_action * float(loss_action.detach().item()),
             "loss_3d": float(loss_3d.detach().item()),
         }
+        for dim_idx, dim_loss in enumerate(loss_action_by_dim.detach().float().cpu().tolist()):
+            loss_dict[f"loss_action_dim{dim_idx}"] = float(dim_loss)
         if future_3d_query_sigma is not None:
             loss_dict["future_3d_query_sigma"] = float(future_3d_query_sigma.detach().float().mean().item())
         for key, value in loss_3d_logs.items():

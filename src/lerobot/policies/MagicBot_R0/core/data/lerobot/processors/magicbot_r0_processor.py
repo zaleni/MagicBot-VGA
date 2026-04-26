@@ -248,15 +248,6 @@ class MagicBotR0Processor(BaseProcessor):
             sample["gt_action"] = deepcopy(data["action"])
 
         # 3. action & state
-        if "action" in data and self.delta_action_dim_mask is not None:
-            action_is_pad = torch.as_tensor(data["action_is_pad"], dtype=torch.bool)
-            if bool(action_is_pad.any().item()):
-                for key, dim_mask in self.delta_action_dim_mask.items():
-                    cur_action = data["action"][key]
-                    cur_action_is_pad = action_is_pad.to(device=cur_action.device)
-                    cur_dim_mask = dim_mask.to(device=cur_action.device)
-                    pad_delta_mask = cur_action_is_pad.unsqueeze(1) & cur_dim_mask.unsqueeze(0)
-                    cur_action[pad_delta_mask] = 0.0
         data = self.action_state_transform(data)
         data = self.normalizer.forward(data)
         data = self.action_state_merger.forward(data)
@@ -266,7 +257,6 @@ class MagicBotR0Processor(BaseProcessor):
             sample["action_is_pad"] = data["action_is_pad"] # [action_horizon,]
             sample["action_dim_is_pad"] = data["action_dim_is_pad"] # [action_dim,]
             assert sample["action"].shape[-1] == self.action_output_dim
-            # sample["action"][sample["action_is_pad"], :-1] = 0.0 # NOTE: we assume use delta_eef_pose + gripper， so pad action is 0
 
         
         # TODO: rename all "state" into "proprio"

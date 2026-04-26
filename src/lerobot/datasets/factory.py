@@ -696,9 +696,17 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
         data_stats = {stats_key: dataset.dataset_stats} if dataset.dataset_stats is not None else {}
         return dataset, data_stats
 
-    image_transforms = (
-        ImageTransforms(cfg.dataset.image_transforms) if cfg.dataset.image_transforms.enable else None
+    cubev2_pipeline_image_aug = (
+        cfg.dataset.__class__.__name__ == "CubeV2DatasetConfig"
+        and cfg.dataset.image_transforms.enable
+        and cfg.dataset.image_transforms.preset in {"pi05", "pi0.5", "pi05_style"}
     )
+    if cubev2_pipeline_image_aug:
+        image_transforms = None
+    elif cfg.dataset.image_transforms.enable:
+        image_transforms = ImageTransforms(cfg.dataset.image_transforms)
+    else:
+        image_transforms = None
 
     all_data_stats = {}
     all_repo_ids = resolve_repo_ids(cfg)

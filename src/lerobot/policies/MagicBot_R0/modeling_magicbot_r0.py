@@ -455,7 +455,11 @@ class MagicBotR0Policy(PreTrainedPolicy):
         if "loss_3d" in loss_dict:
             output["loss_3d"] = float(loss_dict["loss_3d"])
         for key, value in loss_dict.items():
-            if key.startswith("loss_3d_q") or key in {"time_3d_teacher_forward_s", "future_3d_query_sigma"}:
+            if (
+                key.startswith("loss_action_dim")
+                or key.startswith("loss_3d_q")
+                or key in {"time_3d_teacher_forward_s", "future_3d_query_sigma"}
+            ):
                 output[key] = float(value)
         return loss, output
 
