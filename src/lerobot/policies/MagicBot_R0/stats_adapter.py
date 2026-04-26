@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+import numpy as np
 import torch
 
 from .core.utils.logging_config import get_logger
@@ -31,12 +32,24 @@ def _is_magicbot_r0_stats_payload(stats: Any) -> bool:
 
 def _clone_stat_value(value: Any) -> Any:
     if isinstance(value, torch.Tensor):
-        return value.clone()
+        return value.clone().float()
+    if isinstance(value, np.ndarray):
+        return torch.as_tensor(value).clone().float()
+    if isinstance(value, (list, tuple)) and _is_numeric_sequence(value):
+        return torch.as_tensor(value).clone().float()
     if isinstance(value, dict):
         return {key: _clone_stat_value(child) for key, child in value.items()}
     if isinstance(value, list):
         return [_clone_stat_value(child) for child in value]
     return value
+
+
+def _is_numeric_sequence(value: Any) -> bool:
+    if isinstance(value, (list, tuple)):
+        if not value:
+            return True
+        return all(_is_numeric_sequence(child) for child in value)
+    return isinstance(value, (int, float, bool, np.number))
 
 
 def _field_stats_to_magicbot_r0_stats(field_stats: dict[str, Any]) -> dict[str, Any]:

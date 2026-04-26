@@ -690,6 +690,7 @@ class MagicBotR0RobotVideoDatasetV3(Dataset):
         text_embedding_cache_dir: str | None = None,
         context_len: int = 128,
         normalization_stats_path: str | None = None,
+        use_lerobot_meta_stats: bool = False,
         val_set_proportion: float = 0.05,
         is_training_set: bool = False,
         global_sample_stride: int = 1,
@@ -746,6 +747,15 @@ class MagicBotR0RobotVideoDatasetV3(Dataset):
             if stats_path is not None and stats_path.is_file():
                 dataset_stats = load_dataset_stats_from_json(str(stats_path))
                 logger.info("Using dataset stats from %s", stats_path)
+            elif use_lerobot_meta_stats:
+                if processor.action_state_transforms is not None:
+                    raise ValueError(
+                        "LeRobot metadata stats are raw absolute-action stats and cannot be used after "
+                        "MagicBot_R0 action/state transforms. Use ACTION_TYPE=abs for USE_EXTERNAL_STATS=false, "
+                        "or provide delta stats with USE_EXTERNAL_STATS=true."
+                    )
+                logger.info("Using LeRobot metadata stats for MagicBot_R0 normalization.")
+                dataset_stats = self.lerobot_dataset.multi_dataset.stats
             else:
                 if not is_training_set:
                     raise ValueError(
@@ -1027,6 +1037,11 @@ def build_magicbot_r0_dataset(
 ) -> MagicBotR0RobotVideoDatasetV3:
     processor = build_magicbot_r0_processor(cfg)
     dataset_dirs = resolve_magicbot_r0_dataset_dirs(cfg)
+    normalization_stats_path = stats_cache_path or cfg.normalization_stats_path
+    use_lerobot_meta_stats = False
+    if not cfg.use_external_stats and cfg.normalization_stats_path is None:
+        normalization_stats_path = None
+        use_lerobot_meta_stats = True
     return MagicBotR0RobotVideoDatasetV3(
         dataset_dirs=dataset_dirs,
         shape_meta=cfg.shape_meta,
@@ -1037,7 +1052,8 @@ def build_magicbot_r0_dataset(
         processor=processor,
         text_embedding_cache_dir=cfg.text_embedding_cache_dir,
         context_len=cfg.context_len,
-        normalization_stats_path=stats_cache_path or cfg.normalization_stats_path,
+        normalization_stats_path=normalization_stats_path,
+        use_lerobot_meta_stats=use_lerobot_meta_stats,
         val_set_proportion=cfg.val_set_proportion,
         is_training_set=True,
         global_sample_stride=cfg.global_sample_stride,
