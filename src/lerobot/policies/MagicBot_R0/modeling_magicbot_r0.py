@@ -146,6 +146,7 @@ class MagicBotR0Policy(PreTrainedPolicy):
             f"  - Mixed checkpointing : {mot.mot_checkpoint_mixed_attn}",
             "",
             "Objectives:",
+            f"  - Action / proprio dim: {self.config.action_dim} / {self.config.proprio_dim}",
             f"  - Lambda video/action/3D: {model.loss_lambda_video} / {model.loss_lambda_action} / {model.loss_lambda_3d}",
             "",
             "Future 3D:",
@@ -292,9 +293,16 @@ class MagicBotR0Policy(PreTrainedPolicy):
             )
 
         total_dim = sum(int(spec["dim"]) for spec in denorm_specs)
-        if total_dim != int(self.config.action_dim):
+        if total_dim > int(self.config.action_dim):
             raise ValueError(
-                f"MagicBot_R0 action stats dim mismatch: stats sum to {total_dim}, config.action_dim={self.config.action_dim}"
+                f"MagicBot_R0 action stats dim mismatch: stats sum to {total_dim}, "
+                f"which is larger than config.action_dim={self.config.action_dim}"
+            )
+        if total_dim < int(self.config.action_dim):
+            logging.info(
+                "MagicBot_R0 action stats cover %d/%d dims; trailing policy dims are treated as padded output.",
+                total_dim,
+                self.config.action_dim,
             )
         self._action_denorm_specs = denorm_specs
         self._action_stats_payload = stats_payload
@@ -521,9 +529,9 @@ class MagicBotR0Policy(PreTrainedPolicy):
             parts.append((cur_action - offset) / scale)
             start = end
 
-        if start != action_f32.shape[-1]:
+        if start > action_f32.shape[-1]:
             raise ValueError(
-                f"MagicBot_R0 denormalizer consumed {start} dims but action has {action_f32.shape[-1]} dims."
+                f"MagicBot_R0 denormalizer needs {start} dims but action has {action_f32.shape[-1]} dims."
             )
 
         action_denorm = torch.cat(parts, dim=-1)

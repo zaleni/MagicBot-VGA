@@ -14,6 +14,7 @@ from .helpers.loader import load_wan22_ti2v_5b_components
 from .mot import MoT
 from .schedulers.scheduler_continuous import WanContinuousFlowMatchScheduler
 from lerobot.policies.cubev2.da3_teacher import DA3BackboneTeacher
+from lerobot.utils.constants import SAMPLE_ACTION_LOSS_MASK
 
 logger = get_logger(__name__)
 
@@ -406,6 +407,26 @@ class MagicBotR0(torch.nn.Module):
                     f"got {tuple(action_is_pad.shape)} vs expected ({batch_size}, {action_horizon})"
                 )
 
+        action_dim_is_pad = sample.get("action_dim_is_pad", None)
+        if action_dim_is_pad is not None:
+            if action_dim_is_pad.ndim != 2:
+                raise ValueError(
+                    f"`sample['action_dim_is_pad']` must be 2D [B, D], got shape {tuple(action_dim_is_pad.shape)}"
+                )
+            if action_dim_is_pad.shape[0] != batch_size or action_dim_is_pad.shape[1] != action.shape[2]:
+                raise ValueError(
+                    "`sample['action_dim_is_pad']` shape mismatch: "
+                    f"got {tuple(action_dim_is_pad.shape)} vs expected ({batch_size}, {action.shape[2]})"
+                )
+
+        sample_action_loss_mask = sample.get(SAMPLE_ACTION_LOSS_MASK, None)
+        if sample_action_loss_mask is not None:
+            if sample_action_loss_mask.ndim > 2:
+                raise ValueError(
+                    f"`sample['{SAMPLE_ACTION_LOSS_MASK}']` must be scalar, [B], or [B,1], "
+                    f"got shape {tuple(sample_action_loss_mask.shape)}"
+                )
+
         image_is_pad = sample.get("image_is_pad", None)
         if image_is_pad is not None:
             if image_is_pad.ndim != 2:
@@ -476,6 +497,21 @@ class MagicBotR0(torch.nn.Module):
 
         if action_is_pad is not None:
             action_is_pad = action_is_pad.to(device=self.device, dtype=torch.bool, non_blocking=True)
+        if action_dim_is_pad is not None:
+            action_dim_is_pad = action_dim_is_pad.to(device=self.device, dtype=torch.bool, non_blocking=True)
+        if sample_action_loss_mask is not None:
+            sample_action_loss_mask = sample_action_loss_mask.to(
+                device=self.device, dtype=torch.float32, non_blocking=True
+            )
+            if sample_action_loss_mask.ndim == 0:
+                sample_action_loss_mask = sample_action_loss_mask.expand(batch_size)
+            if sample_action_loss_mask.ndim == 2:
+                sample_action_loss_mask = sample_action_loss_mask.squeeze(-1)
+            if sample_action_loss_mask.shape[0] != batch_size:
+                raise ValueError(
+                    f"`sample['{SAMPLE_ACTION_LOSS_MASK}']` batch mismatch: "
+                    f"got {tuple(sample_action_loss_mask.shape)}, expected ({batch_size},)."
+                )
         if image_is_pad is not None:
             image_is_pad = image_is_pad.to(device=self.device, dtype=torch.bool, non_blocking=True)
 
@@ -487,6 +523,8 @@ class MagicBotR0(torch.nn.Module):
             "fuse_vae_embedding_in_latents": fuse_flag,
             "action": action,
             "action_is_pad": action_is_pad,
+            "action_dim_is_pad": action_dim_is_pad,
+            "sample_action_loss_mask": sample_action_loss_mask,
             "image_is_pad": image_is_pad,
             "future_3d_images": future_3d_images,
             "future_3d_img_masks": future_3d_img_masks,
@@ -919,6 +957,7 @@ class MagicBotR0(torch.nn.Module):
         context_mask = inputs["context_mask"]
         action = inputs["action"]
         action_is_pad = inputs["action_is_pad"]
+        sample_action_loss_mask = inputs.get("sample_action_loss_mask", None)
         image_is_pad = inputs["image_is_pad"]
         future_3d_images = inputs["future_3d_images"]
         future_3d_img_masks = inputs["future_3d_img_masks"]
@@ -1052,7 +1091,11 @@ class MagicBotR0(torch.nn.Module):
         )
         loss_video = (loss_video_per_sample * video_weight).mean()
 
-        action_loss_token = F.mse_loss(pred_action.float(), target_action.float(), reduction="none").mean(dim=2) # [B, T]
+        action_loss_token = F.mse_loss(
+            pred_action.float(),
+            target_action.float(),
+            reduction="none",
+        ).mean(dim=2)  # [B, T]
         if action_is_pad is not None:
             valid = (~action_is_pad).to(device=action_loss_token.device, dtype=action_loss_token.dtype)
             valid_sum = valid.sum(dim=1).clamp(min=1.0)
@@ -1063,7 +1106,18 @@ class MagicBotR0(torch.nn.Module):
         action_weight = self.train_action_scheduler.training_weight(timestep_action).to(
             action_loss_per_sample.device, dtype=action_loss_per_sample.dtype
         )
-        loss_action = (action_loss_per_sample * action_weight).mean()
+        weighted_action_loss = action_loss_per_sample * action_weight
+        if sample_action_loss_mask is not None:
+            sample_valid = sample_action_loss_mask.to(
+                device=weighted_action_loss.device,
+                dtype=weighted_action_loss.dtype,
+            ) > 0.5
+            if sample_valid.any():
+                loss_action = weighted_action_loss[sample_valid].mean()
+            else:
+                loss_action = weighted_action_loss.new_zeros(())
+        else:
+            loss_action = weighted_action_loss.mean()
         loss_3d, loss_3d_logs = self._compute_future_3d_loss(
             future_3d_layer_tokens=future_3d_layer_tokens,
             future_images=future_3d_images,

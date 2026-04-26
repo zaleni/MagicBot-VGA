@@ -129,8 +129,8 @@ class MagicBotR0DatasetConfig(DatasetConfig):
     future_3d_target_index: int = -1
 
     processor_num_output_cameras: int = 2
-    processor_action_output_dim: int = 7
-    processor_proprio_output_dim: int = 8
+    processor_action_output_dim: int = 24
+    processor_proprio_output_dim: int = 24
     processor_resize_shape: tuple[int, int] | None = None
     processor_use_stepwise_action_norm: bool = False
     processor_norm_default_mode: str = "min/max"
@@ -138,6 +138,7 @@ class MagicBotR0DatasetConfig(DatasetConfig):
     processor_delta_action_dim_mask: dict[str, list[bool]] | None = field(
         default_factory=lambda: {"default": [True, True, True, True, True, True, False]}
     )
+    pretrain_multi_embodiment: bool = False
 
     text_embedding_cache_dir: str | None = None
     context_len: int = 128
@@ -225,8 +226,8 @@ class MagicBotR0Config(PreTrainedConfig):
     dtype: str = "bfloat16"
     device: str | None = None
 
-    action_dim: int = 7
-    proprio_dim: int = 8
+    action_dim: int = 24
+    proprio_dim: int = 24
     action_horizon: int = 32
     n_action_steps: int = 1
     num_inference_steps: int = 10

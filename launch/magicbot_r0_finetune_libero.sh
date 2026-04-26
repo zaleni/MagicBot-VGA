@@ -63,6 +63,8 @@ VIDEO_BACKEND="${VIDEO_BACKEND:-}"
 USE_DIST_LOADING="${USE_DIST_LOADING:-false}"
 
 NUM_FRAMES="${NUM_FRAMES:-33}"
+ACTION_DIM="${ACTION_DIM:-24}"
+PROPRIO_DIM="${PROPRIO_DIM:-24}"
 ACTION_HORIZON="${ACTION_HORIZON:-32}"
 N_ACTION_STEPS="${N_ACTION_STEPS:-8}"
 NUM_INFERENCE_STEPS="${NUM_INFERENCE_STEPS:-10}"
@@ -149,14 +151,14 @@ fi
 if [[ ! -f "${ACTION_DIT_PRETRAINED_PATH}" ]]; then
   echo "Missing ActionDiT backbone: ${ACTION_DIT_PRETRAINED_PATH}"
   echo "Generate MagicBot_R0 expert backbones with:"
-  echo "  python src/lerobot/scripts/magicbot_r0_preprocess_expert_backbones.py --expert both --action-output \"${ACTION_DIT_PRETRAINED_PATH}\" --future-3d-output \"${FUTURE_3D_PRETRAINED_PATH}\" --action-dim 7 --da3-num-views ${DA3_NUM_VIEWS} --future-3d-tokens-per-view ${FUTURE_3D_TOKENS_PER_VIEW} --device cuda --dtype bfloat16"
+  echo "  python src/lerobot/scripts/magicbot_r0_preprocess_expert_backbones.py --expert both --action-output \"${ACTION_DIT_PRETRAINED_PATH}\" --future-3d-output \"${FUTURE_3D_PRETRAINED_PATH}\" --action-dim ${ACTION_DIM} --da3-num-views ${DA3_NUM_VIEWS} --future-3d-tokens-per-view ${FUTURE_3D_TOKENS_PER_VIEW} --device cuda --dtype bfloat16"
   exit 1
 fi
 
 if [[ ! -f "${FUTURE_3D_PRETRAINED_PATH}" ]]; then
   echo "Missing Future3DExpert backbone: ${FUTURE_3D_PRETRAINED_PATH}"
   echo "Generate MagicBot_R0 expert backbones with:"
-  echo "  python src/lerobot/scripts/magicbot_r0_preprocess_expert_backbones.py --expert both --action-output \"${ACTION_DIT_PRETRAINED_PATH}\" --future-3d-output \"${FUTURE_3D_PRETRAINED_PATH}\" --action-dim 7 --da3-num-views ${DA3_NUM_VIEWS} --future-3d-tokens-per-view ${FUTURE_3D_TOKENS_PER_VIEW} --device cuda --dtype bfloat16"
+  echo "  python src/lerobot/scripts/magicbot_r0_preprocess_expert_backbones.py --expert both --action-output \"${ACTION_DIT_PRETRAINED_PATH}\" --future-3d-output \"${FUTURE_3D_PRETRAINED_PATH}\" --action-dim ${ACTION_DIM} --da3-num-views ${DA3_NUM_VIEWS} --future-3d-tokens-per-view ${FUTURE_3D_TOKENS_PER_VIEW} --device cuda --dtype bfloat16"
   exit 1
 fi
 
@@ -206,6 +208,7 @@ REPO_ID_FILE="${REPO_ID_FILE_DIR}/${JOB_NAME}.txt"
 printf '%s\n' "${DATASET_REPO_IDS[@]}" > "${REPO_ID_FILE}"
 
 echo "MAGICBOT_R0_VARIANT=${MAGICBOT_R0_VARIANT}"
+echo "ACTION_DIM=${ACTION_DIM}, PROPRIO_DIM=${PROPRIO_DIM}"
 echo "ACTION_DIT_PRETRAINED_PATH=${ACTION_DIT_PRETRAINED_PATH}"
 echo "FUTURE_3D_PRETRAINED_PATH=${FUTURE_3D_PRETRAINED_PATH}"
 echo "NUM_FRAMES=${NUM_FRAMES}"
@@ -246,8 +249,8 @@ ARGS=(
     --policy.load_text_encoder="${LOAD_TEXT_ENCODER}"
     --policy.dtype="${DTYPE}"
     --policy.mot_checkpoint_mixed_attn="${MAGICBOT_R0_CHECKPOINT_MIXED_ATTN}"
-    --policy.action_dim=7
-    --policy.proprio_dim=8
+    --policy.action_dim="${ACTION_DIM}"
+    --policy.proprio_dim="${PROPRIO_DIM}"
     --policy.action_horizon="${ACTION_HORIZON}"
     --policy.n_action_steps="${N_ACTION_STEPS}"
     --policy.num_inference_steps="${NUM_INFERENCE_STEPS}"
@@ -276,8 +279,8 @@ ARGS=(
     --dataset.skip_padding_as_possible=false
     --dataset.concat_multi_camera="${CONCAT_MULTI_CAMERA}"
     --dataset.processor_num_output_cameras="${PROCESSOR_NUM_OUTPUT_CAMERAS}"
-    --dataset.processor_action_output_dim=7
-    --dataset.processor_proprio_output_dim=8
+    --dataset.processor_action_output_dim="${ACTION_DIM}"
+    --dataset.processor_proprio_output_dim="${PROPRIO_DIM}"
     --dataset.processor_norm_default_mode="${NORM_DEFAULT_MODE}"
     --dataset.future_3d_target_index="${FUTURE_3D_TARGET_INDEX}"
 

@@ -15,6 +15,13 @@ from torch.utils.data import Dataset
 
 from lerobot.datasets.compute_stats import aggregate_stats
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
+from lerobot.transforms.constants import (
+    get_feature_mapping,
+    get_image_mapping,
+    get_mask_mapping,
+    infer_embodiment_variant,
+)
+from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE, SAMPLE_ACTION_LOSS_MASK
 
 from .configuration_magicbot_r0 import MagicBotR0DatasetConfig
 from .core.data.dataset_utils import Normalize
@@ -23,6 +30,7 @@ from .core.data.lerobot.processors.magicbot_r0_processor import MagicBotR0Proces
 from .core.data.lerobot.transforms.action_state_merger import ConcatLeftAlign
 from .core.data.lerobot.transforms.image import ToTensor
 from .core.data.lerobot.utils.normalizer import (
+    canonicalize_norm_mode,
     load_dataset_stats_from_json,
     save_dataset_stats_to_json,
 )
@@ -68,6 +76,58 @@ def resolve_magicbot_r0_video_size(
     if height <= 0 or width <= 0:
         raise ValueError(f"video_size values must be positive, got {requested_video_size}.")
     return height, width
+
+
+def _canonical_image_key(mapped_key: str) -> str:
+    prefix = f"{OBS_IMAGES}."
+    if mapped_key.startswith(prefix):
+        return mapped_key[len(prefix) :]
+    return mapped_key.rsplit(".", 1)[-1]
+
+
+def _as_feature_dim(shape: Any) -> int:
+    if isinstance(shape, (list, tuple)):
+        if not shape:
+            return 1
+        return int(shape[0])
+    return int(shape)
+
+
+def _as_torch_stats_value(value: Any, like: torch.Tensor) -> torch.Tensor:
+    if isinstance(value, torch.Tensor):
+        return value.to(device=like.device, dtype=like.dtype)
+    return torch.as_tensor(value, device=like.device, dtype=like.dtype)
+
+
+def _select_stat(stats: dict[str, Any], *names: str) -> Any:
+    for name in names:
+        if name in stats:
+            return stats[name]
+    raise KeyError(f"Missing any of stats keys {names}; available={list(stats.keys())}")
+
+
+def _normalize_with_stats(x: torch.Tensor, stats: dict[str, Any], mode: str) -> torch.Tensor:
+    mode = canonicalize_norm_mode(mode)
+    eps = 1e-6
+    if mode in {"z-score", "mean_std"}:
+        mean = _as_torch_stats_value(_select_stat(stats, "mean", "global_mean"), x)
+        std = _as_torch_stats_value(_select_stat(stats, "std", "global_std"), x)
+        return (x - mean) / (std + eps)
+
+    if mode == "min/max":
+        low = _as_torch_stats_value(_select_stat(stats, "min", "global_min"), x)
+        high = _as_torch_stats_value(_select_stat(stats, "max", "global_max"), x)
+    elif mode == "q01/q99":
+        low = _as_torch_stats_value(_select_stat(stats, "q01", "global_q01"), x)
+        high = _as_torch_stats_value(_select_stat(stats, "q99", "global_q99"), x)
+    else:
+        low_value, high_value = map(float, mode.split("/"))
+        low = torch.full_like(x[..., :1], low_value)
+        high = torch.full_like(x[..., :1], high_value)
+
+    y = (x - low) / (high - low + eps)
+    y = y * 2.0 - 1.0
+    return torch.clamp(y, -5.0, 5.0)
 
 
 class MaskedDeltaActionTransform:
@@ -167,7 +227,10 @@ class MagicBotR0MultiLeRobotDatasetV3(Dataset):
         episodes: dict[str, list[int]] | None = None,
         image_transforms=None,
         delta_timestamps: dict[str, list[float]] | None = None,
+        delta_timestamps_by_dataset: dict[str, dict[str, list[float]]] | None = None,
         video_backend: str | None = None,
+        drop_non_intersection_features: bool = True,
+        aggregate_metadata_stats: bool = True,
     ) -> None:
         super().__init__()
         self.dataset_dirs = dataset_dirs
@@ -176,12 +239,17 @@ class MagicBotR0MultiLeRobotDatasetV3(Dataset):
         for dataset_dir in dataset_dirs:
             root = Path(dataset_dir)
             repo_id = str(root)
+            cur_delta_timestamps = (
+                delta_timestamps_by_dataset.get(str(root), delta_timestamps)
+                if delta_timestamps_by_dataset is not None
+                else delta_timestamps
+            )
             dataset = LeRobotDataset(
                 repo_id=repo_id,
                 root=root,
                 episodes=episodes.get(dataset_dir) if episodes else None,
                 image_transforms=image_transforms,
-                delta_timestamps=delta_timestamps,
+                delta_timestamps=cur_delta_timestamps,
                 video_backend=video_backend,
             )
             self._datasets.append(dataset)
@@ -194,16 +262,17 @@ class MagicBotR0MultiLeRobotDatasetV3(Dataset):
             raise ValueError(f"All dataset_dirs must have the same fps, got {fps_list}")
 
         self.disabled_features: set[str] = set()
-        intersection_features = set(self._datasets[0].features)
-        for dataset in self._datasets:
-            intersection_features.intersection_update(dataset.features)
-        for dataset in self._datasets:
-            extra_keys = set(dataset.features).difference(intersection_features)
-            self.disabled_features.update(extra_keys)
+        if drop_non_intersection_features:
+            intersection_features = set(self._datasets[0].features)
+            for dataset in self._datasets:
+                intersection_features.intersection_update(dataset.features)
+            for dataset in self._datasets:
+                extra_keys = set(dataset.features).difference(intersection_features)
+                self.disabled_features.update(extra_keys)
 
         self.image_transforms = image_transforms
         self.delta_timestamps = delta_timestamps
-        self.stats = aggregate_stats([dataset.meta.stats for dataset in self._datasets])
+        self.stats = aggregate_stats([dataset.meta.stats for dataset in self._datasets]) if aggregate_metadata_stats else {}
 
     def set_during_training(self, during_training: bool) -> None:
         del during_training
@@ -285,6 +354,13 @@ class MagicBotR0BaseLerobotDatasetV3(Dataset):
         seed: int = 42,
         global_sample_stride: int = 1,
         video_backend: str | None = None,
+        pretrain_multi_embodiment: bool = False,
+        max_action_dim: int | None = None,
+        max_state_dim: int | None = None,
+        norm_default_mode: str = "z-score",
+        external_stats_root: str | None = None,
+        action_mode: str = "abs",
+        image_resize_shape: tuple[int, int] | None = None,
     ) -> None:
         if len(dataset_dirs) == 0:
             raise ValueError("At least one dataset directory is required")
@@ -300,6 +376,13 @@ class MagicBotR0BaseLerobotDatasetV3(Dataset):
         self.obs_size = obs_size
         self.processor: BaseProcessor | None = None
         self.is_training_set = is_training_set
+        self.pretrain_multi_embodiment = bool(pretrain_multi_embodiment)
+        self.max_action_dim = int(max_action_dim) if max_action_dim is not None else None
+        self.max_state_dim = int(max_state_dim) if max_state_dim is not None else None
+        self.norm_default_mode = str(norm_default_mode)
+        self.external_stats_root = external_stats_root
+        self.action_mode = str(action_mode)
+        self.image_resize_shape = image_resize_shape
 
         metas = [LeRobotDatasetMetadata(repo_id=str(Path(ds_dir)), root=Path(ds_dir)) for ds_dir in dataset_dirs]
         fps_list = [meta.fps for meta in metas]
@@ -312,26 +395,42 @@ class MagicBotR0BaseLerobotDatasetV3(Dataset):
         self.action_meta = shape_meta["action"]
 
         delta_timestamps: dict[str, list[float]] = {}
-        for meta in self.image_meta:
-            key = meta["key"]
-            meta["lerobot_key"] = f"observation.images.{key}" if key != "default" else "observation.images"
-            delta_timestamps[meta["lerobot_key"]] = [
-                (t * global_sample_stride) / fps for t in range(-past_obs_size, -past_obs_size + obs_size)
-            ]
-        for meta in self.state_meta:
-            key = meta["key"]
-            meta["lerobot_key"] = f"observation.state.{key}" if key != "default" else "observation.state"
-            delta_timestamps[meta["lerobot_key"]] = [
-                (t * global_sample_stride) / fps for t in range(-past_obs_size, -past_obs_size + obs_size)
-            ]
-        for meta in self.action_meta:
-            key = meta["key"]
-            meta["lerobot_key"] = f"action.{key}" if key != "default" else "action"
-            delta_timestamps[meta["lerobot_key"]] = [
-                (t * global_sample_stride) / fps for t in range(-past_action_size, -past_action_size + action_size)
-            ]
+        delta_timestamps_by_dataset: dict[str, dict[str, list[float]]] | None = None
+        self.embodiment_adapters: list[dict[str, Any]] = []
+        if self.pretrain_multi_embodiment:
+            if self.max_action_dim is None or self.max_state_dim is None:
+                raise ValueError("pretrain_multi_embodiment requires max_action_dim and max_state_dim.")
+            self.embodiment_adapters = self._build_multi_embodiment_adapters(metas)
+            delta_timestamps_by_dataset = {}
+            for dataset_dir, adapter in zip(dataset_dirs, self.embodiment_adapters, strict=True):
+                delta_timestamps_by_dataset[str(Path(dataset_dir))] = self._build_multi_embodiment_delta_timestamps(
+                    adapter=adapter,
+                    fps=fps,
+                    global_sample_stride=global_sample_stride,
+                    obs_size=obs_size,
+                    action_size=action_size,
+                )
+        else:
+            for meta in self.image_meta:
+                key = meta["key"]
+                meta["lerobot_key"] = f"observation.images.{key}" if key != "default" else "observation.images"
+                delta_timestamps[meta["lerobot_key"]] = [
+                    (t * global_sample_stride) / fps for t in range(-past_obs_size, -past_obs_size + obs_size)
+                ]
+            for meta in self.state_meta:
+                key = meta["key"]
+                meta["lerobot_key"] = f"observation.state.{key}" if key != "default" else "observation.state"
+                delta_timestamps[meta["lerobot_key"]] = [
+                    (t * global_sample_stride) / fps for t in range(-past_obs_size, -past_obs_size + obs_size)
+                ]
+            for meta in self.action_meta:
+                key = meta["key"]
+                meta["lerobot_key"] = f"action.{key}" if key != "default" else "action"
+                delta_timestamps[meta["lerobot_key"]] = [
+                    (t * global_sample_stride) / fps for t in range(-past_action_size, -past_action_size + action_size)
+                ]
 
-        self._infer_feature_raw_shapes_from_metadata(metas)
+            self._infer_feature_raw_shapes_from_metadata(metas)
 
         episodes: dict[str, list[int]] = {}
         if val_set_proportion < 1e-6:
@@ -352,7 +451,10 @@ class MagicBotR0BaseLerobotDatasetV3(Dataset):
             dataset_dirs=self.dataset_dirs,
             episodes=episodes,
             delta_timestamps=delta_timestamps,
+            delta_timestamps_by_dataset=delta_timestamps_by_dataset,
             video_backend=video_backend,
+            drop_non_intersection_features=not self.pretrain_multi_embodiment,
+            aggregate_metadata_stats=not self.pretrain_multi_embodiment,
         )
 
         episode_from = []
@@ -369,6 +471,100 @@ class MagicBotR0BaseLerobotDatasetV3(Dataset):
             "from": torch.cat(episode_from),
             "to": torch.cat(episode_to),
         }
+
+    def _build_multi_embodiment_adapters(self, metas: list[LeRobotDatasetMetadata]) -> list[dict[str, Any]]:
+        adapters = []
+        for dataset_meta in metas:
+            robot_type = dataset_meta.robot_type
+            resolved_robot_type = infer_embodiment_variant(robot_type, dataset_meta.features)
+            feature_mapping = get_feature_mapping(robot_type, dataset_meta.features)
+            image_mapping = get_image_mapping(robot_type, dataset_meta.features)
+            features = dataset_meta.features
+
+            state_keys = [key for key in feature_mapping[OBS_STATE] if key in features]
+            action_keys = [key for key in feature_mapping[ACTION] if key in features]
+            has_action = len(action_keys) == len(feature_mapping[ACTION]) and len(action_keys) > 0
+            if not state_keys:
+                raise KeyError(
+                    f"No state keys from FEATURE_MAPPING found for dataset {dataset_meta.root} "
+                    f"(robot_type={robot_type}, resolved={resolved_robot_type})."
+                )
+
+            canonical_to_source = {}
+            for source_key, mapped_key in image_mapping.items():
+                if source_key in features:
+                    canonical_to_source[_canonical_image_key(mapped_key)] = source_key
+            if not canonical_to_source:
+                raise KeyError(
+                    f"No image keys from IMAGE_MAPPING found for dataset {dataset_meta.root} "
+                    f"(robot_type={robot_type}, resolved={resolved_robot_type})."
+                )
+
+            stats_payload = self._load_multi_embodiment_stats(robot_type, resolved_robot_type)
+            adapters.append(
+                {
+                    "robot_type": robot_type,
+                    "resolved_robot_type": resolved_robot_type,
+                    "features": features,
+                    "state_keys": state_keys,
+                    "action_keys": action_keys,
+                    "has_action": has_action,
+                    "canonical_to_source": canonical_to_source,
+                    "delta_mask": torch.as_tensor(get_mask_mapping(robot_type, dataset_meta.features), dtype=torch.bool),
+                    "stats": stats_payload,
+                }
+            )
+            logger.info(
+                "MagicBot_R0 pretrain adapter: root=%s robot_type=%s resolved=%s state_keys=%s action_keys=%s has_action=%s images=%s",
+                dataset_meta.root,
+                robot_type,
+                resolved_robot_type,
+                state_keys,
+                action_keys,
+                has_action,
+                canonical_to_source,
+            )
+        return adapters
+
+    def _load_multi_embodiment_stats(self, robot_type: str, resolved_robot_type: str) -> dict[str, Any]:
+        if not self.external_stats_root:
+            raise ValueError(
+                "pretrain_multi_embodiment requires dataset.external_stats_root so each robot_type can use "
+                "its own normalization stats."
+            )
+        root = Path(self.external_stats_root)
+        candidates = [
+            root / resolved_robot_type / self.action_mode / "stats.json",
+            root / robot_type / self.action_mode / "stats.json",
+        ]
+        for path in candidates:
+            if path.is_file():
+                logger.info("Using MagicBot_R0 pretrain stats for %s from %s", resolved_robot_type, path)
+                return load_dataset_stats_from_json(str(path))
+        raise FileNotFoundError(
+            "Missing external stats for MagicBot_R0 pretrain. Tried: "
+            + ", ".join(str(path) for path in candidates)
+        )
+
+    @staticmethod
+    def _build_multi_embodiment_delta_timestamps(
+        adapter: dict[str, Any],
+        fps: int,
+        global_sample_stride: int,
+        obs_size: int,
+        action_size: int,
+    ) -> dict[str, list[float]]:
+        obs_times = [(t * global_sample_stride) / fps for t in range(obs_size)]
+        action_times = [(t * global_sample_stride) / fps for t in range(action_size)]
+        delta_timestamps = {}
+        for key in adapter["canonical_to_source"].values():
+            delta_timestamps[key] = obs_times
+        for key in adapter["state_keys"]:
+            delta_timestamps[key] = obs_times
+        if adapter["has_action"]:
+            for key in adapter["action_keys"]:
+                delta_timestamps[key] = action_times
+        return delta_timestamps
 
     def _infer_feature_raw_shapes_from_metadata(self, metas: list[LeRobotDatasetMetadata]) -> None:
         def _collect_feature_specs(feature_key: str) -> list[dict[str, Any]]:
@@ -493,6 +689,188 @@ class MagicBotR0BaseLerobotDatasetV3(Dataset):
             raise ValueError(f"Image '{key}' shape {tuple(image.shape[1:])} mismatch with meta {raw_shape}.")
         return image
 
+    @staticmethod
+    def _as_sequence_vector(value: torch.Tensor) -> torch.Tensor:
+        if value.ndim == 1:
+            return value.unsqueeze(-1)
+        if value.ndim != 2:
+            raise ValueError(f"Expected sequence vector [T,D] or [T], got shape {tuple(value.shape)}")
+        return value.float()
+
+    @staticmethod
+    def _as_sequence_image(value: torch.Tensor) -> torch.Tensor:
+        image = value
+        if image.ndim == 3:
+            image = image.unsqueeze(0)
+        if image.ndim != 4:
+            raise ValueError(f"Expected image sequence [T,C,H,W] or [T,H,W,C], got {tuple(image.shape)}")
+        if image.shape[-1] in [1, 3, 4] and image.shape[1] not in [1, 3, 4]:
+            image = image.permute(0, 3, 1, 2).contiguous()
+        if image.dtype != torch.uint8:
+            if image.is_floating_point():
+                image = (image.clamp(0.0, 1.0) * 255).to(torch.uint8)
+            else:
+                image = image.to(torch.uint8)
+        return image
+
+    @staticmethod
+    def _align_for_cat(tensors: list[torch.Tensor]) -> tuple[list[torch.Tensor], list[int]]:
+        max_ndim = max(tensor.ndim for tensor in tensors)
+        out = []
+        sizes = []
+        for tensor in tensors:
+            tensor = tensor if tensor.ndim == max_ndim else tensor.unsqueeze(-1)
+            out.append(tensor)
+            sizes.append(tensor.shape[-1])
+        return out, sizes
+
+    @staticmethod
+    def _split_by_sizes(tensor: torch.Tensor, sizes: list[int]) -> list[torch.Tensor]:
+        chunks = []
+        start = 0
+        for size in sizes:
+            chunks.append(tensor[..., start : start + size])
+            start += size
+        return chunks
+
+    @staticmethod
+    def _pad_vector_with_dim_mask(tensor: torch.Tensor, target_dim: int) -> tuple[torch.Tensor, torch.Tensor]:
+        if tensor.shape[-1] > target_dim:
+            raise ValueError(f"Cannot pad vector dim {tensor.shape[-1]} to smaller target_dim={target_dim}.")
+        pad_dim = target_dim - tensor.shape[-1]
+        if pad_dim > 0:
+            tensor = torch.nn.functional.pad(tensor, (0, pad_dim))
+        dim_mask = torch.zeros(target_dim, dtype=torch.bool, device=tensor.device)
+        if pad_dim > 0:
+            dim_mask[-pad_dim:] = True
+        return tensor, dim_mask
+
+    @staticmethod
+    def _combined_padding_mask(lerobot_sample: dict[str, Any], keys: list[str], length: int) -> torch.Tensor:
+        masks = []
+        for key in keys:
+            pad_key = f"{key}_is_pad"
+            if pad_key in lerobot_sample:
+                masks.append(torch.as_tensor(lerobot_sample[pad_key], dtype=torch.bool))
+        if not masks:
+            return torch.zeros(length, dtype=torch.bool)
+        out = masks[0].clone()
+        for mask in masks[1:]:
+            out = out | mask.to(dtype=torch.bool)
+        return out
+
+    @staticmethod
+    def _stats_for_key(stats_payload: dict[str, Any], key: str) -> dict[str, Any]:
+        if key in stats_payload:
+            return stats_payload[key]
+        for group in ("action", "state"):
+            group_stats = stats_payload.get(group)
+            if isinstance(group_stats, dict) and key in group_stats:
+                return group_stats[key]
+        raise KeyError(f"Missing normalization stats for source key {key!r}. Available: {list(stats_payload.keys())}")
+
+    def _normalize_source_tensor(self, tensor: torch.Tensor, stats_payload: dict[str, Any], key: str) -> torch.Tensor:
+        return _normalize_with_stats(
+            tensor.float(),
+            self._stats_for_key(stats_payload, key),
+            self.norm_default_mode,
+        )
+
+    def _build_multi_embodiment_sample(self, lerobot_sample: dict[str, Any]) -> dict[str, Any]:
+        dataset_index = int(torch.as_tensor(lerobot_sample["dataset_index"]).item())
+        adapter = self.embodiment_adapters[dataset_index]
+        stats_payload = adapter["stats"]
+
+        image_tensors: dict[str, torch.Tensor] = {}
+        camera_view_mask = []
+        first_processed_image = None
+        resize_shape = self.image_resize_shape
+        if resize_shape is None:
+            resize_shape = tuple(self.image_meta[0]["shape"][1:])
+        to_tensor = ToTensor()
+        resize = tv_transforms.Resize(size=list(resize_shape))
+
+        for meta in self.image_meta:
+            key = meta["key"]
+            source_key = adapter["canonical_to_source"].get(key)
+            if source_key is None:
+                camera_view_mask.append(False)
+                image_tensors[key] = None
+                continue
+            image = self._as_sequence_image(lerobot_sample[source_key])
+            image = resize(to_tensor(image))
+            first_processed_image = image if first_processed_image is None else first_processed_image
+            image_tensors[key] = image
+            camera_view_mask.append(True)
+
+        if first_processed_image is None:
+            raise ValueError(f"No valid images found for dataset_index={dataset_index}.")
+        for key, value in list(image_tensors.items()):
+            if value is None:
+                image_tensors[key] = torch.zeros_like(first_processed_image)
+
+        state_tensors = [self._as_sequence_vector(lerobot_sample[key]) for key in adapter["state_keys"]]
+        state_tensors, state_sizes = self._align_for_cat(state_tensors)
+        state_concat_raw = torch.cat(state_tensors, dim=-1)
+
+        has_action = bool(adapter["has_action"])
+        if has_action:
+            action_tensors = [self._as_sequence_vector(lerobot_sample[key]) for key in adapter["action_keys"]]
+            action_tensors, action_sizes = self._align_for_cat(action_tensors)
+            action_concat_raw = torch.cat(action_tensors, dim=-1)
+            if self.action_mode == "delta":
+                dim = min(action_concat_raw.shape[-1], state_concat_raw.shape[-1], adapter["delta_mask"].numel())
+                delta_mask = adapter["delta_mask"][:dim].to(device=action_concat_raw.device)
+                base_state = state_concat_raw[:1, :dim].to(device=action_concat_raw.device, dtype=action_concat_raw.dtype)
+                action_concat_raw = action_concat_raw.clone()
+                delta_slice = action_concat_raw[:, :dim]
+                delta_slice[:, delta_mask] = delta_slice[:, delta_mask] - base_state[:, delta_mask]
+                action_concat_raw[:, :dim] = delta_slice
+            action_tensors = self._split_by_sizes(action_concat_raw, action_sizes)
+            action_tensors = [
+                self._normalize_source_tensor(tensor, stats_payload, key)
+                for tensor, key in zip(action_tensors, adapter["action_keys"], strict=True)
+            ]
+            action_concat = torch.cat(action_tensors, dim=-1)
+            action, action_dim_is_pad = self._pad_vector_with_dim_mask(action_concat, self.max_action_dim)
+            action_is_pad = self._combined_padding_mask(lerobot_sample, adapter["action_keys"], self.action_size)
+            sample_action_loss_mask = torch.tensor([1.0], dtype=torch.float32)
+        else:
+            action = torch.zeros(self.action_size, self.max_action_dim, dtype=torch.float32)
+            action_dim_is_pad = torch.ones(self.max_action_dim, dtype=torch.bool)
+            action_is_pad = torch.ones(self.action_size, dtype=torch.bool)
+            sample_action_loss_mask = torch.tensor([0.0], dtype=torch.float32)
+
+        state_tensors = [
+            self._normalize_source_tensor(tensor, stats_payload, key)
+            for tensor, key in zip(state_tensors, adapter["state_keys"], strict=True)
+        ]
+        state_concat = torch.cat(state_tensors, dim=-1)
+        state, state_dim_is_pad = self._pad_vector_with_dim_mask(state_concat, self.max_state_dim)
+        state_is_pad = self._combined_padding_mask(lerobot_sample, adapter["state_keys"], self.obs_size)
+        image_is_pad = self._combined_padding_mask(
+            lerobot_sample,
+            list(adapter["canonical_to_source"].values()),
+            self.obs_size,
+        )
+
+        return {
+            "idx": int(torch.as_tensor(lerobot_sample.get("index", 0)).item()) if "index" in lerobot_sample else 0,
+            "instruction": self.processor.augment_instruction(lerobot_sample) if self.processor is not None else str(lerobot_sample["task"]),
+            "pixel_values": torch.stack([image_tensors[meta["key"]] for meta in self.image_meta], dim=0),
+            "action": action,
+            "action_is_pad": action_is_pad,
+            "action_dim_is_pad": action_dim_is_pad,
+            "proprio": state,
+            "proprio_is_pad": state_is_pad,
+            "proprio_dim_is_pad": state_dim_is_pad,
+            "image_is_pad": image_is_pad,
+            "camera_view_mask": torch.as_tensor(camera_view_mask, dtype=torch.bool),
+            SAMPLE_ACTION_LOSS_MASK: sample_action_loss_mask,
+            "robot_type": adapter["resolved_robot_type"],
+            "has_action": torch.tensor(has_action, dtype=torch.bool),
+        }
+
     def _split_lerobot_sample(self, lerobot_sample: dict[str, Any]) -> dict[str, Any]:
         return lerobot_sample
 
@@ -531,6 +909,8 @@ class MagicBotR0BaseLerobotDatasetV3(Dataset):
             try:
                 lerobot_sample = self.multi_dataset[sample_idx]
                 lerobot_sample = self._split_lerobot_sample(lerobot_sample)
+                if self.pretrain_multi_embodiment:
+                    return self._build_multi_embodiment_sample(lerobot_sample)
                 break
             except Exception as err:
                 attempt += 1
@@ -702,6 +1082,12 @@ class MagicBotR0RobotVideoDatasetV3(Dataset):
         video_backend: str | None = None,
         return_future_3d_images: bool = False,
         future_3d_target_index: int = -1,
+        pretrain_multi_embodiment: bool = False,
+        max_action_dim: int | None = None,
+        max_state_dim: int | None = None,
+        norm_default_mode: str = "z-score",
+        external_stats_root: str | None = None,
+        action_mode: str = "abs",
     ) -> None:
         self.lerobot_dataset = MagicBotR0BaseLerobotDatasetV3(
             dataset_dirs=dataset_dirs,
@@ -712,6 +1098,13 @@ class MagicBotR0RobotVideoDatasetV3(Dataset):
             is_training_set=is_training_set,
             global_sample_stride=global_sample_stride,
             video_backend=video_backend,
+            pretrain_multi_embodiment=pretrain_multi_embodiment,
+            max_action_dim=max_action_dim,
+            max_state_dim=max_state_dim,
+            norm_default_mode=norm_default_mode,
+            external_stats_root=external_stats_root,
+            action_mode=action_mode,
+            image_resize_shape=tuple(shape_meta["images"][0]["shape"][1:]),
         )
         self.clip_num_frames = num_frames
         self.action_video_freq_ratio = action_video_freq_ratio
@@ -742,7 +1135,7 @@ class MagicBotR0RobotVideoDatasetV3(Dataset):
         self.normalize_transform = Normalize(args={"mean": 0.5, "std": 0.5})
 
         self.dataset_stats = None
-        if processor is not None:
+        if processor is not None and not pretrain_multi_embodiment:
             stats_path = Path(normalization_stats_path) if normalization_stats_path is not None else None
             if stats_path is not None and stats_path.is_file():
                 dataset_stats = load_dataset_stats_from_json(str(stats_path))
@@ -882,6 +1275,7 @@ class MagicBotR0RobotVideoDatasetV3(Dataset):
 
         image_is_pad = sample["image_is_pad"]
         video = sample["pixel_values"]
+        camera_view_mask = sample.get("camera_view_mask", None)
         num_cameras = 1
         if video.ndim == 5:
             video = video[:, self.video_sample_indices, :, :, :]
@@ -906,12 +1300,18 @@ class MagicBotR0RobotVideoDatasetV3(Dataset):
                 )
             future_3d_images = video[:, target_index].clone()
             target_valid = ~image_is_pad[target_index].to(dtype=torch.bool)
-            future_3d_img_masks = torch.full(
-                (num_cameras,),
-                bool(target_valid.item()),
-                dtype=torch.bool,
-                device=future_3d_images.device,
-            )
+            if camera_view_mask is None:
+                future_3d_img_masks = torch.full(
+                    (num_cameras,),
+                    bool(target_valid.item()),
+                    dtype=torch.bool,
+                    device=future_3d_images.device,
+                )
+            else:
+                future_3d_img_masks = camera_view_mask.to(
+                    device=future_3d_images.device,
+                    dtype=torch.bool,
+                ) & target_valid.to(device=future_3d_images.device)
         target_video_size = resolve_magicbot_r0_video_size(
             num_cameras,
             self.video_size,
@@ -942,6 +1342,12 @@ class MagicBotR0RobotVideoDatasetV3(Dataset):
             "action_is_pad": sample["action_is_pad"],
             "proprio_is_pad": sample["proprio_is_pad"],
         }
+        if "action_dim_is_pad" in sample:
+            data["action_dim_is_pad"] = sample["action_dim_is_pad"]
+        if "proprio_dim_is_pad" in sample:
+            data["proprio_dim_is_pad"] = sample["proprio_dim_is_pad"]
+        if SAMPLE_ACTION_LOSS_MASK in sample:
+            data[SAMPLE_ACTION_LOSS_MASK] = sample[SAMPLE_ACTION_LOSS_MASK]
         if future_3d_images is not None and future_3d_img_masks is not None:
             data["future_3d_images"] = future_3d_images
             data["future_3d_img_masks"] = future_3d_img_masks
@@ -1023,7 +1429,10 @@ def build_magicbot_r0_processor(cfg: MagicBotR0DatasetConfig) -> MagicBotR0Proce
         use_stepwise_action_norm=cfg.processor_use_stepwise_action_norm,
         norm_default_mode=cfg.processor_norm_default_mode,
         norm_exception_mode=None,
-        action_state_merger=ConcatLeftAlign(),
+        action_state_merger=ConcatLeftAlign(
+            action_target_dim=action_output_dim,
+            state_target_dim=proprio_output_dim,
+        ),
         train_transforms=image_transforms,
         val_transforms=image_transforms,
         use_zh_instruction=cfg.processor_use_zh_instruction,
@@ -1035,7 +1444,11 @@ def build_magicbot_r0_dataset(
     cfg: MagicBotR0DatasetConfig,
     stats_cache_path: str | None = None,
 ) -> MagicBotR0RobotVideoDatasetV3:
-    processor = build_magicbot_r0_processor(cfg)
+    processor = None if cfg.pretrain_multi_embodiment else build_magicbot_r0_processor(cfg)
+    if cfg.pretrain_multi_embodiment and not cfg.use_external_stats:
+        raise ValueError("MagicBot_R0 multi-embodiment pretraining requires dataset.use_external_stats=true.")
+    if cfg.pretrain_multi_embodiment and not cfg.external_stats_root:
+        raise ValueError("MagicBot_R0 multi-embodiment pretraining requires dataset.external_stats_root.")
     dataset_dirs = resolve_magicbot_r0_dataset_dirs(cfg)
     normalization_stats_path = stats_cache_path or cfg.normalization_stats_path
     use_lerobot_meta_stats = False
@@ -1065,4 +1478,10 @@ def build_magicbot_r0_dataset(
         video_backend=cfg.video_backend,
         return_future_3d_images=cfg.return_future_3d_images,
         future_3d_target_index=cfg.future_3d_target_index,
+        pretrain_multi_embodiment=cfg.pretrain_multi_embodiment,
+        max_action_dim=cfg.processor_action_output_dim,
+        max_state_dim=cfg.processor_proprio_output_dim,
+        norm_default_mode=cfg.processor_norm_default_mode,
+        external_stats_root=cfg.external_stats_root,
+        action_mode=cfg.action_mode,
     )
