@@ -249,7 +249,7 @@ class MagicBotR0Config(PreTrainedConfig):
     da3_teacher_process_res: int = 504
     da3_layer_weights: tuple[float, ...] = (1.0, 1.2, 1.4, 1.6)
     future_query_init_std: float = 0.02
-    future_3d_query_mode: str = "query_token"
+    future_3d_query_mode: str = "slot_noise"
     future_3d_query_noise_scale: float = 0.5
     future_3d_query_noise_min_sigma: float = 0.0
     future_3d_query_noise_max_sigma: float = 0.5
