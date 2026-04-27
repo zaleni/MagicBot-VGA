@@ -10,7 +10,7 @@ import torch
 import numpy as np
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.transforms.constants import MASK_MAPPING, FEATURE_MAPPING
+from lerobot.transforms.constants import get_feature_mapping, get_mask_mapping, infer_embodiment_variant
 from lerobot.utils.constants import OBS_STATE, ACTION, HF_LEROBOT_HOME
 from lerobot.datasets.utils import write_json
 
@@ -33,12 +33,18 @@ def parse_args():
         required=True,
         help="Chunk size used for delta action computation (episodes shorter than chunk_size are skipped).",
     )
-    p.add_argument(
+    source = p.add_mutually_exclusive_group(required=True)
+    source.add_argument(
         "--repo_ids",
         type=str,
         nargs="+",
-        required=True,
-        help="One or more LeRobotDataset repo ids (must share the same robot_type and feature schema).",
+        help="One or more LeRobotDataset repo ids (must share the same resolved robot_type and feature schema).",
+    )
+    source.add_argument(
+        "--repo_id_file",
+        type=str,
+        default=None,
+        help="Text file with one LeRobotDataset repo id or local path per line.",
     )
     p.add_argument(
         "--root",
@@ -57,6 +63,12 @@ def parse_args():
         type=str,
         default=None,
         help="Optional output root directory. If not set, uses HF_LEROBOT_HOME/stats/...",
+    )
+    p.add_argument(
+        "--output_path",
+        type=str,
+        default=None,
+        help="Optional exact output path for stats.json. Overrides --output_dir.",
     )
 
     return p.parse_args()
@@ -191,9 +203,10 @@ def _compute_one_repo(repo_id: str, action_mode: str, chunk_size: int, root: str
 
     dataset, dataset_name = resolve_dataset_entry(repo_id, root)
     robot_type = dataset.meta.robot_type
+    resolved_robot_type = infer_embodiment_variant(robot_type, dataset.meta.features)
 
-    mask = MASK_MAPPING[robot_type]
-    mapping = FEATURE_MAPPING[robot_type]
+    mask = get_mask_mapping(robot_type, dataset.meta.features)
+    mapping = get_feature_mapping(robot_type, dataset.meta.features)
 
     keys = list(dataset.meta.features.keys())
     for k in dataset.meta.video_keys + dataset.meta.image_keys:
@@ -252,6 +265,7 @@ def _compute_one_repo(repo_id: str, action_mode: str, chunk_size: int, root: str
         "repo_id": repo_id,
         "dataset_name": dataset_name,
         "robot_type": robot_type,
+        "resolved_robot_type": resolved_robot_type,
         "keys": keys,
         "shapes": shapes,
         "payload": payload,
@@ -282,7 +296,13 @@ def _normalize_visual_stats(visual_stats: dict) -> dict:
 
 
 def compute_norm_stats_multi(cfg):
-    repo_ids = cfg.repo_ids
+    if cfg.repo_id_file:
+        repo_id_file = Path(cfg.repo_id_file)
+        repo_ids = [line.strip() for line in repo_id_file.read_text(encoding="utf-8").splitlines() if line.strip()]
+        if not repo_ids:
+            raise ValueError(f"repo_id_file is empty: {repo_id_file}")
+    else:
+        repo_ids = cfg.repo_ids
     action_mode = cfg.action_mode
     chunk_size = cfg.chunk_size
 
@@ -306,9 +326,11 @@ def compute_norm_stats_multi(cfg):
 
     # Consistency checks
     robot_types = {r["robot_type"] for r in results}
-    if len(robot_types) != 1:
-        raise ValueError(f"repo_ids must share the same robot_type, got: {sorted(robot_types)}")
+    resolved_robot_types = {r["resolved_robot_type"] for r in results}
+    if len(resolved_robot_types) != 1:
+        raise ValueError(f"repo_ids must share the same resolved robot_type, got: {sorted(resolved_robot_types)}")
     robot_type = results[0]["robot_type"]
+    resolved_robot_type = results[0]["resolved_robot_type"]
 
     keys0 = results[0]["keys"]
     shapes0 = results[0]["shapes"]
@@ -341,20 +363,27 @@ def compute_norm_stats_multi(cfg):
 
     # Output path
     group_name = _make_group_name(repo_ids)
-    if cfg.output_dir:
+    if cfg.output_path:
+        output_path = Path(cfg.output_path)
+        output_dir = output_path.parent
+    elif cfg.output_dir:
         output_dir = Path(cfg.output_dir) / group_name
+        output_path = output_dir / "stats.json"
     else:
         out_root = HF_LEROBOT_HOME / "stats"
-        output_dir = out_root / robot_type / action_mode / group_name
+        output_dir = out_root / resolved_robot_type / action_mode / group_name
+        output_path = output_dir / "stats.json"
     output_dir.mkdir(parents=True, exist_ok=True)
-    write_json(output_dict, output_dir / "stats.json")
+    write_json(output_dict, output_path)
 
     print("---------- done ----------")
     print(f"robot_type: {robot_type}")
+    if len(robot_types) > 1 or resolved_robot_type != robot_type:
+        print(f"resolved_robot_type: {resolved_robot_type}")
     print(f"action_mode: {action_mode}")
     print(f"chunk_size: {chunk_size}")
     print(f"group_name: {group_name}")
-    print(f"output: {output_dir / 'stats.json'}")
+    print(f"output: {output_path}")
     print(f"total_frames (sum of episode lengths): {total_frames}")
     print(f"total_episodes: {total_episodes} (skipped: {skipped_episodes} episodes with len < chunk_size)")
 
