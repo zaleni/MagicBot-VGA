@@ -74,6 +74,8 @@ VIDEO_WIDTH="${VIDEO_WIDTH:-448}"
 CONCAT_MULTI_CAMERA="${CONCAT_MULTI_CAMERA:-horizontal}"
 STANDARDIZE_VIDEO_SIZE_BY_CAMERAS="${STANDARDIZE_VIDEO_SIZE_BY_CAMERAS:-true}"
 NORM_DEFAULT_MODE="${NORM_DEFAULT_MODE:-q01q99}"
+ENABLE_IMAGE_AUG="${ENABLE_IMAGE_AUG:-false}"
+IMAGE_AUG_PRESET="${IMAGE_AUG_PRESET:-pi05}"
 
 BATCH_SIZE="${BATCH_SIZE:-16}"
 GRAD_ACCUM_STEPS="${GRAD_ACCUM_STEPS:-1}"
@@ -223,6 +225,7 @@ echo "ACTION_VIDEO_FREQ_RATIO=${ACTION_VIDEO_FREQ_RATIO}"
 echo "CONCAT_MULTI_CAMERA=${CONCAT_MULTI_CAMERA}"
 echo "STANDARDIZE_VIDEO_SIZE_BY_CAMERAS=${STANDARDIZE_VIDEO_SIZE_BY_CAMERAS}"
 echo "NORM_DEFAULT_MODE=${NORM_DEFAULT_MODE}"
+echo "ENABLE_IMAGE_AUG=${ENABLE_IMAGE_AUG}, IMAGE_AUG_PRESET=${IMAGE_AUG_PRESET}"
 echo "STEPS=${STEPS}"
 echo "NUM_EPOCHS=${NUM_EPOCHS:-<disabled>}"
 echo "TRAIN_MAX_STEPS=${TRAIN_MAX_STEPS:-<disabled>}"
@@ -349,6 +352,13 @@ if [[ "${USE_DIST_LOADING}" == "true" ]]; then
     echo "USE_DIST_LOADING=true is not supported for MagicBot_R0 in this framework."
     echo "Leave USE_DIST_LOADING=false so Accelerate can shard the dataloader correctly."
     exit 1
+fi
+
+if [[ "${ENABLE_IMAGE_AUG}" == "true" ]]; then
+    ARGS+=(
+        --dataset.image_transforms.enable=true
+        --dataset.image_transforms.preset="${IMAGE_AUG_PRESET}"
+    )
 fi
 
 accelerate launch "${ARGS[@]}"

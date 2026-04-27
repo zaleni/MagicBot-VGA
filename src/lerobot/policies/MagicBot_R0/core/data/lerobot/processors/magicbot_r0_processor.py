@@ -222,6 +222,8 @@ class MagicBotR0Processor(BaseProcessor):
             transforms = self.train_transforms if self.is_train else self.val_transforms
             current_transforms = transforms[key] if isinstance(transforms, dict) else transforms
             for trans in current_transforms:
+                if hasattr(trans, "set_current_key"):
+                    trans.set_current_key(key)
                 image = trans(image)
             
             meta_shape = (self.num_obs_steps, *tuple(shape))

@@ -14,6 +14,7 @@ import torchvision.transforms.functional as transforms_f
 from torch.utils.data import Dataset
 
 from lerobot.datasets.compute_stats import aggregate_stats
+from lerobot.datasets.transforms import ImageTransforms
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 from lerobot.transforms.constants import (
     get_feature_mapping,
@@ -394,6 +395,7 @@ class MagicBotR0BaseLerobotDatasetV3(Dataset):
         action_mode: str = "abs",
         image_resize_shape: tuple[int, int] | None = None,
         dataset_weights: list[float] | None = None,
+        post_image_transforms=None,
     ) -> None:
         if len(dataset_dirs) == 0:
             raise ValueError("At least one dataset directory is required")
@@ -416,6 +418,7 @@ class MagicBotR0BaseLerobotDatasetV3(Dataset):
         self.external_stats_root = external_stats_root
         self.action_mode = str(action_mode)
         self.image_resize_shape = image_resize_shape
+        self.post_image_transforms = post_image_transforms
 
         metas = [LeRobotDatasetMetadata(repo_id=str(Path(ds_dir)), root=Path(ds_dir)) for ds_dir in dataset_dirs]
         fps_list = [meta.fps for meta in metas]
@@ -810,6 +813,13 @@ class MagicBotR0BaseLerobotDatasetV3(Dataset):
             self.norm_default_mode,
         )
 
+    def _apply_post_image_transform(self, key: str, image: torch.Tensor) -> torch.Tensor:
+        if self.post_image_transforms is None:
+            return image
+        if hasattr(self.post_image_transforms, "set_current_key"):
+            self.post_image_transforms.set_current_key(key)
+        return self.post_image_transforms(image)
+
     def _build_multi_embodiment_sample(self, lerobot_sample: dict[str, Any]) -> dict[str, Any]:
         dataset_index = int(torch.as_tensor(lerobot_sample["dataset_index"]).item())
         adapter = self.embodiment_adapters[dataset_index]
@@ -833,6 +843,7 @@ class MagicBotR0BaseLerobotDatasetV3(Dataset):
                 continue
             image = self._as_sequence_image(lerobot_sample[source_key])
             image = resize(to_tensor(image))
+            image = self._apply_post_image_transform(key, image)
             first_processed_image = image if first_processed_image is None else first_processed_image
             image_tensors[key] = image
             camera_view_mask.append(True)
@@ -1124,6 +1135,7 @@ class MagicBotR0RobotVideoDatasetV3(Dataset):
         external_stats_root: str | None = None,
         action_mode: str = "abs",
         dataset_weights: list[float] | None = None,
+        image_transforms=None,
     ) -> None:
         self.lerobot_dataset = MagicBotR0BaseLerobotDatasetV3(
             dataset_dirs=dataset_dirs,
@@ -1142,6 +1154,7 @@ class MagicBotR0RobotVideoDatasetV3(Dataset):
             action_mode=action_mode,
             image_resize_shape=tuple(shape_meta["images"][0]["shape"][1:]),
             dataset_weights=dataset_weights,
+            post_image_transforms=image_transforms,
         )
         self.clip_num_frames = num_frames
         self.action_video_freq_ratio = action_video_freq_ratio
@@ -1447,7 +1460,10 @@ class MagicBotR0RobotVideoDatasetV3(Dataset):
         return data
 
 
-def build_magicbot_r0_processor(cfg: MagicBotR0DatasetConfig) -> MagicBotR0Processor:
+def build_magicbot_r0_processor(
+    cfg: MagicBotR0DatasetConfig,
+    image_transforms=None,
+) -> MagicBotR0Processor:
     resize_shape = cfg.processor_resize_shape
     if resize_shape is None:
         resize_shape = tuple(cfg.image_shapes[0][1:])
@@ -1456,7 +1472,15 @@ def build_magicbot_r0_processor(cfg: MagicBotR0DatasetConfig) -> MagicBotR0Proce
     action_output_dim = int(cfg.processor_action_output_dim)
     proprio_output_dim = int(cfg.processor_proprio_output_dim)
 
-    image_transforms = {
+    train_image_transforms = {
+        key: [
+            ToTensor(),
+            tv_transforms.Resize(size=list(resize_shape)),
+            *([image_transforms] if image_transforms is not None else []),
+        ]
+        for key in cfg.image_keys
+    }
+    val_image_transforms = {
         key: [
             ToTensor(),
             tv_transforms.Resize(size=list(resize_shape)),
@@ -1481,8 +1505,8 @@ def build_magicbot_r0_processor(cfg: MagicBotR0DatasetConfig) -> MagicBotR0Proce
             action_target_dim=action_output_dim,
             state_target_dim=proprio_output_dim,
         ),
-        train_transforms=image_transforms,
-        val_transforms=image_transforms,
+        train_transforms=train_image_transforms,
+        val_transforms=val_image_transforms,
         use_zh_instruction=cfg.processor_use_zh_instruction,
         delta_action_dim_mask=cfg.processor_delta_action_dim_mask,
     )
@@ -1492,7 +1516,11 @@ def build_magicbot_r0_dataset(
     cfg: MagicBotR0DatasetConfig,
     stats_cache_path: str | None = None,
 ) -> MagicBotR0RobotVideoDatasetV3:
-    processor = None if cfg.pretrain_multi_embodiment else build_magicbot_r0_processor(cfg)
+    image_transforms = ImageTransforms(cfg.image_transforms) if cfg.image_transforms.enable else None
+    processor = None if cfg.pretrain_multi_embodiment else build_magicbot_r0_processor(
+        cfg,
+        image_transforms=image_transforms,
+    )
     if cfg.pretrain_multi_embodiment and not cfg.use_external_stats:
         raise ValueError("MagicBot_R0 multi-embodiment pretraining requires dataset.use_external_stats=true.")
     if cfg.pretrain_multi_embodiment and not cfg.external_stats_root:
@@ -1533,4 +1561,5 @@ def build_magicbot_r0_dataset(
         external_stats_root=cfg.external_stats_root,
         action_mode=cfg.action_mode,
         dataset_weights=cfg.dataset_sampling_weights or None,
+        image_transforms=image_transforms,
     )
