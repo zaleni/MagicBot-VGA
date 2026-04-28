@@ -860,7 +860,8 @@ class MagicBotR0BaseLerobotDatasetV3(Dataset):
 
         has_action = bool(adapter["has_action"])
         use_action_loss = has_action and adapter["resolved_robot_type"] != "egodex_v"
-        if has_action:
+        use_action_input = has_action
+        if use_action_input:
             action_tensors = [self._as_sequence_vector(lerobot_sample[key]) for key in adapter["action_keys"]]
             action_tensors, action_sizes = self._align_for_cat(action_tensors)
             action_concat_raw = torch.cat(action_tensors, dim=-1)

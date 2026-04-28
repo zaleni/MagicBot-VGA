@@ -18,6 +18,11 @@ NUM_WORKERS="${NUM_WORKERS:-8}"
 OUTPUT_STATS_ROOT="${OUTPUT_STATS_ROOT:-norm_stats_chunk${CHUNK_SIZE}}"
 GROUP_FILE_DIR="${GROUP_FILE_DIR:-outputs/MagicBot_R0/_stats_repo_id_files/chunk${CHUNK_SIZE}}"
 OVERWRITE_STATS="${OVERWRITE_STATS:-false}"
+SAMPLED_ROBOT_TYPES="${SAMPLED_ROBOT_TYPES:-}"
+SAMPLE_MAX_CHUNKS_PER_EPISODE="${SAMPLE_MAX_CHUNKS_PER_EPISODE:-}"
+SAMPLE_MAX_CHUNKS_PER_REPO="${SAMPLE_MAX_CHUNKS_PER_REPO:-}"
+SAMPLE_SEED="${SAMPLE_SEED:-42}"
+SKIP_ACTION_ROBOT_TYPES="${SKIP_ACTION_ROBOT_TYPES:-}"
 
 case "${ACTION_TYPE}" in
   abs|delta)
@@ -70,6 +75,13 @@ echo "ACTION_TYPE=${ACTION_TYPE}"
 echo "CHUNK_SIZE=${CHUNK_SIZE}"
 echo "OUTPUT_STATS_ROOT=${OUTPUT_STATS_ROOT}"
 echo "GROUP_FILE_DIR=${GROUP_FILE_DIR}"
+echo "SAMPLED_ROBOT_TYPES=${SAMPLED_ROBOT_TYPES:-<none>}"
+echo "SAMPLE_MAX_CHUNKS_PER_EPISODE=${SAMPLE_MAX_CHUNKS_PER_EPISODE:-<disabled>}"
+echo "SAMPLE_MAX_CHUNKS_PER_REPO=${SAMPLE_MAX_CHUNKS_PER_REPO:-<disabled>}"
+echo "SKIP_ACTION_ROBOT_TYPES=${SKIP_ACTION_ROBOT_TYPES:-<none>}"
+if [[ -n "${SKIP_ACTION_ROBOT_TYPES}" ]]; then
+  echo "  note: skipped action robot types still get zero action stats written"
+fi
 
 python - "${ALL_DATASETS_FILE}" "${GROUP_FILE_DIR}" "${GROUP_MANIFEST}" <<'PY'
 from __future__ import annotations
@@ -128,6 +140,46 @@ for line in lines:
     print(f"  {robot_type}: {count} datasets -> {group_path}")
 PY
 
+trim_csv_item() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "${value}"
+}
+
+csv_contains() {
+  local needle="$1"
+  local csv="$2"
+  local item
+  IFS=',' read -r -a items <<< "${csv}"
+  for item in "${items[@]}"; do
+    item="$(trim_csv_item "${item}")"
+    if [[ "${item}" == "${needle}" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+build_skip_action_args() {
+  local csv="$1"
+  local item
+  SKIP_ACTION_ARGS=()
+  if [[ -z "${csv}" ]]; then
+    return 0
+  fi
+  SKIP_ACTION_ARGS+=(--skip_action_robot_types)
+  IFS=',' read -r -a items <<< "${csv}"
+  for item in "${items[@]}"; do
+    item="$(trim_csv_item "${item}")"
+    if [[ -n "${item}" ]]; then
+      SKIP_ACTION_ARGS+=("${item}")
+    fi
+  done
+}
+
+build_skip_action_args "${SKIP_ACTION_ROBOT_TYPES}"
+
 while IFS=$'\t' read -r robot_type repo_id_file dataset_count; do
   if [[ -z "${robot_type}" ]]; then
     continue
@@ -140,12 +192,25 @@ while IFS=$'\t' read -r robot_type repo_id_file dataset_count; do
   fi
 
   echo "Computing stats for robot_type=${robot_type}, datasets=${dataset_count}"
+  EXTRA_ARGS=("${SKIP_ACTION_ARGS[@]}")
+  if csv_contains "${robot_type}" "${SAMPLED_ROBOT_TYPES}"; then
+    echo "  sampled stats enabled for ${robot_type}"
+    if [[ -n "${SAMPLE_MAX_CHUNKS_PER_EPISODE}" ]]; then
+      EXTRA_ARGS+=(--max_chunks_per_episode "${SAMPLE_MAX_CHUNKS_PER_EPISODE}")
+    fi
+    if [[ -n "${SAMPLE_MAX_CHUNKS_PER_REPO}" ]]; then
+      EXTRA_ARGS+=(--max_chunks_per_repo "${SAMPLE_MAX_CHUNKS_PER_REPO}")
+    fi
+    EXTRA_ARGS+=(--sample_seed "${SAMPLE_SEED}")
+  fi
+
   python util_scripts/compute_norm_stats_multi.py \
     --repo_id_file "${repo_id_file}" \
     --action_mode "${ACTION_TYPE}" \
     --chunk_size "${CHUNK_SIZE}" \
     --num_workers "${NUM_WORKERS}" \
-    --output_path "${stats_path}"
+    --output_path "${stats_path}" \
+    "${EXTRA_ARGS[@]}"
 done < "${GROUP_MANIFEST}"
 
 echo "Done. Use DATASET_EXTERNAL_STATS_ROOT=${OUTPUT_STATS_ROOT} for MagicBot_R0 pretraining."
