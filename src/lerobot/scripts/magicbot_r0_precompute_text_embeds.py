@@ -29,6 +29,7 @@ DEFAULT_MODEL_ID = "Wan-AI/Wan2.2-TI2V-5B"
 DEFAULT_TOKENIZER_MODEL_ID = "Wan-AI/Wan2.1-T2V-1.3B"
 DEFAULT_CONTEXT_LEN = 128
 DEFAULT_BATCH_SIZE = 16
+DEFAULT_MISSING_PREVIEW_LIMIT = 20
 
 
 def _parse_bool(value: Any) -> bool:
@@ -169,6 +170,42 @@ def _resolve_device(requested_device: str | None, local_rank: int) -> str:
     return "cpu"
 
 
+def _verify_cache_coverage(
+    prompts: list[str],
+    cache_dir: Path,
+    context_len: int,
+    missing_preview_limit: int,
+) -> None:
+    missing: list[tuple[str, Path]] = []
+    for prompt in prompts:
+        cache_path = build_text_embedding_cache_path(cache_dir, prompt, context_len)
+        if not cache_path.is_file():
+            missing.append((prompt, cache_path))
+
+    cached_count = len(prompts) - len(missing)
+    print(
+        "Text cache coverage: "
+        f"cached={cached_count}, missing={len(missing)}, total={len(prompts)}, "
+        f"cache_dir={cache_dir}, context_len={context_len}",
+        flush=True,
+    )
+    if not missing:
+        logging.info("Text embedding cache coverage verified: %d/%d prompts.", cached_count, len(prompts))
+        return
+
+    preview_count = max(0, int(missing_preview_limit))
+    if preview_count > 0:
+        print(f"Missing text embedding cache examples (first {min(preview_count, len(missing))}):", flush=True)
+        for prompt, cache_path in missing[:preview_count]:
+            print(f"  {cache_path} | prompt={prompt}", flush=True)
+    raise SystemExit(
+        "Text embedding cache is incomplete. "
+        "Run this script without `--verify-cache-only true` and with `--overwrite false` "
+        "to precompute only missing embeddings, "
+        "or set `LOAD_TEXT_ENCODER=true` for on-the-fly encoding."
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Precompute MagicBot_R0 offline text embedding cache.")
     parser.add_argument(
@@ -196,23 +233,42 @@ def main() -> None:
         help="If set, skip dataset scan and cache exactly one prompt built from this task string.",
     )
     parser.add_argument("--overwrite", default="true")
+    parser.add_argument(
+        "--verify-cache-only",
+        default="false",
+        help="If true, only verify that every prompt has a cached embedding and exit without loading the text encoder.",
+    )
+    parser.add_argument(
+        "--missing-preview-limit",
+        type=int,
+        default=DEFAULT_MISSING_PREVIEW_LIMIT,
+        help="Number of missing cache examples to print when --verify-cache-only=true.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    verify_cache_only = _parse_bool(args.verify_cache_only)
 
-    is_distributed, rank, world_size, local_rank = _init_distributed()
-    if is_distributed and rank == 0:
-        logging.info("Distributed enabled: world_size=%d", world_size)
-    if (not is_distributed) and torch.cuda.is_available() and torch.cuda.device_count() > 1:
-        logging.info(
-            "Multi-GPU available. To use it, run: torchrun --standalone --nproc_per_node=%d "
-            "src/lerobot/scripts/magicbot_r0_precompute_text_embeds.py ...",
-            torch.cuda.device_count(),
-        )
+    if verify_cache_only:
+        is_distributed, rank, world_size, local_rank = False, 0, 1, 0
+    else:
+        is_distributed, rank, world_size, local_rank = _init_distributed()
+        if is_distributed and rank == 0:
+            logging.info("Distributed enabled: world_size=%d", world_size)
+        if (not is_distributed) and torch.cuda.is_available() and torch.cuda.device_count() > 1:
+            logging.info(
+                "Multi-GPU available. To use it, run: torchrun --standalone --nproc_per_node=%d "
+                "src/lerobot/scripts/magicbot_r0_precompute_text_embeds.py ...",
+                torch.cuda.device_count(),
+            )
 
     dataset_dirs = _resolve_dataset_dirs(args.dataset_dir, args.repo_id_file)
     cache_dir = Path(args.text_embedding_cache_dir).expanduser()
-    cache_dir.mkdir(parents=True, exist_ok=True)
+    if verify_cache_only:
+        if not cache_dir.is_dir():
+            raise FileNotFoundError(f"text_embedding_cache_dir does not exist: {cache_dir}")
+    else:
+        cache_dir.mkdir(parents=True, exist_ok=True)
     overwrite = _parse_bool(args.overwrite)
     context_len = int(args.context_len)
 
@@ -223,6 +279,15 @@ def main() -> None:
         prompts = _read_unique_prompts(dataset_dirs)
     if not prompts:
         logging.warning("No prompts found; nothing to do.")
+        return
+
+    if verify_cache_only:
+        _verify_cache_coverage(
+            prompts=prompts,
+            cache_dir=cache_dir,
+            context_len=context_len,
+            missing_preview_limit=int(args.missing_preview_limit),
+        )
         return
 
     device = _resolve_device(args.device, local_rank)

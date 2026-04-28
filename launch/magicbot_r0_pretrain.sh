@@ -72,6 +72,7 @@ if [[ "${LOAD_TEXT_ENCODER}" == "true" ]]; then
 else
   TEXT_EMBED_CACHE_DIR="${TEXT_EMBED_CACHE_DIR:-${PROJ_ROOT}/outputs/MagicBot_R0/text_embeds/pretrain}"
 fi
+TEXT_EMBED_CONTEXT_LEN="${TEXT_EMBED_CONTEXT_LEN:-128}"
 
 ACTION_TYPE="${ACTION_TYPE:-delta}"
 ACTION_DIM="${ACTION_DIM:-24}"
@@ -222,9 +223,18 @@ fi
 if [[ "${LOAD_TEXT_ENCODER}" != "true" && ! -d "${TEXT_EMBED_CACHE_DIR}" ]]; then
   echo "LOAD_TEXT_ENCODER=false but TEXT_EMBED_CACHE_DIR does not exist: ${TEXT_EMBED_CACHE_DIR}"
   echo "Precompute text embeddings with:"
-  echo "  python src/lerobot/scripts/magicbot_r0_precompute_text_embeds.py --repo-id-file \"${REPO_ID_FILE}\" --text-embedding-cache-dir \"${TEXT_EMBED_CACHE_DIR}\" --device cuda"
+  echo "  python src/lerobot/scripts/magicbot_r0_precompute_text_embeds.py --repo-id-file \"${REPO_ID_FILE}\" --text-embedding-cache-dir \"${TEXT_EMBED_CACHE_DIR}\" --context-len \"${TEXT_EMBED_CONTEXT_LEN}\" --device cuda"
   echo "Or set LOAD_TEXT_ENCODER=true."
   exit 1
+fi
+
+if [[ "${LOAD_TEXT_ENCODER}" != "true" ]]; then
+  echo "Verifying text embedding cache coverage..."
+  python src/lerobot/scripts/magicbot_r0_precompute_text_embeds.py \
+    --repo-id-file "${REPO_ID_FILE}" \
+    --text-embedding-cache-dir "${TEXT_EMBED_CACHE_DIR}" \
+    --context-len "${TEXT_EMBED_CONTEXT_LEN}" \
+    --verify-cache-only true
 fi
 
 if [[ "${VALIDATE_DATASETS}" == "true" ]]; then
@@ -257,6 +267,7 @@ echo "ACTION_DIM=${ACTION_DIM}, PROPRIO_DIM=${PROPRIO_DIM}"
 echo "DATASET_EXTERNAL_STATS_ROOT=${DATASET_EXTERNAL_STATS_ROOT}"
 echo "WEIGHT_RULES_PATH=${WEIGHT_RULES_PATH:-<disabled>}"
 echo "TEXT_EMBED_CACHE_DIR=${TEXT_EMBED_CACHE_DIR:-<text-encoder-on-the-fly>}"
+echo "TEXT_EMBED_CONTEXT_LEN=${TEXT_EMBED_CONTEXT_LEN}"
 echo "ENABLE_IMAGE_AUG=${ENABLE_IMAGE_AUG}, IMAGE_AUG_PRESET=${IMAGE_AUG_PRESET}"
 echo "ACTION_DIT_PRETRAINED_PATH=${ACTION_DIT_PRETRAINED_PATH}"
 echo "FUTURE_3D_PRETRAINED_PATH=${FUTURE_3D_PRETRAINED_PATH}"
@@ -341,7 +352,7 @@ ARGS=(
     --dataset.action_video_freq_ratio="${ACTION_VIDEO_FREQ_RATIO}"
     --dataset.video_size="[${VIDEO_HEIGHT},${VIDEO_WIDTH}]"
     --dataset.standardize_video_size_by_cameras="${STANDARDIZE_VIDEO_SIZE_BY_CAMERAS}"
-    --dataset.context_len=128
+    --dataset.context_len="${TEXT_EMBED_CONTEXT_LEN}"
     --dataset.val_set_proportion=0.0
     --dataset.skip_padding_as_possible=false
     --dataset.concat_multi_camera="${CONCAT_MULTI_CAMERA}"

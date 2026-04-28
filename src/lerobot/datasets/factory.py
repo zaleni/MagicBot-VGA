@@ -612,6 +612,9 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
                     f"dataset.concat_multi_camera={concat_layout!r}."
                 )
         if isinstance(cfg.dataset, MagicBotR0DatasetConfig):
+            original_dataset_dirs = list(cfg.dataset.dataset_dirs)
+            original_repo_id_file = cfg.dataset.repo_id_file
+            original_dataset_sampling_weights = list(cfg.dataset.dataset_sampling_weights or [])
             all_repo_ids = resolve_magicbot_r0_dataset_dirs(cfg.dataset)
             repo_ids = all_repo_ids
             repo_weights_map = None
@@ -693,6 +696,10 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
         if stats_cache_path is None and cfg.output_dir is not None:
             stats_cache_path = str(Path(cfg.output_dir) / stats_filename)
         dataset = build_policy_dataset(cfg.dataset, stats_cache_path=stats_cache_path)
+        if isinstance(cfg.dataset, MagicBotR0DatasetConfig):
+            cfg.dataset.dataset_dirs = original_dataset_dirs
+            cfg.dataset.repo_id_file = original_repo_id_file
+            cfg.dataset.dataset_sampling_weights = original_dataset_sampling_weights
         data_stats = {stats_key: dataset.dataset_stats} if dataset.dataset_stats is not None else {}
         return dataset, data_stats
 

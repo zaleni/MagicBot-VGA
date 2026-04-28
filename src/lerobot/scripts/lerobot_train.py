@@ -539,6 +539,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         )
     fastwam_epoch = 0
     fastwam_batch_in_epoch = 0
+    fastwam_epoch_offset = 0
     if cfg.resume and _is_fastwam_policy_type(cfg.policy.type) and cfg.checkpoint_path is not None:
         fastwam_state_path = Path(cfg.checkpoint_path) / "training_state" / _fastwam_family_trainer_state_file(
             cfg.policy.type
@@ -547,6 +548,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             fastwam_resume_state = load_json(fastwam_state_path)
             fastwam_epoch = int(fastwam_resume_state.get("epoch", 0))
             fastwam_batch_in_epoch = int(fastwam_resume_state.get("batch_in_epoch", 0))
+            fastwam_epoch_offset = fastwam_epoch
             if fastwam_train_sampler is not None:
                 fastwam_train_sampler.set_epoch_offset(fastwam_epoch)
                 fastwam_train_sampler.set_resume_batch_offset(fastwam_batch_in_epoch)
@@ -633,6 +635,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                 fastwam_batch_in_epoch = 0
                 if fastwam_train_sampler is not None:
                     fastwam_train_sampler.clear_resume_batch_offset()
+                    fastwam_train_sampler.set_epoch(fastwam_epoch - fastwam_epoch_offset)
                 dl_iter = iter(dataloader)
                 batch = next(dl_iter)
                 fastwam_batch_in_epoch += 1
