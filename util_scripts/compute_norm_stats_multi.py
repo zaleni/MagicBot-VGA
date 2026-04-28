@@ -2,6 +2,7 @@
 
 import argparse
 import hashlib
+import json
 import multiprocessing as mp
 from pathlib import Path
 
@@ -103,8 +104,38 @@ def parse_args():
             "Zero action stats are still written so action-conditioned datasets can load safely."
         ),
     )
+    p.add_argument(
+        "--zero_stats_robot_types",
+        nargs="*",
+        default=[],
+        help=(
+            "Resolved robot types whose vector stats are known to be all zeros. "
+            "These groups are handled from metadata only, without initializing LeRobotDataset."
+        ),
+    )
 
     return p.parse_args()
+
+
+def _repo_root_path(repo_id: str, root: str | None) -> Path:
+    repo_path = Path(repo_id)
+    if repo_path.is_absolute():
+        return repo_path
+    return Path(root) / repo_id if root else HF_LEROBOT_HOME / repo_id
+
+
+def _load_repo_info(repo_id: str, root: str | None) -> dict:
+    info_path = _repo_root_path(repo_id, root) / "meta" / "info.json"
+    if not info_path.is_file():
+        raise FileNotFoundError(f"Missing info.json for metadata-only stats: {info_path}")
+    return json.loads(info_path.read_text(encoding="utf-8"))
+
+
+def _load_repo_meta_stats(repo_id: str, root: str | None) -> dict:
+    stats_path = _repo_root_path(repo_id, root) / "meta" / "stats.json"
+    if not stats_path.is_file():
+        return {}
+    return json.loads(stats_path.read_text(encoding="utf-8"))
 
 
 def resolve_dataset_entry(repo_id: str, root: str | None) -> tuple[LeRobotDataset, str]:
@@ -260,6 +291,78 @@ def _zero_stats_payload(dim: int, count: int) -> dict:
         "mean_sq": zeros,
         "min": zeros,
         "max": zeros,
+    }
+
+
+def _zero_statistics(dim: int, count: int) -> dict:
+    zeros = [0.0] * int(dim)
+    return {
+        "min": zeros,
+        "max": zeros,
+        "mean": zeros,
+        "std": zeros,
+        "count": [int(max(count, 1))],
+    }
+
+
+def _make_group_name(repo_ids: list[str]) -> str:
+    """Short stable name for a repo set."""
+    joined = "|".join(repo_ids)
+    h = hashlib.sha1(joined.encode("utf-8")).hexdigest()[:10]
+    return f"agg_{len(repo_ids)}repos_{h}"
+
+
+def _resolve_output_path(cfg, repo_ids: list[str], resolved_robot_type: str, action_mode: str) -> tuple[Path, Path, str]:
+    group_name = _make_group_name(repo_ids)
+    if cfg.output_path:
+        output_path = Path(cfg.output_path)
+        output_dir = output_path.parent
+    elif cfg.output_dir:
+        output_dir = Path(cfg.output_dir) / group_name
+        output_path = output_dir / "stats.json"
+    else:
+        out_root = HF_LEROBOT_HOME / "stats"
+        output_dir = out_root / resolved_robot_type / action_mode / group_name
+        output_path = output_dir / "stats.json"
+    return output_path, output_dir, group_name
+
+
+def _compute_zero_group_stats(repo_ids: list[str], action_mode: str, chunk_size: int, root: str | None) -> dict:
+    infos = [_load_repo_info(rid, root) for rid in repo_ids]
+    robot_type = infos[0]["robot_type"]
+    resolved_robot_type = infer_embodiment_variant(robot_type, infos[0].get("features", {}))
+    features = infos[0].get("features", {})
+    mapping = get_feature_mapping(robot_type, features)
+
+    resolved_types = {
+        infer_embodiment_variant(info["robot_type"], info.get("features", {}))
+        for info in infos
+    }
+    if len(resolved_types) != 1:
+        raise ValueError(f"repo_ids must share the same resolved robot_type, got: {sorted(resolved_types)}")
+
+    stat_keys = [k for k in mapping[OBS_STATE] + mapping[ACTION] if k in features]
+    total_frames = sum(int(info.get("total_frames", 0)) for info in infos)
+    total_episodes = sum(int(info.get("total_episodes", 0)) for info in infos)
+    count = total_frames
+    output_dict = {
+        key: _zero_statistics(_feature_dim(features[key]), count)
+        for key in stat_keys
+    }
+
+    first_meta_stats = _load_repo_meta_stats(repo_ids[0], root)
+    for key, feature in features.items():
+        if feature.get("dtype") in {"image", "video"} and key in first_meta_stats:
+            output_dict[key] = first_meta_stats[key]
+
+    return {
+        "robot_type": robot_type,
+        "resolved_robot_type": resolved_robot_type,
+        "output_dict": output_dict,
+        "total_frames": total_frames,
+        "total_episodes": total_episodes,
+        "chunk_size": chunk_size,
+        "action_mode": action_mode,
     }
 
 
@@ -491,14 +594,6 @@ def _compute_one_repo(
         "skip_action_stats": bool(skip_action_stats),
     }
 
-
-def _make_group_name(repo_ids: list[str]) -> str:
-    """Short stable name for a repo set."""
-    joined = "|".join(repo_ids)
-    h = hashlib.sha1(joined.encode("utf-8")).hexdigest()[:10]
-    return f"agg_{len(repo_ids)}repos_{h}"
-
-
 def _normalize_visual_stats(visual_stats: dict) -> dict:
     """Convert numpy/torch entries to lists."""
     out = {}
@@ -535,6 +630,42 @@ def compute_norm_stats_multi(cfg):
     chunk_size = cfg.chunk_size
 
     print(f"---------- aggregate stats for {len(repo_ids)} datasets ----------")
+    first_info = _load_repo_info(repo_ids[0], cfg.root)
+    first_robot_type = first_info["robot_type"]
+    first_resolved_robot_type = infer_embodiment_variant(first_robot_type, first_info.get("features", {}))
+    zero_stats_types = set(cfg.zero_stats_robot_types or [])
+    if first_resolved_robot_type in zero_stats_types or first_robot_type in zero_stats_types:
+        print(
+            "Metadata-only zero stats mode enabled for "
+            f"robot_type={first_robot_type}, resolved={first_resolved_robot_type}"
+        )
+        zero_result = _compute_zero_group_stats(
+            repo_ids=repo_ids,
+            action_mode=action_mode,
+            chunk_size=chunk_size,
+            root=cfg.root,
+        )
+        output_path, output_dir, group_name = _resolve_output_path(
+            cfg=cfg,
+            repo_ids=repo_ids,
+            resolved_robot_type=zero_result["resolved_robot_type"],
+            action_mode=action_mode,
+        )
+        output_dir.mkdir(parents=True, exist_ok=True)
+        write_json(zero_result["output_dict"], output_path)
+
+        print("---------- done ----------")
+        print(f"robot_type: {zero_result['robot_type']}")
+        if zero_result["resolved_robot_type"] != zero_result["robot_type"]:
+            print(f"resolved_robot_type: {zero_result['resolved_robot_type']}")
+        print(f"action_mode: {action_mode}")
+        print(f"chunk_size: {chunk_size}")
+        print(f"group_name: {group_name}")
+        print(f"output: {output_path}")
+        print(f"total_frames (metadata): {zero_result['total_frames']}")
+        print(f"total_episodes (metadata): {zero_result['total_episodes']}")
+        return
+
     if sampled_mode:
         print(
             "Sampled stats mode: "
@@ -611,17 +742,12 @@ def compute_norm_stats_multi(cfg):
         output_dict[k] = _normalize_visual_stats(first_ds.meta.stats[k])
 
     # Output path
-    group_name = _make_group_name(repo_ids)
-    if cfg.output_path:
-        output_path = Path(cfg.output_path)
-        output_dir = output_path.parent
-    elif cfg.output_dir:
-        output_dir = Path(cfg.output_dir) / group_name
-        output_path = output_dir / "stats.json"
-    else:
-        out_root = HF_LEROBOT_HOME / "stats"
-        output_dir = out_root / resolved_robot_type / action_mode / group_name
-        output_path = output_dir / "stats.json"
+    output_path, output_dir, group_name = _resolve_output_path(
+        cfg=cfg,
+        repo_ids=repo_ids,
+        resolved_robot_type=resolved_robot_type,
+        action_mode=action_mode,
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     write_json(output_dict, output_path)
 

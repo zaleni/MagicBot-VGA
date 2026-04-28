@@ -23,6 +23,8 @@ SAMPLE_MAX_CHUNKS_PER_EPISODE="${SAMPLE_MAX_CHUNKS_PER_EPISODE:-}"
 SAMPLE_MAX_CHUNKS_PER_REPO="${SAMPLE_MAX_CHUNKS_PER_REPO:-}"
 SAMPLE_SEED="${SAMPLE_SEED:-42}"
 SKIP_ACTION_ROBOT_TYPES="${SKIP_ACTION_ROBOT_TYPES:-}"
+ZERO_STATS_ROBOT_TYPES="${ZERO_STATS_ROBOT_TYPES:-}"
+EXCLUDE_ROBOT_TYPES="${EXCLUDE_ROBOT_TYPES:-}"
 
 case "${ACTION_TYPE}" in
   abs|delta)
@@ -82,6 +84,11 @@ echo "SKIP_ACTION_ROBOT_TYPES=${SKIP_ACTION_ROBOT_TYPES:-<none>}"
 if [[ -n "${SKIP_ACTION_ROBOT_TYPES}" ]]; then
   echo "  note: skipped action robot types still get zero action stats written"
 fi
+echo "ZERO_STATS_ROBOT_TYPES=${ZERO_STATS_ROBOT_TYPES:-<none>}"
+if [[ -n "${ZERO_STATS_ROBOT_TYPES}" ]]; then
+  echo "  note: zero-stats robot types are handled from metadata only"
+fi
+echo "EXCLUDE_ROBOT_TYPES=${EXCLUDE_ROBOT_TYPES:-<none>}"
 
 python - "${ALL_DATASETS_FILE}" "${GROUP_FILE_DIR}" "${GROUP_MANIFEST}" <<'PY'
 from __future__ import annotations
@@ -180,8 +187,32 @@ build_skip_action_args() {
 
 build_skip_action_args "${SKIP_ACTION_ROBOT_TYPES}"
 
+build_zero_stats_args() {
+  local csv="$1"
+  local item
+  ZERO_STATS_ARGS=()
+  if [[ -z "${csv}" ]]; then
+    return 0
+  fi
+  ZERO_STATS_ARGS+=(--zero_stats_robot_types)
+  IFS=',' read -r -a items <<< "${csv}"
+  for item in "${items[@]}"; do
+    item="$(trim_csv_item "${item}")"
+    if [[ -n "${item}" ]]; then
+      ZERO_STATS_ARGS+=("${item}")
+    fi
+  done
+}
+
+build_zero_stats_args "${ZERO_STATS_ROBOT_TYPES}"
+
 while IFS=$'\t' read -r robot_type repo_id_file dataset_count; do
   if [[ -z "${robot_type}" ]]; then
+    continue
+  fi
+
+  if csv_contains "${robot_type}" "${EXCLUDE_ROBOT_TYPES}"; then
+    echo "Skip excluded robot_type=${robot_type}, datasets=${dataset_count}"
     continue
   fi
 
@@ -192,7 +223,7 @@ while IFS=$'\t' read -r robot_type repo_id_file dataset_count; do
   fi
 
   echo "Computing stats for robot_type=${robot_type}, datasets=${dataset_count}"
-  EXTRA_ARGS=("${SKIP_ACTION_ARGS[@]}")
+  EXTRA_ARGS=("${SKIP_ACTION_ARGS[@]}" "${ZERO_STATS_ARGS[@]}")
   if csv_contains "${robot_type}" "${SAMPLED_ROBOT_TYPES}"; then
     echo "  sampled stats enabled for ${robot_type}"
     if [[ -n "${SAMPLE_MAX_CHUNKS_PER_EPISODE}" ]]; then
