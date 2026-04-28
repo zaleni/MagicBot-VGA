@@ -313,12 +313,14 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     # Create Accelerator if not provided
     # It will automatically detect if running in distributed mode or single-process mode
     # We set step_scheduler_with_optimizer=False to prevent accelerate from adjusting the lr_scheduler steps based on the num_processes
-    # We set find_unused_parameters=True to handle models with conditional computation
+    # We set find_unused_parameters=True by default to handle models with conditional computation.
+    # It can be disabled for fully-used models to avoid an extra autograd graph traversal.
     if accelerator is None:
         from accelerate.utils import DistributedDataParallelKwargs, InitProcessGroupKwargs
 
         ddp_timeout_s = int(os.environ.get("LEROBOT_DDP_TIMEOUT_SEC", os.environ.get("DDP_TIMEOUT_SEC", "1800")))
-        ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+        find_unused_parameters = _env_flag("LEROBOT_DDP_FIND_UNUSED_PARAMETERS", default=True)
+        ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=find_unused_parameters)
         init_pg_kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=ddp_timeout_s))
         accelerator = Accelerator(
             step_scheduler_with_optimizer=False,
