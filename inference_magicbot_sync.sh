@@ -6,7 +6,7 @@ cd ~/research/MagicBot-VGA
 
 conda activate magicbot
 
-CHECKPOINT_DIR=/home/jiangjiahao/data/zhenji/Table_clean-delta-0427-60k \
+CHECKPOINT_DIR=/home/jiangjiahao/data/zhenji/Sweeping-delta-0428 \
 QWEN3_VL_PRETRAINED_PATH=/home/jiangjiahao/data/model/Qwen3-VL-2B-Instruct \
 QWEN3_VL_PROCESSOR_PATH=/home/jiangjiahao/data/model/Qwen3-VL-2B-Instruct \
 COSMOS_TOKENIZER_PATH_OR_NAME=/home/jiangjiahao/data/model/Cosmos-Tokenizer-CI8x8 \
@@ -16,8 +16,9 @@ DEVICE=cuda \
 LOAD_DEVICE=cuda \
 COSMOS_DEVICE=cuda \
 HOST=0.0.0.0 \
-PORT=8104 \
+PORT=8102 \
 INFER_HORIZON=50 \
+DEFAULT_PROMPT="Sweep the trash into the dustpan using a broom." \
 bash evaluation/Real_Lift2/01_serve_magicbot_real_lift2.sh
 
 
@@ -29,7 +30,7 @@ cd /home/arx/MagicBot-VGA
 # PROMPT="Sweep the trash into the dustpan using a broom."
 RUN_ENV=act \
 WS_URL=ws://10.60.43.33:8102 \
-PROMPT="Clear the junk and items off the desktop." \
+PROMPT="Sweep the trash into the dustpan using a broom." \
 FRAME_RATE=24 \
 IMAGE_HISTORY_INTERVAL=15 \
 INFERENCE_MODE=sync \
