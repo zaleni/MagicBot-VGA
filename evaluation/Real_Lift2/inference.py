@@ -40,30 +40,55 @@ except ImportError:
 
 
 np.set_printoptions(linewidth=200, suppress=True)
-# -0.026894,0.009346,0.012016,0.003242,-0.013924,-0.005531,-3.382544,-0.017357,1.984627,1.149958,-0.185206,-0.268368,-1.676776,-4.306096
-# -0.000191,-0.000191,0.008202,0.004768,0.002098,-0.008202,-3.382544,0.013924,0.020027,0.020409,0.005531,-0.002861,-0.001335,-6.758602
+# left:-0.026894,0.009346,0.012016,0.003242,-0.013924,-0.005531,-3.382544,-0.017357,1.984627,1.149958,-0.185206,-0.268368,-1.676776,-4.306096
+# right:-0.000191,-0.000191,0.008202,0.004768,0.002098,-0.008202,-3.382544,0.013924,0.020027,0.020409,0.005531,-0.002861,-0.001335,-6.758602
 MANUAL_HOME_INACTIVE = 0
 MANUAL_HOME_ACTIVE = 1
 MANUAL_HOME_RESUME_GUARD = 2
-DEFAULT_MANUAL_NUDGE_ACTION = np.array(
-    [
-        -0.000191,
-        0.001346,
-        0.008202,
-        0.004768,
-        0.002098,
-        -0.008202,
-        -3.382544,
-        0.013924,
-        0.020027,
-        0.020409,
-        0.005531,
-        -0.002861,
-        -0.001335,
-        -6.758635,
-    ],
-    dtype=np.float32,
-)
+MANUAL_NUDGE_ACTIONS = {
+    "left": np.array(
+        [
+            -0.026894,
+            0.009346,
+            0.012016,
+            0.003242,
+            -0.013924,
+            -0.005531,
+            -3.382544,
+            -0.017357,
+            1.984627,
+            1.149958,
+            -0.185206,
+            -0.268368,
+            -1.676776,
+            -4.306096,
+        ],
+        dtype=np.float32,
+    ),
+    "right": np.array(
+        [
+            -0.000191,
+            -0.000191,
+            0.008202,
+            0.004768,
+            0.002098,
+            -0.008202,
+            -3.382544,
+            0.013924,
+            0.020027,
+            0.020409,
+            0.005531,
+            -0.002861,
+            -0.001335,
+            -6.758602,
+        ],
+        dtype=np.float32,
+    ),
+}
+DEFAULT_MANUAL_NUDGE_ACTION = MANUAL_NUDGE_ACTIONS["left"]
+DEFAULT_MANUAL_NUDGE_NAME = "left"
+RIGHT_MANUAL_NUDGE_ACTION = MANUAL_NUDGE_ACTIONS["right"]
+RIGHT_MANUAL_NUDGE_NAME = "right"
 DEFAULT_MANUAL_NUDGE_HOLD_S = 0.5
 _CONSOLE_ORIGINAL_TERMIOS = None
 _CONSOLE_KEY_MODE_ENABLED = False
@@ -313,7 +338,8 @@ def print_manual_home_help() -> None:
         "  - Press Enter once: home both arms and pause the current rollout.\n"
         "  - Press Enter again while paused: start a brand-new rollout from timestep 0 after a brief zero-action flush.\n"
         "    That second Enter will also count as the first-chunk confirmation for the restarted rollout.\n"
-        "  - Press I: publish the manual nudge pose for 0.5s, then request fresh inference from the current state.\n"
+        "  - Press I: publish the left manual nudge pose for 0.5s, then request fresh inference.\n"
+        "  - Press O: publish the right manual nudge pose for 0.5s, then request fresh inference.\n"
         "  - Base height will stay unchanged during manual home if fixed height is enabled.\n"
     )
 
@@ -346,9 +372,9 @@ def enable_console_key_mode() -> None:
         tty.setcbreak(fd)
         _CONSOLE_KEY_MODE_ENABLED = True
         atexit.register(restore_console_key_mode)
-        print("[Manual Controls] Single-key input enabled: Enter=home/resume, I=manual nudge.")
+        print("[Manual Controls] Single-key input enabled: Enter=home/resume, I=left nudge, O=right nudge.")
     except Exception as exc:
-        print(f"[Manual Controls] Single-key input unavailable; use Enter or 'i'+Enter instead: {exc}")
+        print(f"[Manual Controls] Single-key input unavailable; use Enter, 'i'+Enter, or 'o'+Enter instead: {exc}")
 
 
 def poll_manual_console_command(manual_home_active: bool) -> str | None:
@@ -373,7 +399,9 @@ def poll_manual_console_command(manual_home_active: bool) -> str | None:
             return "resume" if manual_home_active else "home"
         command = char.strip().lower()
         if command == "i":
-            return "nudge"
+            return "nudge_left"
+        if command == "o":
+            return "nudge_right"
         if command == "h" and manual_home_active:
             return "resume"
         return command or None
@@ -391,26 +419,33 @@ def poll_manual_console_command(manual_home_active: bool) -> str | None:
             return "resume"
         return "home"
     if command == "i":
-        return "nudge"
+        return "nudge_left"
+    if command == "o":
+        return "nudge_right"
     if manual_home_active and command == "h":
         return "resume"
     return command or None
 
 
-def build_manual_nudge_action(action_dim: int) -> np.ndarray:
+def build_manual_nudge_action(action_dim: int, nudge_name: str = DEFAULT_MANUAL_NUDGE_NAME) -> np.ndarray:
+    target = MANUAL_NUDGE_ACTIONS.get(nudge_name)
+    if target is None:
+        raise ValueError(f"Unknown manual nudge target: {nudge_name!r}")
+
     action = np.zeros((action_dim,), dtype=np.float32)
-    usable_dims = min(action_dim, DEFAULT_MANUAL_NUDGE_ACTION.shape[0])
-    action[:usable_dims] = DEFAULT_MANUAL_NUDGE_ACTION[:usable_dims]
+    usable_dims = min(action_dim, target.shape[0])
+    action[:usable_dims] = target[:usable_dims]
     return action
 
 
-def publish_manual_nudge(args, shm_dict, action_dim: int) -> None:
-    action = build_manual_nudge_action(action_dim)
+def publish_manual_nudge(args, shm_dict, action_dim: int, nudge_name: str = DEFAULT_MANUAL_NUDGE_NAME) -> None:
+    action = build_manual_nudge_action(action_dim, nudge_name)
+    key_name = "O" if nudge_name == RIGHT_MANUAL_NUDGE_NAME else "I"
     formatted = ", ".join(f"{x:8.4f}" for x in action)
     print(
         "\n"
         + "=" * 72
-        + "\n[Manual Nudge] I detected. Publishing manual nudge target for "
+        + f"\n[Manual Nudge] {key_name} detected. Publishing {nudge_name} manual nudge target for "
         f"{DEFAULT_MANUAL_NUDGE_HOLD_S:.2f}s before requesting fresh inference.\n"
         f"[Manual Nudge] target=[{formatted}]"
         + "\n"
@@ -423,8 +458,9 @@ def publish_manual_nudge(args, shm_dict, action_dim: int) -> None:
 
 def maybe_handle_manual_command(args, ros_proc, shm_dict, manual_home_command, action_dim: int) -> tuple[bool, bool, bool]:
     command = poll_manual_console_command(manual_home_active=False)
-    if command == "nudge":
-        publish_manual_nudge(args, shm_dict, action_dim)
+    if command in {"nudge", "nudge_left", "nudge_right"}:
+        nudge_name = RIGHT_MANUAL_NUDGE_NAME if command == "nudge_right" else DEFAULT_MANUAL_NUDGE_NAME
+        publish_manual_nudge(args, shm_dict, action_dim, nudge_name)
         return False, False, True
     if command != "home":
         return False, False, False
