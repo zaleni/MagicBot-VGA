@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import atexit
 from collections import deque
 import os
 import queue
@@ -39,10 +40,32 @@ except ImportError:
 
 
 np.set_printoptions(linewidth=200, suppress=True)
-
+# -0.125315,0.042153,0.036050,0.005913,-0.111200,0.030708,-3.382925,-0.017357,1.984627,1.149958,-0.185206,-0.267986,-1.676776,-4.306096
 MANUAL_HOME_INACTIVE = 0
 MANUAL_HOME_ACTIVE = 1
 MANUAL_HOME_RESUME_GUARD = 2
+DEFAULT_MANUAL_NUDGE_ACTION = np.array(
+    [
+        -0.000191,
+        -0.000191,
+        0.008202,
+        0.004768,
+        0.002098,
+        -0.008202,
+        -3.382544,
+        -0.421721,
+        1.211375,
+        0.484283,
+        0.442321,
+        -0.513657,
+        -0.192836,
+        -6.762035,
+    ],
+    dtype=np.float32,
+)
+DEFAULT_MANUAL_NUDGE_HOLD_S = 0.5
+_CONSOLE_ORIGINAL_TERMIOS = None
+_CONSOLE_KEY_MODE_ENABLED = False
 
 
 def extract_action_sequence(response, action_dim, keys=("actions", "action")):
@@ -134,6 +157,18 @@ def print_timing_log(args, *, chunk_idx: int, action_seq_len: int, response: dic
     if payload_bytes is not None:
         message += f" payload={float(payload_bytes) / (1024.0 * 1024.0):.2f}MB"
     print(message)
+
+
+def print_chunk_last_action(chunk_idx: int, action_seq) -> None:
+    if not action_seq:
+        return
+
+    last_action = np.asarray(action_seq[-1], dtype=np.float32).reshape(-1)
+    formatted = ", ".join(f"{x:8.4f}" for x in last_action)
+    print(
+        f"[MagicBot] chunk={chunk_idx} received_horizon={len(action_seq)} "
+        f"last_step={len(action_seq) - 1} target=[{formatted}]"
+    )
 
 
 def get_response_client_total_ms(response: dict | None) -> float | None:
@@ -277,8 +312,42 @@ def print_manual_home_help() -> None:
         "  - Press Enter once: home both arms and pause the current rollout.\n"
         "  - Press Enter again while paused: start a brand-new rollout from timestep 0 after a brief zero-action flush.\n"
         "    That second Enter will also count as the first-chunk confirmation for the restarted rollout.\n"
+        "  - Press I: publish the manual nudge pose for 0.5s, then request fresh inference from the current state.\n"
         "  - Base height will stay unchanged during manual home if fixed height is enabled.\n"
     )
+
+
+def restore_console_key_mode() -> None:
+    global _CONSOLE_ORIGINAL_TERMIOS, _CONSOLE_KEY_MODE_ENABLED
+    if not _CONSOLE_KEY_MODE_ENABLED or _CONSOLE_ORIGINAL_TERMIOS is None:
+        return
+    try:
+        import termios
+
+        termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, _CONSOLE_ORIGINAL_TERMIOS)
+    except Exception:
+        pass
+    finally:
+        _CONSOLE_ORIGINAL_TERMIOS = None
+        _CONSOLE_KEY_MODE_ENABLED = False
+
+
+def enable_console_key_mode() -> None:
+    global _CONSOLE_ORIGINAL_TERMIOS, _CONSOLE_KEY_MODE_ENABLED
+    if _CONSOLE_KEY_MODE_ENABLED or not sys.stdin or not sys.stdin.isatty() or os.name != "posix":
+        return
+    try:
+        import termios
+        import tty
+
+        fd = sys.stdin.fileno()
+        _CONSOLE_ORIGINAL_TERMIOS = termios.tcgetattr(fd)
+        tty.setcbreak(fd)
+        _CONSOLE_KEY_MODE_ENABLED = True
+        atexit.register(restore_console_key_mode)
+        print("[Manual Controls] Single-key input enabled: Enter=home/resume, I=manual nudge.")
+    except Exception as exc:
+        print(f"[Manual Controls] Single-key input unavailable; use Enter or 'i'+Enter instead: {exc}")
 
 
 def poll_manual_console_command(manual_home_active: bool) -> str | None:
@@ -293,11 +362,25 @@ def poll_manual_console_command(manual_home_active: bool) -> str | None:
     if not ready:
         return None
 
+    if _CONSOLE_KEY_MODE_ENABLED:
+        try:
+            char = sys.stdin.read(1)
+        except Exception:
+            return None
+
+        if char in {"\n", "\r"}:
+            return "resume" if manual_home_active else "home"
+        command = char.strip().lower()
+        if command == "i":
+            return "nudge"
+        if command == "h" and manual_home_active:
+            return "resume"
+        return command or None
+
     try:
         line = sys.stdin.readline()
     except Exception:
         return None
-
     if line == "":
         return None
 
@@ -306,15 +389,44 @@ def poll_manual_console_command(manual_home_active: bool) -> str | None:
         if manual_home_active:
             return "resume"
         return "home"
+    if command == "i":
+        return "nudge"
     if manual_home_active and command == "h":
         return "resume"
     return command or None
 
 
-def maybe_enter_manual_home_pause(args, ros_proc, shm_dict, manual_home_command, action_dim: int) -> tuple[bool, bool]:
+def build_manual_nudge_action(action_dim: int) -> np.ndarray:
+    action = np.zeros((action_dim,), dtype=np.float32)
+    usable_dims = min(action_dim, DEFAULT_MANUAL_NUDGE_ACTION.shape[0])
+    action[:usable_dims] = DEFAULT_MANUAL_NUDGE_ACTION[:usable_dims]
+    return action
+
+
+def publish_manual_nudge(args, shm_dict, action_dim: int) -> None:
+    action = build_manual_nudge_action(action_dim)
+    formatted = ", ".join(f"{x:8.4f}" for x in action)
+    print(
+        "\n"
+        + "=" * 72
+        + "\n[Manual Nudge] I detected. Publishing manual nudge target for "
+        f"{DEFAULT_MANUAL_NUDGE_HOLD_S:.2f}s before requesting fresh inference.\n"
+        f"[Manual Nudge] target=[{formatted}]"
+        + "\n"
+        + "=" * 72
+        + "\n"
+    )
+    robot_action(action, shm_dict)
+    time.sleep(DEFAULT_MANUAL_NUDGE_HOLD_S)
+
+
+def maybe_handle_manual_command(args, ros_proc, shm_dict, manual_home_command, action_dim: int) -> tuple[bool, bool, bool]:
     command = poll_manual_console_command(manual_home_active=False)
+    if command == "nudge":
+        publish_manual_nudge(args, shm_dict, action_dim)
+        return False, False, True
     if command != "home":
-        return False, False
+        return False, False, False
 
     set_manual_home_command(manual_home_command, True)
     robot_action(np.zeros((action_dim,), dtype=np.float32), shm_dict)
@@ -350,7 +462,7 @@ def maybe_enter_manual_home_pause(args, ros_proc, shm_dict, manual_home_command,
                 "[Manual Home] This second Enter will also be reused as the first-chunk confirmation.\n"
             )
             wait_for_manual_home_resume_guard(args, ros_proc, manual_home_command)
-            return True, True
+            return True, True, False
         if resume_command not in (None, "home"):
             print(
                 "[Manual Home] Still paused at home pose. "
@@ -359,7 +471,7 @@ def maybe_enter_manual_home_pause(args, ros_proc, shm_dict, manual_home_command,
         time.sleep(0.05)
 
     set_manual_home_command(manual_home_command, False)
-    return True, False
+    return True, False, False
 
 
 def maybe_run_first_safety_check(args, response, obs_dict, action_dim, *, auto_confirm: bool = False):
@@ -675,6 +787,7 @@ def inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_comm
         else:
             print("[MagicBot] RTC will reuse model-space leftover actions directly.")
     print_manual_home_help()
+    enable_console_key_mode()
     auto_confirm_next_first_chunk = False
 
     while ros_proc.is_alive():
@@ -690,7 +803,7 @@ def inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_comm
 
             try:
                 while timestep < args.max_publish_step and ros_proc.is_alive():
-                    manual_home_restart, manual_home_auto_confirm = maybe_enter_manual_home_pause(
+                    manual_home_restart, manual_home_auto_confirm, manual_nudge = maybe_handle_manual_command(
                         args,
                         ros_proc,
                         shm_dict,
@@ -701,6 +814,15 @@ def inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_comm
                         episode_restart_requested = True
                         auto_confirm_next_first_chunk = manual_home_auto_confirm
                         break
+                    if manual_nudge:
+                        current_response = None
+                        current_obs = None
+                        next_response = None
+                        prefetcher.stop()
+                        prefetcher = AsyncChunkPrefetcher(
+                            build_client,
+                            max_history=args.image_history_interval + 1,
+                        )
 
                     if current_response is None:
                         if next_response is not None:
@@ -789,6 +911,7 @@ def inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_comm
                             )
 
                     print_timing_log(args, chunk_idx=chunk_idx, action_seq_len=len(action_seq), response=response)
+                    print_chunk_last_action(chunk_idx, action_seq)
 
                     prefetch_lead_steps = compute_prefetch_lead_steps(
                         frame_rate=args.frame_rate,
@@ -802,7 +925,7 @@ def inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_comm
                             break
 
                         history_updated_this_step = False
-                        manual_home_restart, manual_home_auto_confirm = maybe_enter_manual_home_pause(
+                        manual_home_restart, manual_home_auto_confirm, manual_nudge = maybe_handle_manual_command(
                             args,
                             ros_proc,
                             shm_dict,
@@ -812,6 +935,16 @@ def inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_comm
                         if manual_home_restart:
                             episode_restart_requested = True
                             auto_confirm_next_first_chunk = manual_home_auto_confirm
+                            break
+                        if manual_nudge:
+                            current_response = None
+                            current_obs = None
+                            next_response = None
+                            prefetcher.stop()
+                            prefetcher = AsyncChunkPrefetcher(
+                                build_client,
+                                max_history=args.image_history_interval + 1,
+                            )
                             break
 
                         remaining_steps = len(action_seq) - step_idx - 1
@@ -868,7 +1001,7 @@ def inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_comm
             try:
                 while timestep < args.max_publish_step and ros_proc.is_alive():
                     history_updated_this_step = False
-                    manual_home_restart, manual_home_auto_confirm = maybe_enter_manual_home_pause(
+                    manual_home_restart, manual_home_auto_confirm, manual_nudge = maybe_handle_manual_command(
                         args,
                         ros_proc,
                         shm_dict,
@@ -879,6 +1012,15 @@ def inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_comm
                         episode_restart_requested = True
                         auto_confirm_next_first_chunk = manual_home_auto_confirm
                         break
+                    if manual_nudge:
+                        action_queue.clear()
+                        pending_obs = None
+                        prefetcher.stop()
+                        prefetcher = AsyncChunkPrefetcher(
+                            build_client,
+                            max_history=args.image_history_interval + 1,
+                        )
+                        continue
 
                     if action_queue.qsize() <= args.rtc_queue_threshold and not prefetcher.has_inflight():
                         pending_obs = read_observation_snapshot(args, shm_dict, shapes)
@@ -948,6 +1090,7 @@ def inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_comm
                                         action_seq_len=len(action_seq),
                                         response=response,
                                     )
+                                    print_chunk_last_action(chunk_idx, action_seq)
 
                                     client_total_ms = get_response_client_total_ms(response)
                                     latency_tracker.add(client_total_ms)
@@ -1035,7 +1178,7 @@ def inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_comm
             client.reset()
             sync_history_warning = {"emitted": False}
             while timestep < args.max_publish_step and ros_proc.is_alive():
-                manual_home_restart, manual_home_auto_confirm = maybe_enter_manual_home_pause(
+                manual_home_restart, manual_home_auto_confirm, manual_nudge = maybe_handle_manual_command(
                     args,
                     ros_proc,
                     shm_dict,
@@ -1046,6 +1189,8 @@ def inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_comm
                     episode_restart_requested = True
                     auto_confirm_next_first_chunk = manual_home_auto_confirm
                     break
+                if manual_nudge:
+                    client.reset()
 
                 obs_dict = read_observation_snapshot(args, shm_dict, shapes)
 
@@ -1108,12 +1253,13 @@ def inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_comm
 
                 chunk_idx += 1
                 print_timing_log(args, chunk_idx=chunk_idx, action_seq_len=len(action_seq), response=response)
+                print_chunk_last_action(chunk_idx, action_seq)
 
                 for step_action in action_seq:
                     if timestep >= args.max_publish_step or (not ros_proc.is_alive()):
                         break
 
-                    manual_home_restart, manual_home_auto_confirm = maybe_enter_manual_home_pause(
+                    manual_home_restart, manual_home_auto_confirm, manual_nudge = maybe_handle_manual_command(
                         args,
                         ros_proc,
                         shm_dict,
@@ -1123,6 +1269,9 @@ def inference_process(args, config, shm_dict, shapes, ros_proc, manual_home_comm
                     if manual_home_restart:
                         episode_restart_requested = True
                         auto_confirm_next_first_chunk = manual_home_auto_confirm
+                        break
+                    if manual_nudge:
+                        client.reset()
                         break
 
                     update_image_history(client, args, shm_dict, shapes, warning_state=sync_history_warning)
