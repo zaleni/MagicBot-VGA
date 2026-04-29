@@ -30,8 +30,13 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.configs.types import RTCAttentionSchedule
 from lerobot.datasets.utils import load_json
+from lerobot.policies.InternVLA_A1_3B.transform_internvla_a1 import (
+    Qwen3_VLProcessorTransformFn as QwenA1ProcessorTransformFn,
+)
 from lerobot.policies.cubev2.modeling_cubev2_rtc import CubeV2RTCPolicy
-from lerobot.policies.cubev2.transform_cubev2 import Qwen3_VLProcessorTransformFn
+from lerobot.policies.cubev2.transform_cubev2 import (
+    Qwen3_VLProcessorTransformFn as CubeV2ProcessorTransformFn,
+)
 from lerobot.policies.factory import get_policy_class
 from lerobot.policies.rtc import RTCConfig, RTCProcessor
 from lerobot.transforms.constants import get_mask_mapping
@@ -49,6 +54,8 @@ CAMERA_ALIASES = {
     f"{OBS_IMAGES}.image1": ("cam_left_wrist", "left_wrist", "left", "image1"),
     f"{OBS_IMAGES}.image2": ("cam_right_wrist", "right_wrist", "right", "image2"),
 }
+
+SUPPORTED_POLICY_TYPES = {"cubev2", "qwena1", "internvla_a1_3b"}
 
 
 @dataclass
@@ -199,10 +206,29 @@ def apply_runtime_config_overrides(config: PreTrainedConfig, args: ServeArgs) ->
         config.da3_model_path_or_name = args.da3_model_path_or_name
     if args.da3_code_root is not None and hasattr(config, "da3_code_root"):
         config.da3_code_root = args.da3_code_root
-    if args.disable_3d_teacher_for_eval and hasattr(config, "lambda_3d"):
+    if config.type == "cubev2" and args.disable_3d_teacher_for_eval and hasattr(config, "lambda_3d"):
         config.lambda_3d = 0.0
     if args.num_inference_steps is not None and hasattr(config, "num_inference_steps"):
         config.num_inference_steps = int(args.num_inference_steps)
+
+
+def resolve_policy_components(config: PreTrainedConfig, *, rtc_enabled: bool):
+    if config.type not in SUPPORTED_POLICY_TYPES:
+        raise ValueError(
+            "Expected a MagicBot/CubeV2 or InternVLA-A1 checkpoint, "
+            f"got config.type={config.type!r}. Supported types: {sorted(SUPPORTED_POLICY_TYPES)}."
+        )
+
+    if config.type in {"qwena1", "internvla_a1_3b"}:
+        if rtc_enabled:
+            raise ValueError(
+                "RTC serving is only supported for CubeV2 checkpoints. "
+                "Set RTC_ENABLED=false for InternVLA-A1."
+            )
+        return get_policy_class(config.type), QwenA1ProcessorTransformFn
+
+    policy_cls = CubeV2RTCPolicy if rtc_enabled else get_policy_class(config.type)
+    return policy_cls, CubeV2ProcessorTransformFn
 
 
 def resolve_stats(stats_path: Path, requested_key: str | None) -> tuple[str, dict[str, Any]]:
@@ -274,9 +300,8 @@ class MagicBotRemotePolicy:
         self.train_cfg = load_train_config_or_none(self.ckpt_dir)
 
         config = PreTrainedConfig.from_pretrained(self.ckpt_dir)
-        if config.type != "cubev2":
-            raise ValueError(f"Expected a MagicBot/CubeV2 checkpoint, got config.type={config.type!r}")
         apply_runtime_config_overrides(config, args)
+        policy_cls, processor_transform_cls = resolve_policy_components(config, rtc_enabled=args.rtc_enabled)
         self.device = resolve_device(args.device)
         self.load_device = resolve_device(args.load_device) if args.load_device else ("cpu" if self.device != "cpu" else "cpu")
         self.cosmos_device = resolve_device(args.cosmos_device) if args.cosmos_device else self.device
@@ -303,7 +328,6 @@ class MagicBotRemotePolicy:
             config.n_action_steps = min(args.infer_horizon, config.chunk_size)
         self.infer_horizon = int(args.infer_horizon or getattr(config, "n_action_steps", config.chunk_size))
 
-        policy_cls = CubeV2RTCPolicy if args.rtc_enabled else get_policy_class(config.type)
         self.policy = policy_cls.from_pretrained(config=config, pretrained_name_or_path=self.ckpt_dir)
         self.policy.config.device = self.device
         setattr(self.policy.config, "cosmos_device", self.cosmos_device)
@@ -346,7 +370,7 @@ class MagicBotRemotePolicy:
         )
         if processor_path is None:
             raise ValueError("Failed to resolve a Qwen3-VL processor path for MagicBot serving.")
-        self.processor_fn = Qwen3_VLProcessorTransformFn(
+        self.processor_fn = processor_transform_cls(
             pretrained_model_name_or_path=processor_path,
             max_length=int(getattr(config, "tokenizer_max_length", 48)),
         )
@@ -386,7 +410,7 @@ class MagicBotRemotePolicy:
             self.delta_mask = get_mask_mapping(self.stats_key).detach().cpu().numpy().astype(np.float32)
 
         self._metadata = {
-            "model_type": "cubev2",
+            "model_type": config.type,
             "checkpoint_dir": str(self.ckpt_dir),
             "stats_key": self.stats_key,
             "action_mode": self.action_mode,

@@ -56,20 +56,18 @@ class Qwen3_VLProcessorTransformFn(DataTransformFn):
         image_grid_thw = []
         for i in range(3):
             k = f"{OBS_IMAGES}.image{i}"
+            img_inputs = self.processor.image_processor(
+                data[k][1],  # we only feed images at current time to vlm
+                do_rescale=False, 
+            )
+            pixel_values.append(img_inputs.pixel_values)
+            image_grid_thw.append(img_inputs.image_grid_thw)
+            num_img_token = torch.prod(image_grid_thw[-1]) // self.spatial_merge_size ** 2
             if data[f"{k}_mask"]:
-                img_inputs = self.processor.image_processor(
-                    data[k][1],  # we only feed images at current time to vlm
-                    do_rescale=False, 
-                )
-                pixel_values.append(img_inputs.pixel_values)
-                image_grid_thw.append(img_inputs.image_grid_thw)
-                num_img_token = torch.prod(image_grid_thw[-1]) // self.spatial_merge_size ** 2
                 input_ids += [self.vision_start_token_id] + [self.image_token_id] * num_img_token + [self.vision_end_token_id]
                 attention_mask += [1] * (num_img_token + 2)
                 # attention_mask += [0] + [1] * num_img_token + [0]
             else:
-                pixel_values.append(img_inputs.pixel_values)
-                image_grid_thw.append(img_inputs.image_grid_thw)
                 input_ids += [self.vision_start_token_id] + [self.image_token_id] * num_img_token + [self.vision_end_token_id]
                 attention_mask += [0] * (num_img_token + 2)
         
