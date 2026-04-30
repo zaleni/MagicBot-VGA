@@ -817,6 +817,7 @@ class MagicBotR0(torch.nn.Module):
         future_3d_layer_tokens: tuple[torch.Tensor, ...] | None,
         future_images: torch.Tensor | None,
         img_masks: torch.Tensor | None,
+        collect_logs: bool = True,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         if self.future_3d_expert is None or self.da3_teacher is None or future_3d_layer_tokens is None:
             reference = future_images if future_images is not None else next(self.parameters())
@@ -835,7 +836,7 @@ class MagicBotR0(torch.nn.Module):
 
         teacher_images, teacher_img_masks = self._prepare_da3_teacher_inputs(future_images, img_masks)
         loss_logs: dict[str, torch.Tensor] = {}
-        teacher_forward_start = time.perf_counter() if self.log_da3_teacher_timing else None
+        teacher_forward_start = time.perf_counter() if collect_logs and self.log_da3_teacher_timing else None
         with torch.no_grad():
             teacher_layers = self.da3_teacher(teacher_images)
         if teacher_forward_start is not None:
@@ -947,7 +948,14 @@ class MagicBotR0(torch.nn.Module):
         )
         return pre, query_noise_sigma
 
-    def training_loss(self, sample, tiled: bool = False):
+    def training_loss(
+        self,
+        sample,
+        tiled: bool = False,
+        collect_loss_dict: bool = True,
+        collect_detailed_loss_dict: bool = True,
+        loss_dict_as_tensors: bool = False,
+    ):
         inputs = self.build_inputs(sample, tiled=tiled)
         input_latents = inputs["input_latents"]
         batch_size = input_latents.shape[0]
@@ -1111,6 +1119,36 @@ class MagicBotR0(torch.nn.Module):
                 loss_action = weighted_action_loss.new_zeros(())
         else:
             loss_action = weighted_action_loss.mean()
+        loss_3d, loss_3d_logs = self._compute_future_3d_loss(
+            future_3d_layer_tokens=future_3d_layer_tokens,
+            future_images=future_3d_images,
+            img_masks=future_3d_img_masks,
+            collect_logs=collect_loss_dict and collect_detailed_loss_dict,
+        )
+
+        loss_total = (
+            self.loss_lambda_video * loss_video
+            + self.loss_lambda_action * loss_action
+            + self.loss_lambda_3d * loss_3d
+        )
+        if not collect_loss_dict:
+            return loss_total, {}
+
+        if loss_dict_as_tensors:
+            loss_dict = {
+                "loss_video": (self.loss_lambda_video * loss_video).detach(),
+                "loss_action": (self.loss_lambda_action * loss_action).detach(),
+                "loss_3d": loss_3d.detach(),
+            }
+        else:
+            loss_dict = {
+                "loss_video": self.loss_lambda_video * float(loss_video.detach().item()),
+                "loss_action": self.loss_lambda_action * float(loss_action.detach().item()),
+                "loss_3d": float(loss_3d.detach().item()),
+            }
+        if not collect_detailed_loss_dict:
+            return loss_total, loss_dict
+
         dim_weight = torch.ones_like(action_loss_token, dtype=action_loss_raw.dtype)
         action_weight_for_dim = action_weight.to(device=dim_weight.device, dtype=dim_weight.dtype)
         if action_weight_for_dim.ndim == 0:
@@ -1122,22 +1160,6 @@ class MagicBotR0(torch.nn.Module):
             )[:, None].to(dtype=dim_weight.dtype)
         dim_denom = dim_weight.sum(dim=(0, 1)).clamp(min=1.0)
         loss_action_by_dim = (action_loss_raw * dim_weight[:, :, None]).sum(dim=(0, 1)) / dim_denom
-        loss_3d, loss_3d_logs = self._compute_future_3d_loss(
-            future_3d_layer_tokens=future_3d_layer_tokens,
-            future_images=future_3d_images,
-            img_masks=future_3d_img_masks,
-        )
-
-        loss_total = (
-            self.loss_lambda_video * loss_video
-            + self.loss_lambda_action * loss_action
-            + self.loss_lambda_3d * loss_3d
-        )
-        loss_dict = {
-            "loss_video": self.loss_lambda_video * float(loss_video.detach().item()),
-            "loss_action": self.loss_lambda_action * float(loss_action.detach().item()),
-            "loss_3d": float(loss_3d.detach().item()),
-        }
         for dim_idx, dim_loss in enumerate(loss_action_by_dim.detach().float().cpu().tolist()):
             loss_dict[f"loss_action_dim{dim_idx}"] = float(dim_loss)
         if future_3d_query_sigma is not None:

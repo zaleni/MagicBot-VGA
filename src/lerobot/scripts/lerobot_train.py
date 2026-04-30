@@ -61,6 +61,17 @@ FASTWAM_TRAINER_STATE_FILE = "fastwam_trainer_state.json"
 FASTWAM_POLICY_TYPES = {"fastwam", "MagicBot_R0"}
 
 
+def _metric_to_float(value: Any) -> float:
+    if isinstance(value, torch.Tensor):
+        return float(value.detach().item())
+    return float(value)
+
+
+def _optimizer_parameters(optimizer: Optimizer):
+    for group in optimizer.param_groups:
+        yield from group["params"]
+
+
 def _is_fastwam_policy_type(policy_type: str | None) -> bool:
     return policy_type in FASTWAM_POLICY_TYPES
 
@@ -118,8 +129,10 @@ def update_policy(
     lr_scheduler=None,
     lock=None,
     *,
+    policy_forward_kwargs: dict[str, Any] | None = None,
     use_zero_grad_set_to_none: bool = False,
     skip_scheduler_when_optimizer_step_skipped: bool = False,
+    clip_optimizer_params_only: bool = False,
 ) -> tuple[MetricsTracker, dict, bool, float]:
     """
     Performs a single training step to update the policy's weights.
@@ -148,7 +161,7 @@ def update_policy(
     with accelerator.accumulate(policy):
         # Let accelerator handle mixed precision
         with accelerator.autocast():
-            loss, output_dict = policy.forward(batch)
+            loss, output_dict = policy.forward(batch, **(policy_forward_kwargs or {}))
 
         # Use accelerator's backward method. This also scales by
         # gradient_accumulation_steps when appropriate.
@@ -156,11 +169,16 @@ def update_policy(
 
         grad_norm = None
         if accelerator.sync_gradients:
+            grad_parameters = (
+                _optimizer_parameters(optimizer)
+                if clip_optimizer_params_only
+                else policy.parameters()
+            )
             if grad_clip_norm > 0:
-                grad_norm = accelerator.clip_grad_norm_(policy.parameters(), grad_clip_norm)
+                grad_norm = accelerator.clip_grad_norm_(grad_parameters, grad_clip_norm)
             else:
                 grad_norm = torch.nn.utils.clip_grad_norm_(
-                    policy.parameters(), float("inf"), error_if_nonfinite=False
+                    grad_parameters, float("inf"), error_if_nonfinite=False
                 )
 
         # Optimizer step: Accelerate will turn this into a no-op on
@@ -194,7 +212,7 @@ def update_policy(
     train_metrics.loss = loss.item()
     for metric_name in ("loss_action", "loss_video", "loss_gen", "loss_3d", "time_3d_teacher_forward_s"):
         if metric_name in output_dict and metric_name in train_metrics.metrics:
-            setattr(train_metrics, metric_name, output_dict[metric_name])
+            setattr(train_metrics, metric_name, _metric_to_float(output_dict[metric_name]))
     if accelerator.sync_gradients and grad_norm is not None:
         train_metrics.grad_norm = grad_norm.item()
         train_metrics.lr = optimizer.param_groups[0]["lr"]
@@ -647,6 +665,11 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             batch = send_to_device(batch, accelerator.device, non_blocking=True)
         accumulated_dataloading_time += time.perf_counter() - start_time
 
+        will_log_after_update = cfg.log_freq > 0 and (step + 1) % cfg.log_freq == 0
+        policy_forward_kwargs = {}
+        if cfg.policy.type == "MagicBot_R0":
+            policy_forward_kwargs["collect_metrics"] = will_log_after_update
+
         train_tracker, output_dict, did_step, update_time_s = update_policy(
             train_tracker,
             policy,
@@ -655,8 +678,10 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             cfg.optimizer.grad_clip_norm,
             accelerator=accelerator,
             lr_scheduler=lr_scheduler,
+            policy_forward_kwargs=policy_forward_kwargs,
             use_zero_grad_set_to_none=_is_fastwam_policy_type(cfg.policy.type),
             skip_scheduler_when_optimizer_step_skipped=_is_fastwam_policy_type(cfg.policy.type),
+            clip_optimizer_params_only=cfg.policy.type == "MagicBot_R0",
         )
         accumulated_update_time += update_time_s
 

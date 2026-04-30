@@ -37,6 +37,8 @@ class MagicBotR0Policy(PreTrainedPolicy):
         self._action_denorm_specs: list[dict[str, Any]] = []
         self._action_stats_source: str | None = None
         self._action_stats_payload: dict[str, Any] | None = None
+        self._dit_trainable_params_configured = False
+        self._dit_only_train_mode_active = False
         self.model = self._build_model(config)
         if config.native_checkpoint_path:
             logging.info("Loading MagicBot_R0 native checkpoint from %s", config.native_checkpoint_path)
@@ -396,15 +398,27 @@ class MagicBotR0Policy(PreTrainedPolicy):
             return
         self._load_action_postprocess_from_stats_path(stats_path)
 
-    def _set_dit_only_train_mode(self) -> None:
-        self.model.eval()
+    def _configure_dit_trainable_params_once(self) -> None:
+        if self._dit_trainable_params_configured:
+            return
         self.model.requires_grad_(False)
-        self.model.dit.train()
         self.model.dit.requires_grad_(True)
         proprio_encoder = getattr(self.model, "proprio_encoder", None)
         if proprio_encoder is not None:
-            proprio_encoder.train()
             proprio_encoder.requires_grad_(True)
+        self._dit_trainable_params_configured = True
+
+    def _set_dit_only_train_mode(self) -> None:
+        self._configure_dit_trainable_params_once()
+        if self._dit_only_train_mode_active:
+            return
+        self.training = True
+        self.model.eval()
+        self.model.dit.train()
+        proprio_encoder = getattr(self.model, "proprio_encoder", None)
+        if proprio_encoder is not None:
+            proprio_encoder.train()
+        self._dit_only_train_mode_active = True
 
     def get_optim_params(self):
         trainable_params = list(self.model.dit.parameters())
@@ -417,9 +431,10 @@ class MagicBotR0Policy(PreTrainedPolicy):
         self._action_queue: deque[Tensor] = deque()
 
     def train(self, mode: bool = True):
-        super().train(mode)
-        if mode:
-            self._set_dit_only_train_mode()
+        if not mode:
+            self._dit_only_train_mode_active = False
+            return super().train(mode)
+        self._set_dit_only_train_mode()
         return self
 
     def _prepare_training_sample(self, batch: dict[str, Any]) -> dict[str, Any]:
@@ -444,9 +459,16 @@ class MagicBotR0Policy(PreTrainedPolicy):
         sample["context_mask"] = context_mask
         return sample
 
-    def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
+    def forward(self, batch: dict[str, Tensor], *, collect_metrics: bool = True) -> tuple[Tensor, dict]:
         sample = self._prepare_training_sample(batch)
-        loss, loss_dict = self.model.training_loss(sample)
+        loss, loss_dict = self.model.training_loss(
+            sample,
+            collect_loss_dict=True,
+            collect_detailed_loss_dict=collect_metrics,
+            loss_dict_as_tensors=not collect_metrics,
+        )
+        if not collect_metrics:
+            return loss, loss_dict
         output = {
             "loss": float(loss.detach().item()),
             "loss_video": float(loss_dict["loss_video"]),
