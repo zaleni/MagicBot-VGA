@@ -538,8 +538,10 @@ def build_policy_and_transforms(args: "InferenceArgs", dtype: torch.dtype):
 
     if config.type == "MagicBot_R0":
         train_config = load_train_config_or_none(ckpt_dir)
-        if train_config is not None and getattr(train_config, "dataset", None) is not None:
-            logging.info("Loaded MagicBot_R0 train_config dataset type: %s", train_config.dataset.type)
+        dataset_config = None if train_config is None else getattr(train_config, "dataset", None)
+        if dataset_config is not None:
+            dataset_name = getattr(dataset_config, "type", dataset_config.__class__.__name__)
+            logging.info("Loaded MagicBot_R0 train_config dataset: %s", dataset_name)
         if not getattr(policy, "_action_denorm_specs", None):
             logging.warning(
                 "MagicBot_R0 action denormalization stats were not loaded. "

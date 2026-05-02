@@ -56,6 +56,7 @@ CHUNK_SIZE="${CHUNK_SIZE:-50}"
 N_ACTION_STEPS="${N_ACTION_STEPS:-${CHUNK_SIZE}}"
 ENABLE_3D_QUERIES="${ENABLE_3D_QUERIES:-true}"
 NUM_3D_QUERY_TOKENS="${NUM_3D_QUERY_TOKENS:-432}"
+CUBEV2_ATTENTION_MASK_MODE="${CUBEV2_ATTENTION_MASK_MODE:-default}"
 LAMBDA_3D="${LAMBDA_3D:-0.01}"
 
 USE_EXTERNAL_STATS="${USE_EXTERNAL_STATS:-true}"
@@ -179,6 +180,7 @@ else
   echo "ACTION_TYPE=${ACTION_TYPE}"
   echo "CHUNK_SIZE=${CHUNK_SIZE}"
   echo "N_ACTION_STEPS=${N_ACTION_STEPS}"
+  echo "CUBEV2_ATTENTION_MASK_MODE=${CUBEV2_ATTENTION_MASK_MODE}"
   echo "BATCH_SIZE(per_device)=${BATCH_SIZE}"
   echo "GRADIENT_ACCUMULATION_STEPS=${GRADIENT_ACCUMULATION_STEPS}"
   echo "USE_EXTERNAL_STATS=${USE_EXTERNAL_STATS}"
@@ -230,6 +232,7 @@ else
         --policy.action_expert_variant=qwen3_28l
         --policy.chunk_size="${CHUNK_SIZE}"
         --policy.n_action_steps="${N_ACTION_STEPS}"
+        --policy.attention_mask_mode="${CUBEV2_ATTENTION_MASK_MODE}"
         --policy.enable_3d_queries="${ENABLE_3D_QUERIES}"
         --policy.num_3d_query_tokens="${NUM_3D_QUERY_TOKENS}"
         --policy.lambda_3d="${LAMBDA_3D}"

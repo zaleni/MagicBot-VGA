@@ -36,6 +36,7 @@ DA3_MODEL_PATH_OR_NAME="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/model/D
 DATASET_DIR="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/data/zhenji/table_clean_100_filter"
 NORM_STATS_ROOT="/HOME/uestc_jksong/uestc_jksong_1/SSD_POOL/jjhao/data/zhenji/norm_stats"
 ACTION_TYPE="${ACTION_TYPE:-delta}"
+CUBEV2_ATTENTION_MASK_MODE="${CUBEV2_ATTENTION_MASK_MODE:-default}"
 JOB_NAME="real_lift2-table_clean-${ACTION_TYPE}-chunk50-imgaugpi-finetune-$(date +'%Y_%m_%d_%H_%M_%S')"
 ENABLE_IMAGE_AUG=true
 IMAGE_AUG_PRESET="${IMAGE_AUG_PRESET:-pi05}"
@@ -110,6 +111,7 @@ export DA3_MODEL_PATH_OR_NAME
 export DATASET_DIR
 export NORM_STATS_ROOT
 export ACTION_TYPE
+export CUBEV2_ATTENTION_MASK_MODE
 export JOB_NAME
 export ENABLE_IMAGE_AUG
 export IMAGE_AUG_PRESET
@@ -133,6 +135,7 @@ echo "DA3_MODEL_PATH_OR_NAME=${DA3_MODEL_PATH_OR_NAME}"
 echo "DATASET_DIR=${DATASET_DIR}"
 echo "NORM_STATS_ROOT=${NORM_STATS_ROOT}"
 echo "ACTION_TYPE=${ACTION_TYPE}"
+echo "CUBEV2_ATTENTION_MASK_MODE=${CUBEV2_ATTENTION_MASK_MODE}"
 echo "JOB_NAME=${JOB_NAME:-<auto>}"
 echo "ENABLE_IMAGE_AUG=${ENABLE_IMAGE_AUG}"
 echo "IMAGE_AUG_PRESET=${IMAGE_AUG_PRESET}"

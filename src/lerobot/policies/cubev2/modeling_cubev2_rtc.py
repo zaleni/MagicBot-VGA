@@ -46,6 +46,26 @@ class CubeV2RTCModel(CubeV2Model):
             )
             noise = self.sample_noise(actions_shape, device)
 
+        if self.uses_casual_attention():
+            rtc_enabled = (
+                rtc_processor is not None
+                and getattr(getattr(rtc_processor, "rtc_config", None), "enabled", False)
+            )
+            if rtc_enabled:
+                raise ValueError("CubeV2 RTC inference is not supported with attention_mask_mode='casual'.")
+            return super().sample_actions(
+                images,
+                img_masks,
+                pixel_values,
+                image_grid_thw,
+                lang_tokens,
+                lang_masks,
+                state,
+                noise=noise,
+                num_steps=num_steps,
+                decode_image=decode_image,
+            )
+
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
             pixel_values, image_grid_thw, lang_tokens, lang_masks
         )

@@ -64,6 +64,7 @@ ENABLE_3D_QUERIES="${ENABLE_3D_QUERIES:-true}"
 LAMBDA_3D="${LAMBDA_3D:-0.01}"
 GEN_LAMBDA="${GEN_LAMBDA:-0.002}"
 NUM_3D_QUERY_TOKENS="${NUM_3D_QUERY_TOKENS:-432}"
+CUBEV2_ATTENTION_MASK_MODE="${CUBEV2_ATTENTION_MASK_MODE:-default}"
 
 USE_EXTERNAL_STATS="${USE_EXTERNAL_STATS:-true}"
 DATASET_EXTERNAL_STATS_PATH="${DATASET_EXTERNAL_STATS_PATH:-/home/jiangjiahao/research/MagicBot-VGA/outputs/norm_stats/libero_all_chunk10/franka/abs/stats.json}"
@@ -216,6 +217,7 @@ if resolved != "libero_franka":
   echo "ACTION_TYPE=${ACTION_TYPE}"
   echo "CHUNK_SIZE=${CHUNK_SIZE}"
   echo "N_ACTION_STEPS=${N_ACTION_STEPS}"
+  echo "CUBEV2_ATTENTION_MASK_MODE=${CUBEV2_ATTENTION_MASK_MODE}"
   echo "GEN_LAMBDA=${GEN_LAMBDA}"
   echo "LAMBDA_3D=${LAMBDA_3D}"
   echo "OUTPUT_DIR=${OUTPUT_DIR}"
@@ -262,6 +264,7 @@ else
         --policy.action_expert_variant=qwen3_28l
         --policy.chunk_size="${CHUNK_SIZE}"
         --policy.n_action_steps="${N_ACTION_STEPS}"
+        --policy.attention_mask_mode="${CUBEV2_ATTENTION_MASK_MODE}"
         --policy.enable_3d_queries="${ENABLE_3D_QUERIES}"
         --policy.num_3d_query_tokens="${NUM_3D_QUERY_TOKENS}"
         --policy.lambda_gen="${GEN_LAMBDA}"

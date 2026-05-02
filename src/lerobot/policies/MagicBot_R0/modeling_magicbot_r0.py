@@ -98,6 +98,17 @@ class MagicBotR0Policy(PreTrainedPolicy):
             if key.startswith(self._save_prefixes)
         }
 
+    def classify_model_loading_keys(
+        self, missing_keys: list[str], unexpected_keys: list[str]
+    ) -> tuple[list[str], list[str], list[str]]:
+        expected_missing = [
+            key
+            for key in missing_keys
+            if not any(key.startswith(prefix) for prefix in self._save_prefixes)
+        ]
+        filtered_missing = [key for key in missing_keys if key not in expected_missing]
+        return filtered_missing, unexpected_keys, expected_missing
+
     @staticmethod
     def _count_params(module: torch.nn.Module | None, *, trainable_only: bool = False) -> int:
         if module is None:
