@@ -34,7 +34,7 @@ echo "PROJ_ROOT  = ${PROJ_ROOT}"
 cd "${PROJ_ROOT}"
 export PYTHONPATH="${PROJ_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}"
 
-PRETRAINED_CKPT="${PRETRAINED_CKPT:-}"
+PRETRAINED_CKPT="${PRETRAINED_CKPT:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/MagicBot-VGA/outputs/MagicBot_R0/MagicBot_R0-magicbot_r0-robotwin-3d-abs-magicbot_r0_backbone-finetune-2026_04_28_19_33_58/checkpoints/080000/pretrained_model}"
 if (( $# > 1 )); then
     echo "Usage:"
     echo "  PRETRAINED_CKPT=/path/to/checkpoints/200000/pretrained_model bash evaluation/RoboTwin/${SCRIPT_NAME}"
@@ -77,8 +77,8 @@ START_TASK_IDX="${START_TASK_IDX:-0}"
 TASK_COUNT="${TASK_COUNT:-50}"
 MAX_TASKS=50
 
-GPU_IDS="${GPU_IDS:-0,1,2,3,4,5,6,7}"
-MAX_JOBS_PER_GPU="${MAX_JOBS_PER_GPU:-1}"
+GPU_IDS="${GPU_IDS:-0,1}"
+MAX_JOBS_PER_GPU="${MAX_JOBS_PER_GPU:-2}"
 POLL_INTERVAL_SECONDS="${POLL_INTERVAL_SECONDS:-35}"
 
 ACTION_MODE="${ACTION_MODE:-abs}"

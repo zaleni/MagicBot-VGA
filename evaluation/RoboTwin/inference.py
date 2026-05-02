@@ -149,7 +149,11 @@ def resolve_policy_components(config: PreTrainedConfig):
 
 def apply_runtime_config_overrides(config: PreTrainedConfig, args: "InferenceArgs") -> None:
     if args.policy_type is not None:
-        config.type = args.policy_type
+        if config.type != args.policy_type:
+            raise ValueError(
+                f"Checkpoint policy type is {config.type!r}, but --args.policy_type={args.policy_type!r}. "
+                "Use a matching checkpoint or leave --args.policy_type unset."
+            )
 
     if args.qwen3_vl_pretrained_path is not None and hasattr(config, "qwen3_vl_pretrained_path"):
         config.qwen3_vl_pretrained_path = args.qwen3_vl_pretrained_path
