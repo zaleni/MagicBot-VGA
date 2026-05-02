@@ -46,13 +46,13 @@ class CubeV2RTCModel(CubeV2Model):
             )
             noise = self.sample_noise(actions_shape, device)
 
-        if self.uses_casual_attention():
+        if self.uses_causal_attention():
             rtc_enabled = (
                 rtc_processor is not None
                 and getattr(getattr(rtc_processor, "rtc_config", None), "enabled", False)
             )
             if rtc_enabled:
-                raise ValueError("CubeV2 RTC inference is not supported with attention_mask_mode='casual'.")
+                raise ValueError("CubeV2 RTC inference is not supported with attention_mask_mode='causal'.")
             return super().sample_actions(
                 images,
                 img_masks,

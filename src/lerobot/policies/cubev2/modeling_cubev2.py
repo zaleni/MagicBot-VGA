@@ -1119,8 +1119,8 @@ class CubeV2Model(nn.Module):
 
         return att_2d_masks
 
-    def uses_casual_attention(self) -> bool:
-        return getattr(self.config, "attention_mask_mode", "default") == "casual"
+    def uses_causal_attention(self) -> bool:
+        return getattr(self.config, "attention_mask_mode", "default") == "causal"
 
     @staticmethod
     def _allow_attention_block(mask: torch.Tensor, query_slice: slice, key_slice: slice) -> None:
@@ -1128,15 +1128,15 @@ class CubeV2Model(nn.Module):
             return
         mask[:, query_slice, key_slice] = True
 
-    def apply_casual_attention(
+    def apply_causal_attention(
         self,
         att_2d_masks: torch.Tensor,
         pad_masks: torch.Tensor,
         prefix_len: int,
     ) -> torch.Tensor:
-        """Apply the optional casual ablation mask.
+        """Apply the optional causal ablation mask.
 
-        The default CubeV2 path never calls this method. In casual mode,
+        The default CubeV2 path never calls this method. In causal mode,
         Middle visual tokens, 3D scene/query tokens, and action tokens follow
         the block relation used for the ablation:
 
@@ -1150,7 +1150,7 @@ class CubeV2Model(nn.Module):
         ablation, state/action suffix rows also do not read middle visual tokens.
         """
         if self.middle_query_token_count <= 0:
-            raise ValueError("casual attention requires enabled 3D query tokens.")
+            raise ValueError("causal attention requires enabled 3D query tokens.")
 
         total_len = pad_masks.shape[1]
         visual_start = prefix_len
@@ -1165,7 +1165,7 @@ class CubeV2Model(nn.Module):
 
         if action_start > total_len:
             raise ValueError(
-                "casual attention expected suffix tokens after middle tokens, "
+                "causal attention expected suffix tokens after middle tokens, "
                 f"got total_len={total_len}, action_start={action_start}."
             )
 
@@ -1189,7 +1189,7 @@ class CubeV2Model(nn.Module):
             self._allow_attention_block(allowed, scene, key_block)
 
         # State row follows the default suffix position, but does not read
-        # middle visual tokens in the casual ablation.
+        # middle visual tokens in the causal ablation.
         for key_block in (prefix, scene, state):
             self._allow_attention_block(allowed, state, key_block)
 
@@ -1208,8 +1208,8 @@ class CubeV2Model(nn.Module):
         prefix_len: int,
     ) -> torch.Tensor:
         att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
-        if self.uses_casual_attention():
-            return self.apply_casual_attention(att_2d_masks, pad_masks, prefix_len=prefix_len)
+        if self.uses_causal_attention():
+            return self.apply_causal_attention(att_2d_masks, pad_masks, prefix_len=prefix_len)
         return self.apply_view_aware_query_attention(att_2d_masks, prefix_len=prefix_len)
 
     def split_middle_tokens(self, middle_tokens: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor | None]:
@@ -1774,8 +1774,8 @@ class CubeV2Model(nn.Module):
             )  # Use config max_action_dim for internal processing
             noise = self.sample_noise(actions_shape, device)
 
-        if self.uses_casual_attention():
-            return self.sample_actions_casual(
+        if self.uses_causal_attention():
+            return self.sample_actions_causal(
                 images,
                 img_masks,
                 pixel_values,
@@ -1875,7 +1875,7 @@ class CubeV2Model(nn.Module):
             return x_t, recon_images
 
     @torch.no_grad()
-    def sample_actions_casual(
+    def sample_actions_causal(
         self,
         images,
         img_masks,
@@ -1888,7 +1888,7 @@ class CubeV2Model(nn.Module):
         num_steps,
         decode_image=False,
     ) -> tuple[Tensor, Tensor | None]:
-        """Exact inference path for the casual attention ablation.
+        """Exact inference path for the causal attention ablation.
 
         The 3D scene/query block is allowed to read the current denoising action
         block, so middle tokens cannot be cached independently of suffix tokens.
@@ -1970,7 +1970,7 @@ class CubeV2Model(nn.Module):
 
         if decode_image:
             if last_middle_out is None:
-                raise RuntimeError("casual inference produced no middle tokens to decode.")
+                raise RuntimeError("causal inference produced no middle tokens to decode.")
 
             def cosmos_out_func(middle_out):
                 return self.decode_cosmos(middle_out)
