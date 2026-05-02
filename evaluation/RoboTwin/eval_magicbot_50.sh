@@ -60,6 +60,13 @@ MAGICBOT_R0_REDIRECT_COMMON_FILES="${MAGICBOT_R0_REDIRECT_COMMON_FILES:-true}"
 MAGICBOT_R0_SKIP_DIT_LOAD_FROM_PRETRAIN="${MAGICBOT_R0_SKIP_DIT_LOAD_FROM_PRETRAIN:-true}"
 export MAGICBOT_R0_LOAD_TEXT_ENCODER MAGICBOT_R0_REDIRECT_COMMON_FILES MAGICBOT_R0_SKIP_DIT_LOAD_FROM_PRETRAIN
 
+# DiffSynth/Wan component loader defaults to ./checkpoints relative to the
+# current working directory. Eval launches from third_party/RoboTwin, so point it
+# back to this repo's checkpoints dir and avoid accidental ModelScope downloads.
+DIFFSYNTH_MODEL_BASE_PATH="${DIFFSYNTH_MODEL_BASE_PATH:-${PROJ_ROOT}/checkpoints}"
+DIFFSYNTH_SKIP_DOWNLOAD="${DIFFSYNTH_SKIP_DOWNLOAD:-true}"
+export DIFFSYNTH_MODEL_BASE_PATH DIFFSYNTH_SKIP_DOWNLOAD
+
 WAN_MODEL_ID="${WAN_MODEL_ID:-}"
 WAN_TOKENIZER_MODEL_ID="${WAN_TOKENIZER_MODEL_ID:-}"
 ACTION_DIT_PRETRAINED_PATH="${ACTION_DIT_PRETRAINED_PATH:-}"
@@ -183,7 +190,10 @@ done
     echo "infer_horizon: ${INFER_HORIZON}"
     echo "num_inference_steps: ${NUM_INFERENCE_STEPS}"
     echo "magicbot_r0_load_text_encoder: ${MAGICBOT_R0_LOAD_TEXT_ENCODER}"
+    echo "magicbot_r0_redirect_common_files: ${MAGICBOT_R0_REDIRECT_COMMON_FILES}"
     echo "magicbot_r0_skip_dit_load_from_pretrain: ${MAGICBOT_R0_SKIP_DIT_LOAD_FROM_PRETRAIN}"
+    echo "diffsynth_model_base_path: ${DIFFSYNTH_MODEL_BASE_PATH}"
+    echo "diffsynth_skip_download: ${DIFFSYNTH_SKIP_DOWNLOAD}"
     echo "wan_model_id: ${WAN_MODEL_ID:-<checkpoint_config>}"
     echo "wan_tokenizer_model_id: ${WAN_TOKENIZER_MODEL_ID:-<checkpoint_config>}"
     echo "action_dit_pretrained_path: ${ACTION_DIT_PRETRAINED_PATH:-<skipped>}"
@@ -261,6 +271,11 @@ write_task_command_file() {
     local task_output_dir="$3"
     build_cmd "${task_idx}" "${task_output_dir}"
     {
+        printf 'DIFFSYNTH_MODEL_BASE_PATH=%q ' "${DIFFSYNTH_MODEL_BASE_PATH}"
+        printf 'DIFFSYNTH_SKIP_DOWNLOAD=%q ' "${DIFFSYNTH_SKIP_DOWNLOAD}"
+        printf 'MAGICBOT_R0_LOAD_TEXT_ENCODER=%q ' "${MAGICBOT_R0_LOAD_TEXT_ENCODER}"
+        printf 'MAGICBOT_R0_REDIRECT_COMMON_FILES=%q ' "${MAGICBOT_R0_REDIRECT_COMMON_FILES}"
+        printf 'MAGICBOT_R0_SKIP_DIT_LOAD_FROM_PRETRAIN=%q ' "${MAGICBOT_R0_SKIP_DIT_LOAD_FROM_PRETRAIN}"
         printf 'CUDA_VISIBLE_DEVICES=%q ' "${gpu_id}"
         printf '%q ' "${CMD[@]}"
         printf '\n'
