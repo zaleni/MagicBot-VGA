@@ -90,7 +90,7 @@ if [[ -n "${RESUME_CHECKPOINT_DIR}" && -z "${RESUME_CONFIG_PATH}" ]]; then
   RESUME_CONFIG_PATH="${RESUME_CHECKPOINT_DIR%/}/pretrained_model/train_config.json"
 fi
 
-BASE_OUTPUT_DIR="${BASE_OUTPUT_DIR:-/home/jiangjiahao/data/ckpt/${MODEL_NAME}}"
+BASE_OUTPUT_DIR="${BASE_OUTPUT_DIR:-/home/jiangjiahao/data/ckpt/${POLICY}}"
 JOB_NAME="${JOB_NAME:-}"
 OUTPUT_DIR=""
 
