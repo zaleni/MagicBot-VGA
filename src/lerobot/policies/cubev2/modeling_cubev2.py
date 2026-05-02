@@ -1137,13 +1137,17 @@ class CubeV2Model(nn.Module):
         """Apply the optional casual ablation mask.
 
         The default CubeV2 path never calls this method. In casual mode,
-        prefix tokens and the state token are treated as the current-condition
-        block. Middle visual tokens, 3D scene/query tokens, and action tokens
-        then follow the block relation used for the ablation:
+        Middle visual tokens, 3D scene/query tokens, and action tokens follow
+        the block relation used for the ablation:
 
-            visual -> current, visual, scene
-            scene  -> current, scene, action
-            action -> current, scene, action
+            visual       -> current, visual, scene
+            scene        -> current, scene, action tokens
+            action tokens -> current, scene, state, action tokens
+
+        The state token keeps the default suffix behavior: it is a separate
+        token before action tokens, so action tokens can read it, while middle
+        visual/scene rows do not receive state as an extra condition. In this
+        ablation, state/action suffix rows also do not read middle visual tokens.
         """
         if self.middle_query_token_count <= 0:
             raise ValueError("casual attention requires enabled 3D query tokens.")
@@ -1173,21 +1177,25 @@ class CubeV2Model(nn.Module):
 
         allowed = torch.zeros_like(att_2d_masks, dtype=torch.bool)
 
-        # Current-condition rows.
+        # Prefix/current-condition rows.
         self._allow_attention_block(allowed, prefix, prefix)
-        self._allow_attention_block(allowed, state, prefix)
-        self._allow_attention_block(allowed, state, state)
 
         # Subgoal / middle 2D image rows.
-        for key_block in (prefix, state, visual, scene):
+        for key_block in (prefix, visual, scene):
             self._allow_attention_block(allowed, visual, key_block)
 
         # Goal 3D scene rows.
-        for key_block in (prefix, state, scene, action):
+        for key_block in (prefix, scene, action):
             self._allow_attention_block(allowed, scene, key_block)
 
-        # Goal 3D action rows.
-        for key_block in (prefix, state, scene, action):
+        # State row follows the default suffix position, but does not read
+        # middle visual tokens in the casual ablation.
+        for key_block in (prefix, scene, state):
+            self._allow_attention_block(allowed, state, key_block)
+
+        # Action token rows follow the target mask: current, scene, state, and
+        # action tokens, but not middle visual tokens.
+        for key_block in (prefix, scene, state, action):
             self._allow_attention_block(allowed, action, key_block)
 
         pad_2d_masks = pad_masks[:, None, :].to(torch.bool) & pad_masks[:, :, None].to(torch.bool)
