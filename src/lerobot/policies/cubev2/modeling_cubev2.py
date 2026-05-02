@@ -1714,15 +1714,18 @@ class CubeV2Model(nn.Module):
             forward_func, prefix_embs, middle_embs, suffix_embs, att_2d_masks_4d, position_ids
         )
         middle_out, suffix_out, *middle_layer_outputs = forward_outputs
-        middle_visual_out, _ = self.split_middle_tokens(middle_out)
 
-        def cosmos_out_func(middle_out):
-            return self.decode_cosmos(middle_out)
-        
-        pred_cosmos_features = self._apply_checkpoint(cosmos_out_func, middle_visual_out.to(dtype=torch.float32))
+        if float(self.config.lambda_gen) > 0.0:
+            middle_visual_out, _ = self.split_middle_tokens(middle_out)
 
-        future_embs = self.get_cosmos_features(images[:, :, 2])
-        loss_gen = F.mse_loss(pred_cosmos_features[img_masks], future_embs.to(dtype=torch.float32)[img_masks])
+            def cosmos_out_func(middle_out):
+                return self.decode_cosmos(middle_out)
+
+            pred_cosmos_features = self._apply_checkpoint(cosmos_out_func, middle_visual_out.to(dtype=torch.float32))
+            future_embs = self.get_cosmos_features(images[:, :, 2])
+            loss_gen = F.mse_loss(pred_cosmos_features[img_masks], future_embs.to(dtype=torch.float32)[img_masks])
+        else:
+            loss_gen = middle_out.new_zeros((), dtype=torch.float32)
         loss_3d, loss_3d_logs = self.compute_3d_query_loss(tuple(middle_layer_outputs), images[:, :, 2], img_masks)
 
         suffix_out = suffix_out[:, -self.config.chunk_size :]
