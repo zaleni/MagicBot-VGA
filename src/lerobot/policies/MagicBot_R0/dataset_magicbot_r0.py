@@ -1395,6 +1395,7 @@ class MagicBotR0RobotVideoDatasetV3(Dataset):
             )
 
         task = self.override_instruction if self.override_instruction is not None else sample["instruction"]
+        task = str(task).strip()
         instruction = DEFAULT_PROMPT.format(task=task)
         data = {
             "video": video,

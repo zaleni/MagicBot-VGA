@@ -194,17 +194,21 @@ def normalize_h5_attr(value) -> str:
     return str(value)
 
 
+def normalize_task_text(value) -> str:
+    return normalize_h5_attr(value).strip()
+
+
 def select_task_description(h5_root: h5py.File, fallback_task: str) -> str:
     attrs = h5_root.attrs
     if "llm_description" not in attrs:
-        return fallback_task
+        return normalize_task_text(fallback_task)
 
     llm_type = normalize_h5_attr(attrs.get("llm_type", ""))
     if llm_type == "reversible":
         which = normalize_h5_attr(attrs.get("which_llm_description", "1"))
         if which == "2" and "llm_description2" in attrs:
-            return normalize_h5_attr(attrs["llm_description2"])
-    return normalize_h5_attr(attrs["llm_description"])
+            return normalize_task_text(attrs["llm_description2"])
+    return normalize_task_text(attrs["llm_description"])
 
 
 def discover_episode_pairs(
