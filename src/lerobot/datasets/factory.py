@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import re
+import os
 import logging
 from pprint import pformat
 from pathlib import Path
@@ -397,6 +398,144 @@ def compute_repo_weights(
         repo_weights[rid] /= Z
 
     return repo_weights
+
+
+def _env_int(name: str, default: int) -> int:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+def _short_repo_id_for_log(repo_id: str, max_len: int = 72) -> str:
+    parts = Path(repo_id).parts
+    if parts:
+        dataset_idx = next((i for i, part in enumerate(parts) if part.lower() == "dataset"), None)
+        if dataset_idx is not None and dataset_idx + 1 < len(parts):
+            short = "/".join(parts[dataset_idx + 1 :])
+        else:
+            short = "/".join(parts[-3:])
+    else:
+        short = repo_id
+
+    if len(short) <= max_len:
+        return short
+    return "..." + short[-(max_len - 3) :]
+
+
+def _format_repo_assignment_for_log(
+    *,
+    rank: int,
+    world_size: int,
+    repo_ids: list[str],
+    frames_map: dict[str, int] | None,
+    episodes_map: dict[str, int] | None,
+    repo_weights_map: dict[str, float] | None,
+    groups_cfg: DictConfig | None,
+    label: str,
+) -> str | None:
+    mode = os.environ.get("LEROBOT_REPO_ASSIGNMENT_LOG_MODE", "summary").strip().lower()
+    if mode in {"0", "false", "off", "none", "quiet"}:
+        return None
+
+    frames_map = frames_map or {}
+    episodes_map = episodes_map or {}
+    repo_weights_map = repo_weights_map or {}
+
+    def format_repo(rid: str, *, short: bool = True) -> str:
+        parts = [_short_repo_id_for_log(rid) if short else rid]
+        if rid in repo_weights_map:
+            parts.append(f"w={repo_weights_map[rid]:.6f}")
+        if rid in frames_map:
+            parts.append(f"f={frames_map[rid]:,}")
+        if rid in episodes_map:
+            parts.append(f"ep={episodes_map[rid]:,}")
+        return parts[0] if len(parts) == 1 else f"{parts[0]} ({', '.join(parts[1:])})"
+
+    if mode in {"full", "verbose", "all"}:
+        return (
+            f"[rank={rank:02d}/{world_size:02d}] {label} repo_ids_for_this_rank: repos={len(repo_ids)}\n"
+            + "\n".join(f"[rank {rank}] repo_id = {format_repo(rid, short=False)}" for rid in repo_ids)
+        )
+
+    repo_to_group: dict[str, str] = {}
+    ordered_group_names: list[str] = []
+    if groups_cfg is not None:
+        repo_to_group, _, ordered_group_names = group_repo_ids_by_rules(repo_ids, groups_cfg)
+
+    group_counts: dict[str, int] = defaultdict(int)
+    group_frames: dict[str, int] = defaultdict(int)
+    group_weights: dict[str, float] = defaultdict(float)
+    for rid in repo_ids:
+        group_name = repo_to_group.get(rid, "all")
+        group_counts[group_name] += 1
+        group_frames[group_name] += frames_map.get(rid, 0)
+        group_weights[group_name] += repo_weights_map.get(rid, 0.0)
+
+    if ordered_group_names:
+        group_order = [g for g in ordered_group_names if group_counts.get(g, 0) > 0]
+    else:
+        group_order = sorted(group_counts)
+
+    group_summary = ", ".join(
+        f"{group}: {group_counts[group]} repos/{group_frames[group]:,} frames"
+        + (f"/w={group_weights[group]:.4f}" if repo_weights_map else "")
+        for group in group_order
+    )
+    if not group_summary:
+        group_summary = "no repos"
+
+    total_frames = sum(frames_map.get(rid, 0) for rid in repo_ids)
+    total_episodes = sum(episodes_map.get(rid, 0) for rid in repo_ids)
+    total_weight = sum(repo_weights_map.get(rid, 0.0) for rid in repo_ids)
+
+    preview_limit = max(_env_int("LEROBOT_REPO_ASSIGNMENT_LOG_LIMIT", 4), 0)
+    sorted_repo_ids = sorted(
+        repo_ids,
+        key=lambda rid: (-repo_weights_map.get(rid, 0.0), -frames_map.get(rid, 0), rid),
+    )
+    preview_items = [format_repo(rid) for rid in sorted_repo_ids[:preview_limit]]
+    if len(sorted_repo_ids) > preview_limit:
+        preview_items.append(f"+{len(sorted_repo_ids) - preview_limit} more")
+    preview = "; ".join(preview_items) if preview_items else "none"
+
+    return (
+        f"[rank={rank:02d}/{world_size:02d}] {label} assignment: repos={len(repo_ids)}, "
+        f"frames={total_frames:,}, episodes={total_episodes:,}"
+        + (f", weight_sum={total_weight:.6f}" if repo_weights_map else "")
+        + f" | groups: {group_summary}\n"
+        f"[rank={rank:02d}/{world_size:02d}] top repos: {preview}"
+    )
+
+
+def log_repo_assignment(
+    *,
+    rank: int,
+    world_size: int,
+    repo_ids: list[str],
+    frames_map: dict[str, int] | None,
+    episodes_map: dict[str, int] | None,
+    repo_weights_map: dict[str, float] | None,
+    groups_cfg: DictConfig | None,
+    label: str,
+) -> None:
+    message = _format_repo_assignment_for_log(
+        rank=rank,
+        world_size=world_size,
+        repo_ids=repo_ids,
+        frames_map=frames_map,
+        episodes_map=episodes_map,
+        repo_weights_map=repo_weights_map,
+        groups_cfg=groups_cfg,
+        label=label,
+    )
+    if message:
+        print(message, flush=True)
+
+
 def resolve_delta_timestamps(
     cfg: PreTrainedConfig, ds_meta: LeRobotDatasetMetadata
 ) -> dict[str, list] | None:
@@ -678,19 +817,18 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
                     "[make_dataset] MagicBot_R0 weighted sampling enabled from %s",
                     cfg.dataset.weight_rules_path,
                 )
-                print(
-                    f"[rank={rank:02d}/{world_size:02d}], MagicBot_R0 repo_ids_for_this_rank:\n"
-                    + "\n".join(
-                        f"[rank {rank}] repo_id = {rid}, weight = {repo_weights_map[rid]:.6f}"
-                        for rid in repo_ids
-                    )
-                )
             else:
                 cfg.dataset.dataset_sampling_weights = []
-                print(
-                    f"[rank={rank:02d}/{world_size:02d}], MagicBot_R0 repo_ids_for_this_rank:\n"
-                    + "\n".join(f"[rank {rank}] repo_id = {rid}" for rid in repo_ids)
-                )
+            log_repo_assignment(
+                rank=rank,
+                world_size=world_size,
+                repo_ids=repo_ids,
+                frames_map=frames_map,
+                episodes_map=episodes_map,
+                repo_weights_map=repo_weights_map,
+                groups_cfg=weight_cfg,
+                label="MagicBot_R0",
+            )
 
         stats_cache_path = cfg.dataset.normalization_stats_path
         if stats_cache_path is None and cfg.output_dir is not None:

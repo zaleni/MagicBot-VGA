@@ -383,18 +383,24 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
 
-    # Dataset loading synchronization: main process downloads first to avoid race conditions
-    if is_main_process:
-        logging.info("Creating dataset")
+    parallel_dataset_load = _env_flag("LEROBOT_PARALLEL_DATASET_LOAD", default=False)
+    if parallel_dataset_load:
+        if is_main_process:
+            logging.info("Creating dataset on all processes in parallel")
         dataset, data_stats = make_dataset(cfg)
-    
-    accelerator.wait_for_everyone()
+        accelerator.wait_for_everyone()
+    else:
+        # Main process downloads first to avoid race conditions in shared caches.
+        if is_main_process:
+            logging.info("Creating dataset")
+            dataset, data_stats = make_dataset(cfg)
 
-    # Now all other processes can safely load the dataset
-    if not is_main_process:
-        dataset, data_stats = make_dataset(cfg)
-    
-    accelerator.wait_for_everyone()
+        accelerator.wait_for_everyone()
+
+        if not is_main_process:
+            dataset, data_stats = make_dataset(cfg)
+
+        accelerator.wait_for_everyone()
 
     if accelerator.num_processes>1:
         all_data_stats = gather_object(data_stats, accelerator)
