@@ -1477,6 +1477,7 @@ class CubeV2Model(nn.Module):
         embs = []
         pad_masks = []
         att_masks = []
+        suffix_dtype = self.qwen3_vl_with_expert.act_expert.layers[0].self_attn.q_proj.weight.dtype
 
         state = state.to(dtype=self.state_proj.weight.dtype)
 
@@ -1484,7 +1485,7 @@ class CubeV2Model(nn.Module):
             return self.state_proj(state)
 
         state_emb = self._apply_checkpoint(state_proj_func, state)
-        embs.append(state_emb[:, None, :])
+        embs.append(state_emb.to(dtype=suffix_dtype)[:, None, :])
         bsize = state_emb.shape[0]
         device = state_emb.device
 
@@ -1515,13 +1516,15 @@ class CubeV2Model(nn.Module):
         action_time_emb = torch.cat([action_emb, time_emb], dim=2)
 
         def mlp_func(action_time_emb):
-            x = self.action_time_mlp_in(action_time_emb.to(dtype=self.action_time_mlp_in.weight.dtype))
+            x = self.action_time_mlp_in(
+                action_time_emb.to(dtype=self.action_time_mlp_in.weight.dtype)
+            )
             x = F.silu(x)
             return self.action_time_mlp_out(x.to(dtype=self.action_time_mlp_out.weight.dtype))
 
         action_time_emb = self._apply_checkpoint(mlp_func, action_time_emb)
 
-        embs.append(action_time_emb)
+        embs.append(action_time_emb.to(dtype=suffix_dtype))
         bsize, action_time_dim = action_time_emb.shape[:2]
         action_time_mask = torch.ones(bsize, action_time_dim, dtype=torch.bool, device=timestep.device)
         pad_masks.append(action_time_mask)
