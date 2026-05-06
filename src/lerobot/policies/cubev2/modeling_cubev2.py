@@ -1119,6 +1119,99 @@ class CubeV2Model(nn.Module):
 
         return att_2d_masks
 
+    def uses_causal_attention(self) -> bool:
+        return getattr(self.config, "attention_mask_mode", "default") == "causal"
+
+    @staticmethod
+    def _allow_attention_block(mask: torch.Tensor, query_slice: slice, key_slice: slice) -> None:
+        if query_slice.start == query_slice.stop or key_slice.start == key_slice.stop:
+            return
+        mask[:, query_slice, key_slice] = True
+
+    def apply_causal_attention(
+        self,
+        att_2d_masks: torch.Tensor,
+        pad_masks: torch.Tensor,
+        prefix_len: int,
+    ) -> torch.Tensor:
+        """Apply the optional causal ablation mask.
+
+        The default CubeV2 path never calls this method. In causal mode,
+        Middle visual tokens, 3D scene/query tokens, and action tokens follow
+        the block relation used for the ablation:
+
+            visual       -> current, visual, scene
+            scene        -> current, scene, action tokens
+            action tokens -> current, scene, state, action tokens
+
+        The state token keeps the default suffix behavior: it is a separate
+        token before action tokens, so action tokens can read it, while middle
+        visual/scene rows do not receive state as an extra condition. In this
+        ablation, state/action suffix rows also do not read middle visual tokens.
+        """
+        if self.middle_query_token_count <= 0:
+            raise ValueError("causal attention requires enabled 3D query tokens.")
+
+        total_len = pad_masks.shape[1]
+        visual_start = prefix_len
+        visual_end = visual_start + self.middle_visual_token_count
+        scene_start = visual_end
+        scene_end = scene_start + self.middle_query_token_count
+        suffix_start = scene_end
+        state_start = suffix_start
+        state_end = state_start + 1
+        action_start = state_end
+        action_end = total_len
+
+        if action_start > total_len:
+            raise ValueError(
+                "causal attention expected suffix tokens after middle tokens, "
+                f"got total_len={total_len}, action_start={action_start}."
+            )
+
+        prefix = slice(0, prefix_len)
+        visual = slice(visual_start, visual_end)
+        scene = slice(scene_start, scene_end)
+        state = slice(state_start, state_end)
+        action = slice(action_start, action_end)
+
+        allowed = torch.zeros_like(att_2d_masks, dtype=torch.bool)
+
+        # Prefix/current-condition rows.
+        self._allow_attention_block(allowed, prefix, prefix)
+
+        # Subgoal / middle 2D image rows.
+        for key_block in (prefix, visual, scene):
+            self._allow_attention_block(allowed, visual, key_block)
+
+        # Goal 3D scene rows.
+        for key_block in (prefix, scene, action):
+            self._allow_attention_block(allowed, scene, key_block)
+
+        # State row follows the default suffix position, but does not read
+        # middle visual tokens in the causal ablation.
+        for key_block in (prefix, scene, state):
+            self._allow_attention_block(allowed, state, key_block)
+
+        # Action token rows follow the target mask: current, scene, state, and
+        # action tokens, but not middle visual tokens.
+        for key_block in (prefix, scene, state, action):
+            self._allow_attention_block(allowed, action, key_block)
+
+        pad_2d_masks = pad_masks[:, None, :].to(torch.bool) & pad_masks[:, :, None].to(torch.bool)
+        return allowed & pad_2d_masks
+
+    def build_training_attention_mask(
+        self,
+        pad_masks: torch.Tensor,
+        att_masks: torch.Tensor,
+        prefix_len: int,
+    ) -> torch.Tensor:
+        att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
+        if self.uses_causal_attention():
+            return self.apply_causal_attention(att_2d_masks, pad_masks, prefix_len=prefix_len)
+        return self.apply_view_aware_query_attention(att_2d_masks, prefix_len=prefix_len)
+
     def split_middle_tokens(self, middle_tokens: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor | None]:
         visual_tokens = middle_tokens[:, : self.middle_visual_token_count]
         if self.middle_query_token_count == 0:
@@ -1420,8 +1513,11 @@ class CubeV2Model(nn.Module):
 
         pad_masks = torch.cat([prefix_pad_masks, middle_pad_masks, suffix_pad_masks], dim=1)
         att_masks = torch.cat([prefix_att_masks, middle_att_masks, suffix_att_masks], dim=1)
-        att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
-        att_2d_masks = self.apply_view_aware_query_attention(att_2d_masks, prefix_len=prefix_pad_masks.shape[1])
+        att_2d_masks = self.build_training_attention_mask(
+            pad_masks,
+            att_masks,
+            prefix_len=prefix_pad_masks.shape[1],
+        )
         position_ids, rope_deltas = self.get_position_ids(lang_tokens, image_grid_thw, pad_masks)
         del rope_deltas
 
@@ -1602,8 +1698,11 @@ class CubeV2Model(nn.Module):
         pad_masks = torch.cat([prefix_pad_masks, middle_pad_masks, suffix_pad_masks], dim=1)
         att_masks = torch.cat([prefix_att_masks, middle_att_masks, suffix_att_masks], dim=1)
 
-        att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
-        att_2d_masks = self.apply_view_aware_query_attention(att_2d_masks, prefix_len=prefix_pad_masks.shape[1])
+        att_2d_masks = self.build_training_attention_mask(
+            pad_masks,
+            att_masks,
+            prefix_len=prefix_pad_masks.shape[1],
+        )
         position_ids, rope_deltas = self.get_position_ids(lang_tokens, image_grid_thw, pad_masks)
 
         att_2d_masks_4d = self._prepare_attention_masks_4d(att_2d_masks)
@@ -1628,15 +1727,18 @@ class CubeV2Model(nn.Module):
             forward_func, prefix_embs, middle_embs, suffix_embs, att_2d_masks_4d, position_ids
         )
         middle_out, suffix_out, *middle_layer_outputs = forward_outputs
-        middle_visual_out, _ = self.split_middle_tokens(middle_out)
 
-        def cosmos_out_func(middle_out):
-            return self.decode_cosmos(middle_out)
-        
-        pred_cosmos_features = self._apply_checkpoint(cosmos_out_func, middle_visual_out.to(dtype=torch.float32))
+        if float(self.config.lambda_gen) > 0.0:
+            middle_visual_out, _ = self.split_middle_tokens(middle_out)
 
-        future_embs = self.get_cosmos_features(images[:, :, 2])
-        loss_gen = F.mse_loss(pred_cosmos_features[img_masks], future_embs.to(dtype=torch.float32)[img_masks])
+            def cosmos_out_func(middle_out):
+                return self.decode_cosmos(middle_out)
+
+            pred_cosmos_features = self._apply_checkpoint(cosmos_out_func, middle_visual_out.to(dtype=torch.float32))
+            future_embs = self.get_cosmos_features(images[:, :, 2])
+            loss_gen = F.mse_loss(pred_cosmos_features[img_masks], future_embs.to(dtype=torch.float32)[img_masks])
+        else:
+            loss_gen = middle_out.new_zeros((), dtype=torch.float32)
         loss_3d, loss_3d_logs = self.compute_3d_query_loss(tuple(middle_layer_outputs), images[:, :, 2], img_masks)
 
         suffix_out = suffix_out[:, -self.config.chunk_size :]
@@ -1676,6 +1778,20 @@ class CubeV2Model(nn.Module):
                 self.config.max_action_dim,
             )  # Use config max_action_dim for internal processing
             noise = self.sample_noise(actions_shape, device)
+
+        if self.uses_causal_attention():
+            return self.sample_actions_causal(
+                images,
+                img_masks,
+                pixel_values,
+                image_grid_thw,
+                lang_tokens,
+                lang_masks,
+                state,
+                noise=noise,
+                num_steps=num_steps,
+                decode_image=decode_image,
+            )
 
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
             pixel_values, image_grid_thw, lang_tokens, lang_masks
@@ -1763,6 +1879,120 @@ class CubeV2Model(nn.Module):
 
             return x_t, recon_images
 
+    @torch.no_grad()
+    def sample_actions_causal(
+        self,
+        images,
+        img_masks,
+        pixel_values,
+        image_grid_thw,
+        lang_tokens,
+        lang_masks,
+        state,
+        noise,
+        num_steps,
+        decode_image=False,
+    ) -> tuple[Tensor, Tensor | None]:
+        """Exact inference path for the causal attention ablation.
+
+        The 3D scene/query block is allowed to read the current denoising action
+        block, so middle tokens cannot be cached independently of suffix tokens.
+        This path recomputes the full prefix/middle/suffix transformer pass at each
+        denoising step. The default path remains cache based.
+        """
+        bsize = state.shape[0]
+        device = state.device
+        dtype = state.dtype
+
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
+            pixel_values, image_grid_thw, lang_tokens, lang_masks
+        )
+        middle_embs, middle_pad_masks, middle_att_masks = self.embed_middle(
+            images[:, :, :2], img_masks,
+        )
+
+        zero_actions = torch.zeros(
+            bsize,
+            self.config.chunk_size,
+            self.config.max_action_dim,
+            device=device,
+            dtype=dtype,
+        )
+        zero_time = torch.zeros(bsize, device=device, dtype=torch.float32)
+        _, suffix_pad_masks, suffix_att_masks = self.embed_suffix(state, zero_actions, zero_time)
+
+        if (
+            self.qwen3_vl_with_expert.und_expert.language_model.layers[0].self_attn.q_proj.weight.dtype
+            == torch.bfloat16
+        ):
+            middle_embs = middle_embs.to(dtype=torch.bfloat16)
+            prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
+
+        pad_masks = torch.cat([prefix_pad_masks, middle_pad_masks, suffix_pad_masks], dim=1)
+        att_masks = torch.cat([prefix_att_masks, middle_att_masks, suffix_att_masks], dim=1)
+        att_2d_masks = self.build_training_attention_mask(
+            pad_masks,
+            att_masks,
+            prefix_len=prefix_pad_masks.shape[1],
+        )
+        att_2d_masks_4d = self._prepare_attention_masks_4d(att_2d_masks)
+        position_ids, rope_deltas = self.get_position_ids(lang_tokens, image_grid_thw, pad_masks)
+        del rope_deltas
+
+        dt = -1.0 / num_steps
+        dt = torch.tensor(dt, dtype=torch.float32, device=device)
+
+        x_t = noise
+        time = torch.tensor(1.0, dtype=torch.float32, device=device)
+        last_middle_out = None
+        with self._temporary_attention_implementations(
+            und_expert_impl="eager",
+            gen_expert_impl="eager",
+            act_expert_impl="eager",
+        ):
+            while time >= -dt / 2:
+                expanded_time = time.expand(bsize)
+                suffix_embs, _, _ = self.embed_suffix(state, x_t.to(dtype), expanded_time.to(dtype))
+                if (
+                    self.qwen3_vl_with_expert.und_expert.language_model.layers[0].self_attn.q_proj.weight.dtype
+                    == torch.bfloat16
+                ):
+                    suffix_embs = suffix_embs.to(dtype=torch.bfloat16)
+
+                outputs_embeds, _ = self.qwen3_vl_with_expert.forward(
+                    attention_mask=att_2d_masks_4d,
+                    position_ids=position_ids,
+                    past_key_values=None,
+                    inputs_embeds=[prefix_embs, middle_embs, suffix_embs],
+                    use_cache=False,
+                )
+                _, middle_out, suffix_out = outputs_embeds
+                last_middle_out = middle_out
+                suffix_out = suffix_out[:, -self.config.chunk_size :].to(dtype=torch.float32)
+                v_t = self.action_out_proj(suffix_out)
+                x_t = x_t + dt * v_t
+                time += dt
+
+        if decode_image:
+            if last_middle_out is None:
+                raise RuntimeError("causal inference produced no middle tokens to decode.")
+
+            def cosmos_out_func(middle_out):
+                return self.decode_cosmos(middle_out)
+
+            middle_visual_out, _ = self.split_middle_tokens(last_middle_out)
+            decode_dtype = torch.bfloat16 if self.config.dtype == "bfloat16" else torch.float32
+            pred_cosmos_features = self._apply_checkpoint(
+                cosmos_out_func,
+                middle_visual_out.to(dtype=decode_dtype),
+            )
+            pred_cosmos_features = pred_cosmos_features.squeeze(0)
+            recon_images = self.cosmos.decode(pred_cosmos_features.squeeze(0))
+        else:
+            recon_images = None
+
+        return x_t, recon_images
+
     def denoise_step(
         self,
         state,
@@ -1826,6 +2056,7 @@ class CubeV2Policy(PreTrainedPolicy):
         # ---- basic info ----
         lines.append("=" * 60)
         lines.append(f"Policy: {self.__class__.__name__}")
+        lines.append(f"Attention mask mode: {getattr(self.config, 'attention_mask_mode', 'default')}")
         lines.append("")
 
         # ---- parameter counts ----

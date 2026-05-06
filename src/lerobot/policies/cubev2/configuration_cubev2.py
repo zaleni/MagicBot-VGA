@@ -30,6 +30,9 @@ from lerobot.transforms.core import *
 from lerobot.utils.constants import OBS_IMAGES
 
 
+ATTENTION_MASK_MODES = ("default", "causal")
+
+
 @DatasetConfig.register_subclass("cubev2")
 @dataclass
 class CubeV2DatasetConfig(DatasetConfig):
@@ -118,6 +121,8 @@ class CubeV2Config(PreTrainedConfig):
     min_period: float = 4e-3
     max_period: float = 4.0
 
+    attention_mask_mode: str = "default"
+
     image_resolution: tuple[int, int] = (224, 224)
     empty_cameras: int = 0
 
@@ -200,6 +205,11 @@ class CubeV2Config(PreTrainedConfig):
         if self.dtype not in ["bfloat16", "float32"]:
             raise ValueError(f"Invalid dtype: {self.dtype}")
 
+        if self.attention_mask_mode not in ATTENTION_MASK_MODES:
+            raise ValueError(
+                f"attention_mask_mode must be one of {ATTENTION_MASK_MODES}, got {self.attention_mask_mode!r}"
+            )
+
         supported_lora_modules = {"und", "gen", "act"}
         unsupported_lora_modules = set(self.lora_modules) - supported_lora_modules
         if unsupported_lora_modules:
@@ -252,6 +262,8 @@ class CubeV2Config(PreTrainedConfig):
             raise ValueError(
                 "num_3d_query_tokens must be divisible by da3_num_views for view-aware 3D alignment"
             )
+        if self.attention_mask_mode == "causal" and not self.enable_3d_queries:
+            raise ValueError("attention_mask_mode='causal' requires enable_3d_queries=true")
 
         if self.da3_alignment_mode not in {"query_decoder", "upsample"}:
             raise ValueError(

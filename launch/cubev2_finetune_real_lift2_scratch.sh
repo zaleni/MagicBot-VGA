@@ -38,7 +38,10 @@ RESUME="${RESUME:-false}"
 RESUME_RUN_DIR="${RESUME_RUN_DIR:-}"
 RESUME_CONFIG_PATH="${RESUME_CONFIG_PATH:-}"
 RESUME_CHECKPOINT_DIR="${RESUME_CHECKPOINT_DIR:-}"
-POLICY_INIT_PATH="${POLICY_INIT_PATH:-/home/jiangjiahao/data/model/MagicBot-VGA-Base}"
+
+# Empty by default: build CubeV2 from config, load Qwen3-VL, and randomly initialize action/generation experts.
+# Set POLICY_INIT_PATH=/path/to/pretrained_model to initialize from a full CubeV2 checkpoint instead.
+POLICY_INIT_PATH="${POLICY_INIT_PATH:-${PRETRAINED_PATH:-}}"
 QWEN3_VL_PRETRAINED_PATH="${QWEN3_VL_PRETRAINED_PATH:-/home/jiangjiahao/data/model/Qwen3-VL-2B-Instruct}"
 QWEN3_VL_PROCESSOR_PATH="${QWEN3_VL_PROCESSOR_PATH:-${QWEN3_VL_PRETRAINED_PATH}}"
 COSMOS_TOKENIZER_PATH_OR_NAME="${COSMOS_TOKENIZER_PATH_OR_NAME:-/home/jiangjiahao/data/model/Cosmos-Tokenizer-CI8x8}"
@@ -47,29 +50,29 @@ DA3_VARIANT="${DA3_VARIANT:-auto}"
 DA3_ALIGNMENT_MODE="${DA3_ALIGNMENT_MODE:-query_decoder}"
 DA3_CODE_ROOT="${DA3_CODE_ROOT:-}"
 
-DATASET_DIR="${DATASET_DIR:-/home/jiangjiahao/data/zhenji/data100_0420/scene1_joint_96_60hz_v30}"
+DATASET_DIR="${DATASET_DIR:-/home/jiangjiahao/data/zhenji/sweeping_100_filter}"
 DATASET_NAME="${DATASET_NAME:-$(basename "${DATASET_DIR}")}"
 DATASET_REPO_ID="${DATASET_REPO_ID:-${DATASET_DIR}}"
 
-ACTION_TYPE="${ACTION_TYPE:-abs}"
+ACTION_TYPE="${ACTION_TYPE:-delta}"
 CHUNK_SIZE="${CHUNK_SIZE:-50}"
 N_ACTION_STEPS="${N_ACTION_STEPS:-${CHUNK_SIZE}}"
 ENABLE_3D_QUERIES="${ENABLE_3D_QUERIES:-true}"
 NUM_3D_QUERY_TOKENS="${NUM_3D_QUERY_TOKENS:-432}"
-CUBEV2_ATTENTION_MASK_MODE="${CUBEV2_ATTENTION_MASK_MODE:-default}"
+CUBEV2_ATTENTION_MASK_MODE="${CUBEV2_ATTENTION_MASK_MODE:-causal}"
+LAMBDA_GEN="${LAMBDA_GEN:-0.01}"
 LAMBDA_3D="${LAMBDA_3D:-0.01}"
 
 USE_EXTERNAL_STATS="${USE_EXTERNAL_STATS:-true}"
 NORM_STATS_ROOT="${NORM_STATS_ROOT:-/home/jiangjiahao/data/zhenji/norm_stats}"
 DATASET_EXTERNAL_STATS_PATH="${DATASET_EXTERNAL_STATS_PATH:-${NORM_STATS_ROOT}/${ACTION_TYPE}/${DATASET_NAME}/stats.json}"
 
-# Enable an image augmentation preset for real-robot finetuning.
 ENABLE_IMAGE_AUG="${ENABLE_IMAGE_AUG:-false}"
 IMAGE_AUG_PRESET="${IMAGE_AUG_PRESET:-lightly}"
 
 BATCH_SIZE="${BATCH_SIZE:-8}"
 GRADIENT_ACCUMULATION_STEPS="${GRADIENT_ACCUMULATION_STEPS:-2}"
-STEPS="${STEPS:-60000}"
+STEPS="${STEPS:-50000}"
 SAVE_FREQ="${SAVE_FREQ:-10000}"
 LOG_FREQ="${LOG_FREQ:-50}"
 NUM_WORKERS="${NUM_WORKERS:-12}"
@@ -87,7 +90,7 @@ if [[ -n "${RESUME_CHECKPOINT_DIR}" && -z "${RESUME_CONFIG_PATH}" ]]; then
   RESUME_CONFIG_PATH="${RESUME_CHECKPOINT_DIR%/}/pretrained_model/train_config.json"
 fi
 
-BASE_OUTPUT_DIR="outputs_real/${POLICY}"
+BASE_OUTPUT_DIR="${BASE_OUTPUT_DIR:-/home/jiangjiahao/data/ckpt/${POLICY}}"
 JOB_NAME="${JOB_NAME:-}"
 OUTPUT_DIR=""
 
@@ -126,9 +129,8 @@ if [[ "${RESUME}" == "true" ]]; then
   echo "RESUME_OUTPUT_DIR=${OUTPUT_DIR}"
   echo "RESUME_JOB_NAME=${JOB_NAME}"
 else
-  if [[ -z "${POLICY_INIT_PATH}" ]]; then
-    echo "Please set POLICY_INIT_PATH to the CubeV2 bootstrap checkpoint."
-    echo "For backward compatibility, PRETRAINED_PATH is also accepted."
+  if [[ -n "${POLICY_INIT_PATH}" && ! -d "${POLICY_INIT_PATH}" ]]; then
+    echo "POLICY_INIT_PATH does not exist: ${POLICY_INIT_PATH}"
     exit 1
   fi
 
@@ -167,12 +169,20 @@ else
   python -c 'from lerobot.transforms.constants import MASK_MAPPING, FEATURE_MAPPING, IMAGE_MAPPING; import sys; rt=sys.argv[1]; missing=[name for name,m in [("MASK_MAPPING", MASK_MAPPING), ("FEATURE_MAPPING", FEATURE_MAPPING), ("IMAGE_MAPPING", IMAGE_MAPPING)] if rt not in m]; raise SystemExit(0 if not missing else "robot_type=" + rt + " missing in " + ", ".join(missing))' \
     "${robot_type}"
 
+  INIT_TAG="scratch"
+  if [[ -n "${POLICY_INIT_PATH}" ]]; then
+    INIT_TAG="pretrained"
+  fi
+
   if [[ -z "${JOB_NAME}" ]]; then
-    JOB_NAME="${POLICY}-real_lift2-${ACTION_TYPE}-chunk${CHUNK_SIZE}-finetune-$(date +'%Y_%m_%d_%H_%M_%S')"
+    JOB_NAME="${POLICY}-real_lift2-sweep-${ACTION_TYPE}-chunk${CHUNK_SIZE}-${INIT_TAG}-${CUBEV2_ATTENTION_MASK_MODE}-gen${LAMBDA_GEN}-3d${LAMBDA_3D}-finetune-$(date +'%Y_%m_%d_%H_%M_%S')"
   fi
   OUTPUT_DIR="${BASE_OUTPUT_DIR}/${JOB_NAME}"
 
   echo "RESUME=false"
+  echo "INIT_TAG=${INIT_TAG}"
+  echo "POLICY_INIT_PATH=${POLICY_INIT_PATH:-<scratch>}"
+  echo "QWEN3_VL_PRETRAINED_PATH=${QWEN3_VL_PRETRAINED_PATH}"
   echo "DATASET_DIR=${DATASET_DIR}"
   echo "DATASET_NAME=${DATASET_NAME}"
   echo "DATASET_REPO_ID=${DATASET_REPO_ID}"
@@ -181,6 +191,8 @@ else
   echo "CHUNK_SIZE=${CHUNK_SIZE}"
   echo "N_ACTION_STEPS=${N_ACTION_STEPS}"
   echo "CUBEV2_ATTENTION_MASK_MODE=${CUBEV2_ATTENTION_MASK_MODE}"
+  echo "LAMBDA_GEN=${LAMBDA_GEN}"
+  echo "LAMBDA_3D=${LAMBDA_3D}"
   echo "BATCH_SIZE(per_device)=${BATCH_SIZE}"
   echo "GRADIENT_ACCUMULATION_STEPS=${GRADIENT_ACCUMULATION_STEPS}"
   echo "USE_EXTERNAL_STATS=${USE_EXTERNAL_STATS}"
@@ -215,7 +227,6 @@ else
 
         --policy.type="${POLICY}"
         --policy.repo_id="lerobot_lab/${POLICY}"
-        --policy.pretrained_path="${POLICY_INIT_PATH}"
         --policy.qwen3_vl_pretrained_path="${QWEN3_VL_PRETRAINED_PATH}"
         --policy.cosmos_tokenizer_path_or_name="${COSMOS_TOKENIZER_PATH_OR_NAME}"
         --policy.push_to_hub=false
@@ -235,6 +246,7 @@ else
         --policy.attention_mask_mode="${CUBEV2_ATTENTION_MASK_MODE}"
         --policy.enable_3d_queries="${ENABLE_3D_QUERIES}"
         --policy.num_3d_query_tokens="${NUM_3D_QUERY_TOKENS}"
+        --policy.lambda_gen="${LAMBDA_GEN}"
         --policy.lambda_3d="${LAMBDA_3D}"
         --policy.da3_model_path_or_name="${DA3_MODEL_PATH_OR_NAME}"
         --policy.da3_variant="${DA3_VARIANT}"
@@ -259,6 +271,10 @@ else
         --wandb.mode="${WANDB_MODE}"
     )
 
+    if [[ -n "${POLICY_INIT_PATH}" ]]; then
+        ARGS+=(--policy.pretrained_path="${POLICY_INIT_PATH}")
+    fi
+
     if [[ -n "${DA3_CODE_ROOT}" ]]; then
         ARGS+=(--policy.da3_code_root="${DA3_CODE_ROOT}")
     fi
@@ -266,7 +282,6 @@ else
     if [[ "${USE_EXTERNAL_STATS}" == "true" ]]; then
         ARGS+=(--dataset.external_stats_path="${DATASET_EXTERNAL_STATS_PATH}")
     fi
-
 fi
 
 if [[ "${ENABLE_IMAGE_AUG}" == "true" ]]; then

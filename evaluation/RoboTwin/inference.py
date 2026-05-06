@@ -149,7 +149,11 @@ def resolve_policy_components(config: PreTrainedConfig):
 
 def apply_runtime_config_overrides(config: PreTrainedConfig, args: "InferenceArgs") -> None:
     if args.policy_type is not None:
-        config.type = args.policy_type
+        if config.type != args.policy_type:
+            raise ValueError(
+                f"Checkpoint policy type is {config.type!r}, but --args.policy_type={args.policy_type!r}. "
+                "Use a matching checkpoint or leave --args.policy_type unset."
+            )
 
     if args.qwen3_vl_pretrained_path is not None and hasattr(config, "qwen3_vl_pretrained_path"):
         config.qwen3_vl_pretrained_path = args.qwen3_vl_pretrained_path
@@ -534,8 +538,10 @@ def build_policy_and_transforms(args: "InferenceArgs", dtype: torch.dtype):
 
     if config.type == "MagicBot_R0":
         train_config = load_train_config_or_none(ckpt_dir)
-        if train_config is not None and getattr(train_config, "dataset", None) is not None:
-            logging.info("Loaded MagicBot_R0 train_config dataset type: %s", train_config.dataset.type)
+        dataset_config = None if train_config is None else getattr(train_config, "dataset", None)
+        if dataset_config is not None:
+            dataset_name = getattr(dataset_config, "type", dataset_config.__class__.__name__)
+            logging.info("Loaded MagicBot_R0 train_config dataset: %s", dataset_name)
         if not getattr(policy, "_action_denorm_specs", None):
             logging.warning(
                 "MagicBot_R0 action denormalization stats were not loaded. "
