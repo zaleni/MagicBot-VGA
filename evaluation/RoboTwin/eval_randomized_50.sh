@@ -73,7 +73,7 @@ SEED="${SEED:-42}"
 STATS_KEY="${STATS_KEY:-aloha}"
 DTYPE="${DTYPE:-bfloat16}"
 IMAGE_HISTORY_INTERVAL="${IMAGE_HISTORY_INTERVAL:-15}"
-INFER_HORIZON="${INFER_HORIZON:-32}"
+INFER_HORIZON="${INFER_HORIZON:-24}"
 ACTION_HORIZON_SIZE="${ACTION_HORIZON_SIZE:-50}"
 INSTRUCTION_TYPE="${INSTRUCTION_TYPE:-unseen}"
 LOG_LEVEL="${LOG_LEVEL:-WARNING}"
@@ -99,10 +99,10 @@ if [[ -z "${PRETRAINED_CKPT}" ]]; then
     exit 1
 fi
 
-CKPT_TAG="cubev2-3d-delta-multidata_pretrained300k-finetune-200k-s42h32"
+CKPT_TAG="cubev2-3d-delta-multidata_pretrained300k-finetune-200k-s42h24"
 DEFAULT_RUN_NAME="${CKPT_TAG}-robotwin-$(date +%Y_%m_%d_%H_%M_%S)"
-# RUN_NAME="${DEFAULT_RUN_NAME}"
-RUN_NAME="cubev2-3d-delta-multidata_pretrained300k-finetune-200k-s42h32-robotwin-2026_04_16_09_56_34"
+RUN_NAME="${DEFAULT_RUN_NAME}"
+# RUN_NAME="cubev2-3d-delta-multidata_pretrained300k-finetune-200k-s42h32-robotwin-2026_04_16_09_56_34"
 RUN_OUTPUT_PATH="${BASE_OUTPUT_PATH}/${RUN_NAME}"
 
 if [[ -e "${PRETRAINED_CKPT}" && ! -d "${PRETRAINED_CKPT}" ]]; then
