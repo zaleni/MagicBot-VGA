@@ -54,6 +54,23 @@ STANDARD_CONCAT_LAYOUT_BY_NUM_CAMERAS = {
 }
 
 
+def _env_int(name: str, default: int) -> int:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+def _short_path_for_log(path: str | Path, max_parts: int = 4) -> str:
+    parts = Path(path).parts
+    if not parts:
+        return str(path)
+    return "/".join(parts[-max_parts:])
+
+
 def resolve_magicbot_r0_concat_layout(num_cameras: int, concat_multi_camera: str) -> str:
     if num_cameras <= 0:
         raise ValueError(f"num_cameras must be positive, got {num_cameras}.")
@@ -419,6 +436,7 @@ class MagicBotR0BaseLerobotDatasetV3(Dataset):
         self.action_mode = str(action_mode)
         self.image_resize_shape = image_resize_shape
         self.post_image_transforms = post_image_transforms
+        self._multi_embodiment_stats_cache: dict[tuple[str, str], tuple[Path, dict[str, Any]]] = {}
 
         metas = [LeRobotDatasetMetadata(repo_id=str(Path(ds_dir)), root=Path(ds_dir)) for ds_dir in dataset_dirs]
         fps_list = [meta.fps for meta in metas]
@@ -511,6 +529,7 @@ class MagicBotR0BaseLerobotDatasetV3(Dataset):
 
     def _build_multi_embodiment_adapters(self, metas: list[LeRobotDatasetMetadata]) -> list[dict[str, Any]]:
         adapters = []
+        log_records: list[dict[str, Any]] = []
         for dataset_meta in metas:
             robot_type = dataset_meta.robot_type
             resolved_robot_type = infer_embodiment_variant(robot_type, dataset_meta.features)
@@ -537,7 +556,7 @@ class MagicBotR0BaseLerobotDatasetV3(Dataset):
                     f"(robot_type={robot_type}, resolved={resolved_robot_type})."
                 )
 
-            stats_payload = self._load_multi_embodiment_stats(robot_type, resolved_robot_type)
+            stats_path, stats_payload = self._load_multi_embodiment_stats(robot_type, resolved_robot_type)
             adapters.append(
                 {
                     "robot_type": robot_type,
@@ -549,21 +568,87 @@ class MagicBotR0BaseLerobotDatasetV3(Dataset):
                     "canonical_to_source": canonical_to_source,
                     "delta_mask": torch.as_tensor(get_mask_mapping(robot_type, dataset_meta.features), dtype=torch.bool),
                     "stats": stats_payload,
+                    "stats_path": stats_path,
                 }
             )
-            logger.info(
-                "MagicBot_R0 pretrain adapter: root=%s robot_type=%s resolved=%s state_keys=%s action_keys=%s has_action=%s images=%s",
-                dataset_meta.root,
-                robot_type,
-                resolved_robot_type,
-                state_keys,
-                action_keys,
-                has_action,
-                canonical_to_source,
+            log_records.append(
+                {
+                    "root": dataset_meta.root,
+                    "robot_type": robot_type,
+                    "resolved_robot_type": resolved_robot_type,
+                    "state_keys": tuple(state_keys),
+                    "action_keys": tuple(action_keys),
+                    "has_action": has_action,
+                    "canonical_to_source": tuple(sorted(canonical_to_source.items())),
+                    "stats_path": stats_path,
+                }
             )
+        self._log_multi_embodiment_adapter_summary(log_records)
         return adapters
 
-    def _load_multi_embodiment_stats(self, robot_type: str, resolved_robot_type: str) -> dict[str, Any]:
+    def _log_multi_embodiment_adapter_summary(self, records: list[dict[str, Any]]) -> None:
+        mode = os.environ.get("LEROBOT_MAGICBOT_R0_ADAPTER_LOG_MODE", "summary").strip().lower()
+        if mode in {"0", "false", "off", "none", "quiet"}:
+            return
+
+        preview_limit = max(_env_int("LEROBOT_MAGICBOT_R0_ADAPTER_LOG_LIMIT", 3), 0)
+
+        if mode in {"full", "verbose", "all"}:
+            for record in records:
+                logger.info(
+                    "MagicBot_R0 pretrain adapter: root=%s robot_type=%s resolved=%s state_keys=%s action_keys=%s has_action=%s images=%s stats=%s",
+                    record["root"],
+                    record["robot_type"],
+                    record["resolved_robot_type"],
+                    list(record["state_keys"]),
+                    list(record["action_keys"]),
+                    record["has_action"],
+                    dict(record["canonical_to_source"]),
+                    record["stats_path"],
+                )
+            return
+
+        groups: dict[tuple[Any, ...], list[dict[str, Any]]] = defaultdict(list)
+        for record in records:
+            key = (
+                record["robot_type"],
+                record["resolved_robot_type"],
+                record["state_keys"],
+                record["action_keys"],
+                record["has_action"],
+                record["canonical_to_source"],
+                record["stats_path"],
+            )
+            groups[key].append(record)
+
+        logger.info(
+            "MagicBot_R0 pretrain adapter summary: repos=%d groups=%d stats_files=%d",
+            len(records),
+            len(groups),
+            len({record["stats_path"] for record in records}),
+        )
+        for key, group_records in sorted(groups.items(), key=lambda item: (-len(item[1]), str(item[0]))):
+            robot_type, resolved_robot_type, state_keys, action_keys, has_action, canonical_to_source, stats_path = key
+            examples = [_short_path_for_log(record["root"]) for record in group_records[:preview_limit]]
+            if len(group_records) > preview_limit:
+                examples.append(f"+{len(group_records) - preview_limit} more")
+            logger.info(
+                "MagicBot_R0 adapter group: count=%d robot_type=%s resolved=%s state_keys=%s action_keys=%s has_action=%s images=%s stats=%s examples=%s",
+                len(group_records),
+                robot_type,
+                resolved_robot_type,
+                list(state_keys),
+                list(action_keys),
+                has_action,
+                dict(canonical_to_source),
+                stats_path,
+                examples,
+            )
+
+    def _load_multi_embodiment_stats(self, robot_type: str, resolved_robot_type: str) -> tuple[Path, dict[str, Any]]:
+        cache_key = (str(robot_type), str(resolved_robot_type))
+        if cache_key in self._multi_embodiment_stats_cache:
+            return self._multi_embodiment_stats_cache[cache_key]
         if not self.external_stats_root:
             raise ValueError(
                 "pretrain_multi_embodiment requires dataset.external_stats_root so each robot_type can use "
@@ -576,8 +661,9 @@ class MagicBotR0BaseLerobotDatasetV3(Dataset):
         ]
         for path in candidates:
             if path.is_file():
-                logger.info("Using MagicBot_R0 pretrain stats for %s from %s", resolved_robot_type, path)
-                return load_dataset_stats_from_json(str(path))
+                payload = load_dataset_stats_from_json(str(path))
+                self._multi_embodiment_stats_cache[cache_key] = (path, payload)
+                return path, payload
         raise FileNotFoundError(
             "Missing external stats for MagicBot_R0 pretrain. Tried: "
             + ", ".join(str(path) for path in candidates)

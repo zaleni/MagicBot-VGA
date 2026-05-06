@@ -1,4 +1,3 @@
-from collections import defaultdict
 from collections.abc import Mapping
 
 from lerobot.utils.constants import OBS_STATE, ACTION, OBS_IMAGES, OBS_IMAGE
@@ -37,11 +36,7 @@ LIBERO_FRANKA_MASK = make_bool_mask(7, -1)
 MASK_MAPPING["libero_franka"] = LIBERO_FRANKA_MASK
 
 
-FEATURE_MAPPING = defaultdict(
-    lambda : {
-        OBS_STATE: ["observation.state"],
-        ACTION: ["action"],
-    }, 
+FEATURE_MAPPING = dict(
     a2d={
         OBS_STATE: [
             "observation.states.joint.position", 
@@ -260,10 +255,7 @@ FEATURE_MAPPING["real_lift2"] = {
 }
 
 
-IMAGE_MAPPING = defaultdict(
-    lambda : {
-        "observation.image": f"{OBS_IMAGES}.image0", 
-    }, 
+IMAGE_MAPPING = dict(
     arx_lift2={
         "images.rgb.head": f"{OBS_IMAGES}.image0", 
         "images.rgb.hand_left": f"{OBS_IMAGES}.image1", 
@@ -390,13 +382,31 @@ def infer_embodiment_variant(robot_type, feature_keys=None):
     return resolved_robot_type
 
 
+def _get_required_mapping(mapping_name, mapping, robot_type, feature_keys=None):
+    resolved_robot_type = infer_embodiment_variant(robot_type, feature_keys)
+    if resolved_robot_type in mapping:
+        return mapping[resolved_robot_type]
+
+    available = ", ".join(sorted(str(key) for key in mapping.keys()))
+    keys = _feature_key_set(feature_keys)
+    feature_hint = ""
+    if keys is not None:
+        feature_hint = f" feature_keys={sorted(keys)}"
+    raise KeyError(
+        f"Missing {mapping_name} for robot_type={robot_type!r} "
+        f"(resolved={resolved_robot_type!r}). Add an explicit mapping in "
+        f"src/lerobot/transforms/constants.py instead of relying on a default."
+        f"{feature_hint} Available robot_types: {available}"
+    )
+
+
 def get_mask_mapping(robot_type, feature_keys=None):
-    return MASK_MAPPING[infer_embodiment_variant(robot_type, feature_keys)]
+    return _get_required_mapping("MASK_MAPPING", MASK_MAPPING, robot_type, feature_keys)
 
 
 def get_feature_mapping(robot_type, feature_keys=None):
-    return FEATURE_MAPPING[infer_embodiment_variant(robot_type, feature_keys)]
+    return _get_required_mapping("FEATURE_MAPPING", FEATURE_MAPPING, robot_type, feature_keys)
 
 
 def get_image_mapping(robot_type, feature_keys=None):
-    return IMAGE_MAPPING[infer_embodiment_variant(robot_type, feature_keys)]
+    return _get_required_mapping("IMAGE_MAPPING", IMAGE_MAPPING, robot_type, feature_keys)

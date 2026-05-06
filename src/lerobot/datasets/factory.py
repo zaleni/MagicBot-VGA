@@ -238,6 +238,24 @@ def group_repo_ids_by_rules(
             group_to_repos["__default__"].append(rid)
 
     if "__default__" in group_to_repos:
+        default_repos = group_to_repos["__default__"]
+        preview_limit = _env_int("LEROBOT_WEIGHT_RULES_DEFAULT_GROUP_LIMIT", 20)
+        preview = "\n".join(f"  {rid}" for rid in default_repos[:max(preview_limit, 0)])
+        if len(default_repos) > max(preview_limit, 0):
+            preview += f"\n  ... +{len(default_repos) - max(preview_limit, 0)} more"
+        message = (
+            f"{len(default_repos)} repo(s) did not match any explicit weight_rules group and fell into "
+            f"`default`. This should be reviewed instead of silently using default sampling config."
+        )
+        if preview:
+            message = f"{message}\nUnmatched repo examples:\n{preview}"
+
+        config_default_mode = str(getattr(getattr(groups_cfg, "default", None), "on_match", "warn"))
+        mode = os.environ.get("LEROBOT_WEIGHT_RULES_DEFAULT_GROUP_MODE", config_default_mode).strip().lower()
+        if mode in {"error", "raise", "strict", "fail"}:
+            raise ValueError(message)
+        if mode not in {"off", "quiet", "none", "0", "false"}:
+            logging.warning(message)
         ordered_group_names.append("__default__")
 
     return repo_to_group, group_to_repos, ordered_group_names

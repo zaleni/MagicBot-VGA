@@ -32,6 +32,9 @@ groups:
     gamma: 1.0
 
 default:
+  # This is a fail-fast sentinel, not an intended sampling bucket.
+  # Any repo that reaches this block should be added to an explicit group above.
+  on_match: error
   total_weight: 0.1
   inside: frames_pow
   gamma: 1.0
