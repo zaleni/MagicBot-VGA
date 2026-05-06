@@ -1478,8 +1478,7 @@ class CubeV2Model(nn.Module):
         pad_masks = []
         att_masks = []
 
-        if self.state_proj.weight.dtype == torch.float32:
-            state = state.to(torch.float32)
+        state = state.to(dtype=self.state_proj.weight.dtype)
 
         def state_proj_func(state):
             return self.state_proj(state)
@@ -1507,15 +1506,18 @@ class CubeV2Model(nn.Module):
         def action_proj_func(noisy_actions):
             return self.action_in_proj(noisy_actions)
 
-        action_emb = self._apply_checkpoint(action_proj_func, noisy_actions)
+        action_emb = self._apply_checkpoint(
+            action_proj_func,
+            noisy_actions.to(dtype=self.action_in_proj.weight.dtype),
+        )
 
-        time_emb = time_emb[:, None, :].expand_as(action_emb)
+        time_emb = time_emb.to(dtype=action_emb.dtype)[:, None, :].expand_as(action_emb)
         action_time_emb = torch.cat([action_emb, time_emb], dim=2)
 
         def mlp_func(action_time_emb):
-            x = self.action_time_mlp_in(action_time_emb)
+            x = self.action_time_mlp_in(action_time_emb.to(dtype=self.action_time_mlp_in.weight.dtype))
             x = F.silu(x)
-            return self.action_time_mlp_out(x)
+            return self.action_time_mlp_out(x.to(dtype=self.action_time_mlp_out.weight.dtype))
 
         action_time_emb = self._apply_checkpoint(mlp_func, action_time_emb)
 
