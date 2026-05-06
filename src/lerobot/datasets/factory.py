@@ -42,7 +42,7 @@ from lerobot.datasets.transformed_dataset import (
 )
 from lerobot.policies.fastwam.configuration_fastwam import FastWAMDatasetConfig
 from lerobot.policies.MagicBot_R0.configuration_magicbot_r0 import MagicBotR0DatasetConfig
-from lerobot.transforms.constants import get_feature_mapping, get_image_mapping
+from lerobot.transforms.constants import get_feature_mapping, get_image_mapping, infer_embodiment_variant
 from lerobot.utils.constants import ACTION, OBS_PREFIX, REWARD, OBS_STATE
 from lerobot.utils.constants import HF_LEROBOT_HOME
 
@@ -671,31 +671,40 @@ def _build_single_dataset(
                 )
 
     robot_type = base_ds.meta.robot_type
+    resolved_robot_type = infer_embodiment_variant(robot_type, base_ds.meta.features)
 
     # Optional: load aggregated external stats
     if cfg.dataset.use_external_stats:
+        stat_candidates: list[Path] = []
         if cfg.dataset.external_stats_path is not None:
-            stat_path = Path(cfg.dataset.external_stats_path)
+            stat_candidates.append(Path(cfg.dataset.external_stats_path))
         elif getattr(cfg.dataset, "external_stats_root", None) is not None:
             action_mode = cfg.dataset.action_mode
-            stat_path = Path(cfg.dataset.external_stats_root) / robot_type / action_mode / "stats.json"
+            stat_root = Path(cfg.dataset.external_stats_root)
+            stat_candidates.append(stat_root / resolved_robot_type / action_mode / "stats.json")
+            if resolved_robot_type != robot_type:
+                stat_candidates.append(stat_root / robot_type / action_mode / "stats.json")
         else:
             action_mode = cfg.dataset.action_mode
-            stat_path = HF_LEROBOT_HOME / f"stats/{robot_type}/{action_mode}/stats.json"
+            stat_candidates.append(HF_LEROBOT_HOME / f"stats/{resolved_robot_type}/{action_mode}/stats.json")
+            if resolved_robot_type != robot_type:
+                stat_candidates.append(HF_LEROBOT_HOME / f"stats/{robot_type}/{action_mode}/stats.json")
         # stat_path = HF_LEROBOT_HOME / f"stats/{robot_type}/{action_mode}/{repo_id}/stats.json"
 
+        stat_path = next((path for path in stat_candidates if path.exists()), stat_candidates[0])
         if stat_path.exists():
             ext_stats = cast_stats_to_numpy(load_json(stat_path))
             logging.info(f"Using external stats from {stat_path}")
             base_ds.meta.stats.update(ext_stats)
         else:
+            candidates = "\n".join(f"  - {path}" for path in stat_candidates)
             raise FileNotFoundError(
-                f"use_external_stats=True but no file found at {stat_path}."
+                f"use_external_stats=True but no external stats file was found. Tried:\n{candidates}"
             )
 
     stats_copy = base_ds.meta.stats.copy()
 
-    return transformed_ds, stats_copy, robot_type
+    return transformed_ds, stats_copy, resolved_robot_type
 
 
 def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotDataset | MultiLeRobotDataset | MultiStreamingLeRobotDataset:

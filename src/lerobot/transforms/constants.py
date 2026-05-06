@@ -367,6 +367,21 @@ def infer_embodiment_variant(robot_type, feature_keys=None):
     resolved_robot_type = robot_type
     keys = _feature_key_set(feature_keys)
 
+    # RoboTwin and RoboChallenge both commonly use robot_type="aloha", but
+    # their camera keys differ. Resolve the RoboChallenge LeRobot-v3 schema to
+    # its own mapping so the RoboTwin cam_high/cam_*_wrist mapping is left
+    # untouched.
+    if robot_type == "aloha" and keys is not None:
+        robochallenge_aloha_keys = {
+            "observation.state",
+            "action",
+            "observation.images.head",
+            "observation.images.left",
+            "observation.images.right",
+        }
+        if robochallenge_aloha_keys.issubset(keys):
+            resolved_robot_type = "ALOHA"
+
     # LIBERO datasets are tagged as "franka" but use a different flattened
     # feature schema than the other Franka datasets in this codebase.
     if robot_type == "franka" and keys is not None:

@@ -9,7 +9,7 @@ import torch
 import numpy as np
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.transforms.constants import MASK_MAPPING, FEATURE_MAPPING
+from lerobot.transforms.constants import get_feature_mapping, get_mask_mapping, infer_embodiment_variant
 from lerobot.utils.constants import OBS_STATE, ACTION, HF_LEROBOT_HOME
 from lerobot.datasets.utils import write_json
 
@@ -146,9 +146,12 @@ def compute_norm_stats(cfg):
     action_mode = cfg.action_mode
     chunk_size = cfg.chunk_size
     robot_type = dataset.meta.robot_type
+    resolved_robot_type = infer_embodiment_variant(robot_type, dataset.meta.features)
 
-    mask = MASK_MAPPING[robot_type]
-    mapping = FEATURE_MAPPING[robot_type]
+    mask = get_mask_mapping(robot_type, dataset.meta.features)
+    mapping = get_feature_mapping(robot_type, dataset.meta.features)
+    if resolved_robot_type != robot_type:
+        print(f"resolved_robot_type: {resolved_robot_type}")
 
     keys = list(dataset.meta.features.keys())
     [keys.remove(video_key) for video_key in dataset.meta.video_keys]

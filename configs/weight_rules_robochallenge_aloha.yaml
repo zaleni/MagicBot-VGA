@@ -1,0 +1,24 @@
+# RoboChallenge ALOHA task sampling weights.
+#
+# The sampler normalizes weights globally after computing repo-level weights.
+# With the current 10-task ALOHA split:
+#   regular: 4 tasks x 1.0 = total_weight 4.0
+#   extra:   6 tasks x 0.5 = total_weight 3.0
+# `inside: uniform` makes each task within a group receive equal weight, so a
+# single extra task is sampled at half the probability of a single regular task.
+
+groups:
+  - name: robochallenge_aloha_regular
+    match: '(?i)(^|[\\/])(put_the_books_back|stamp_positioning|wipe_the_blackboard|scoop_with_a_small_spoon)([\\/]|$)'
+    total_weight: 4.0
+    inside: uniform
+
+  - name: robochallenge_aloha_extra
+    match: '(?i)(^|[\\/])(wrap_with_a_soft_cloth|paint_jam|pack_the_items|put_the_pencil_case_into_the_schoolbag|pack_the_toothbrush_holder|lint_roller_remove_dirt)([\\/]|$)'
+    total_weight: 4.0
+    inside: uniform
+
+default:
+  total_weight: 0.0
+  inside: uniform
+  on_match: error
