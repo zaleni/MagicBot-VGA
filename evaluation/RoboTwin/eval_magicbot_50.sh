@@ -6,7 +6,7 @@ set -euo pipefail
 ################################# ENV config ##################################
 
 export MASTER_ADDR="${MASTER_ADDR:-127.0.0.1}"
-export MASTER_PORT="${MASTER_PORT:-4550}"
+export MASTER_PORT="${MASTER_PORT:-4560}"
 echo "MASTER_ADDR=${MASTER_ADDR}, MASTER_PORT=${MASTER_PORT}"
 
 export NCCL_P2P_DISABLE="${NCCL_P2P_DISABLE:-1}"
@@ -34,7 +34,7 @@ echo "PROJ_ROOT  = ${PROJ_ROOT}"
 cd "${PROJ_ROOT}"
 export PYTHONPATH="${PROJ_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}"
 
-PRETRAINED_CKPT="${PRETRAINED_CKPT:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/MagicBot-VGA/outputs/MagicBot_R0/MagicBot_R0-magicbot_r0-robotwin-3d-abs-magicbot_r0_backbone-finetune-2026_04_28_19_33_58/checkpoints/080000/pretrained_model}"
+PRETRAINED_CKPT="${PRETRAINED_CKPT:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/MagicBot-VGA/outputs/MagicBot_R0/MagicBot_R0-magicbot_r0-robotwin-3d-abs-magicbot_r0_backbone-finetune-2026_04_28_19_33_58/checkpoints/180000/pretrained_model}"
 if (( $# > 1 )); then
     echo "Usage:"
     echo "  PRETRAINED_CKPT=/path/to/checkpoints/200000/pretrained_model bash evaluation/RoboTwin/${SCRIPT_NAME}"
@@ -84,11 +84,12 @@ START_TASK_IDX="${START_TASK_IDX:-0}"
 TASK_COUNT="${TASK_COUNT:-50}"
 MAX_TASKS=50
 
-GPU_IDS="${GPU_IDS:-0,1}"
-MAX_JOBS_PER_GPU="${MAX_JOBS_PER_GPU:-2}"
+GPU_IDS="${GPU_IDS:-0,1,2,3}"
+MAX_JOBS_PER_GPU="${MAX_JOBS_PER_GPU:-1}"
 POLL_INTERVAL_SECONDS="${POLL_INTERVAL_SECONDS:-35}"
 
 ACTION_MODE="${ACTION_MODE:-abs}"
+BINARIZE_GRIPPER="${BINARIZE_GRIPPER:-false}"
 TEST_NUM="${TEST_NUM:-100}"
 SEED="${SEED:-42}"
 STATS_KEY="${STATS_KEY:-aloha}"
@@ -105,9 +106,9 @@ VIDEO_HEIGHT="${VIDEO_HEIGHT:-384}"
 VIDEO_WIDTH="${VIDEO_WIDTH:-320}"
 CONCAT_MULTI_CAMERA="${CONCAT_MULTI_CAMERA:-robotwin}"
 STANDARDIZE_VIDEO_SIZE_BY_CAMERAS="${STANDARDIZE_VIDEO_SIZE_BY_CAMERAS:-true}"
-export STANDARDIZE_VIDEO_SIZE_BY_CAMERAS
+export STANDARDIZE_VIDEO_SIZE_BY_CAMERAS BINARIZE_GRIPPER
 
-CKPT_TAG="${CKPT_TAG:-magicbot-r0-robotwin-${ACTION_MODE}-s${SEED}h${INFER_HORIZON}}"
+CKPT_TAG="${CKPT_TAG:-magicbot-r0-robotwin-180k-${ACTION_MODE}-s${SEED}h${INFER_HORIZON}}"
 RUN_NAME="${RUN_NAME:-${CKPT_TAG}-$(date +%Y_%m_%d_%H_%M_%S)}"
 RUN_OUTPUT_PATH="${BASE_OUTPUT_PATH}/${RUN_NAME}"
 
@@ -184,6 +185,7 @@ done
     echo "total_parallel_jobs: ${TOTAL_SLOTS}"
     echo "policy_type: ${POLICY_TYPE}"
     echo "action_mode: ${ACTION_MODE}"
+    echo "binarize_gripper: ${BINARIZE_GRIPPER}"
     echo "test_num: ${TEST_NUM}"
     echo "seed: ${SEED}"
     echo "dtype: ${DTYPE}"
@@ -276,6 +278,7 @@ write_task_command_file() {
         printf 'MAGICBOT_R0_LOAD_TEXT_ENCODER=%q ' "${MAGICBOT_R0_LOAD_TEXT_ENCODER}"
         printf 'MAGICBOT_R0_REDIRECT_COMMON_FILES=%q ' "${MAGICBOT_R0_REDIRECT_COMMON_FILES}"
         printf 'MAGICBOT_R0_SKIP_DIT_LOAD_FROM_PRETRAIN=%q ' "${MAGICBOT_R0_SKIP_DIT_LOAD_FROM_PRETRAIN}"
+        printf 'BINARIZE_GRIPPER=%q ' "${BINARIZE_GRIPPER}"
         printf 'CUDA_VISIBLE_DEVICES=%q ' "${gpu_id}"
         printf '%q ' "${CMD[@]}"
         printf '\n'

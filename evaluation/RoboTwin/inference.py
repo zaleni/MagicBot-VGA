@@ -602,6 +602,7 @@ class InferenceArgs:
     resize_size: int = 224
     image_history_interval: int = 15
     action_mode: str = "delta"  # delta | abs
+    binarize_gripper: bool = True
     dtype: str = "float32"  # float32 | float16 | bfloat16
     video_dir: Path = Path("videos")
     fps: int = 30
@@ -683,6 +684,7 @@ def infer_once(args: InferenceArgs):
     dtype = resolve_dtype(args.dtype, device)
     policy, input_transforms, unnormalize_fn, policy_config = build_policy_and_transforms(args, dtype)
     is_magicbot_r0 = policy_config.type == "MagicBot_R0"
+    binarize_gripper = resolve_bool_env(args.binarize_gripper, "BINARIZE_GRIPPER")
 
     logging.info("=" * 80)
     logging.info("Initializing environment...")
@@ -794,7 +796,7 @@ def infer_once(args: InferenceArgs):
                         task=task,
                     )
                     with torch.no_grad():
-                        action_pred = policy.predict_action_chunk(inputs)
+                        action_pred = policy.predict_action_chunk(inputs, seed=args.seed)
                     action_pred = action_pred[0, : args.infer_horizon, :action_dim]
                 else:
                     sample = {
@@ -840,8 +842,9 @@ def infer_once(args: InferenceArgs):
                 action_plan.extend(action_pred.cpu().numpy())
 
             action = action_plan.popleft()
-            action[left_gripper_idx] = 0 if action[left_gripper_idx] < 0.5 else 1
-            action[right_gripper_idx] = 0 if action[right_gripper_idx] < 0.5 else 1
+            if binarize_gripper:
+                action[left_gripper_idx] = 0 if action[left_gripper_idx] < 0.5 else 1
+                action[right_gripper_idx] = 0 if action[right_gripper_idx] < 0.5 else 1
             TASK_ENV.take_action(action, action_type="qpos")
 
             if TASK_ENV.eval_success:

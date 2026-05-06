@@ -579,10 +579,11 @@ class MagicBotR0Policy(PreTrainedPolicy):
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
-        del kwargs
         self.eval()
         input_image = self._resolve_input_image(batch)
         batch_size = input_image.shape[0]
+        seed = kwargs.pop("seed", batch.get("seed", None))
+        del kwargs
         actions = []
         for index in range(batch_size):
             prompt, context, context_mask = self._resolve_context_for_inference(batch, index)
@@ -595,6 +596,7 @@ class MagicBotR0Policy(PreTrainedPolicy):
                 context=context,
                 context_mask=context_mask,
                 num_inference_steps=self.config.num_inference_steps,
+                seed=seed,
             )
             actions.append(self._denormalize_action(out["action"]))
         return torch.stack(actions, dim=0)
