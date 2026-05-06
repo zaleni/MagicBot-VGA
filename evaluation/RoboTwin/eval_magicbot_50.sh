@@ -90,6 +90,7 @@ POLL_INTERVAL_SECONDS="${POLL_INTERVAL_SECONDS:-35}"
 
 ACTION_MODE="${ACTION_MODE:-abs}"
 BINARIZE_GRIPPER="${BINARIZE_GRIPPER:-false}"
+SKIP_GET_OBS_WITHIN_REPLAN="${SKIP_GET_OBS_WITHIN_REPLAN:-true}"
 TEST_NUM="${TEST_NUM:-100}"
 SEED="${SEED:-42}"
 STATS_KEY="${STATS_KEY:-aloha}"
@@ -106,7 +107,7 @@ VIDEO_HEIGHT="${VIDEO_HEIGHT:-384}"
 VIDEO_WIDTH="${VIDEO_WIDTH:-320}"
 CONCAT_MULTI_CAMERA="${CONCAT_MULTI_CAMERA:-robotwin}"
 STANDARDIZE_VIDEO_SIZE_BY_CAMERAS="${STANDARDIZE_VIDEO_SIZE_BY_CAMERAS:-true}"
-export STANDARDIZE_VIDEO_SIZE_BY_CAMERAS BINARIZE_GRIPPER
+export STANDARDIZE_VIDEO_SIZE_BY_CAMERAS BINARIZE_GRIPPER SKIP_GET_OBS_WITHIN_REPLAN
 
 CKPT_TAG="${CKPT_TAG:-magicbot-r0-robotwin-180k-${ACTION_MODE}-s${SEED}h${INFER_HORIZON}}"
 RUN_NAME="${RUN_NAME:-${CKPT_TAG}-$(date +%Y_%m_%d_%H_%M_%S)}"
@@ -186,6 +187,7 @@ done
     echo "policy_type: ${POLICY_TYPE}"
     echo "action_mode: ${ACTION_MODE}"
     echo "binarize_gripper: ${BINARIZE_GRIPPER}"
+    echo "skip_get_obs_within_replan: ${SKIP_GET_OBS_WITHIN_REPLAN}"
     echo "test_num: ${TEST_NUM}"
     echo "seed: ${SEED}"
     echo "dtype: ${DTYPE}"
@@ -279,6 +281,7 @@ write_task_command_file() {
         printf 'MAGICBOT_R0_REDIRECT_COMMON_FILES=%q ' "${MAGICBOT_R0_REDIRECT_COMMON_FILES}"
         printf 'MAGICBOT_R0_SKIP_DIT_LOAD_FROM_PRETRAIN=%q ' "${MAGICBOT_R0_SKIP_DIT_LOAD_FROM_PRETRAIN}"
         printf 'BINARIZE_GRIPPER=%q ' "${BINARIZE_GRIPPER}"
+        printf 'SKIP_GET_OBS_WITHIN_REPLAN=%q ' "${SKIP_GET_OBS_WITHIN_REPLAN}"
         printf 'CUDA_VISIBLE_DEVICES=%q ' "${gpu_id}"
         printf '%q ' "${CMD[@]}"
         printf '\n'

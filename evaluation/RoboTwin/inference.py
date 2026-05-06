@@ -603,6 +603,7 @@ class InferenceArgs:
     image_history_interval: int = 15
     action_mode: str = "delta"  # delta | abs
     binarize_gripper: bool = True
+    skip_get_obs_within_replan: bool = False
     dtype: str = "float32"  # float32 | float16 | bfloat16
     video_dir: Path = Path("videos")
     fps: int = 30
@@ -685,6 +686,10 @@ def infer_once(args: InferenceArgs):
     policy, input_transforms, unnormalize_fn, policy_config = build_policy_and_transforms(args, dtype)
     is_magicbot_r0 = policy_config.type == "MagicBot_R0"
     binarize_gripper = resolve_bool_env(args.binarize_gripper, "BINARIZE_GRIPPER")
+    skip_get_obs_within_replan = is_magicbot_r0 and resolve_bool_env(
+        args.skip_get_obs_within_replan,
+        "SKIP_GET_OBS_WITHIN_REPLAN",
+    )
 
     logging.info("=" * 80)
     logging.info("Initializing environment...")
@@ -751,14 +756,18 @@ def infer_once(args: InferenceArgs):
         right_gripper_idx = sum(args.robot_type[0:4])-1
 
         while TASK_ENV.take_action_cnt < TASK_ENV.step_lim:
-            # Get observation at every step for video recording
-            observation = TASK_ENV.get_obs()
-            img = observation["observation"]["head_camera"]["rgb"]
-            
-            # Record frame at every step (not just when inferring new actions)
-            replay_images.append(img.copy())
+            need_obs = not (skip_get_obs_within_replan and action_plan)
+            observation = TASK_ENV.get_obs() if need_obs else None
+            img = None
+            if observation is not None:
+                img = observation["observation"]["head_camera"]["rgb"]
+
+                # Record frames only when RGB is rendered.
+                replay_images.append(img.copy())
 
             if not is_magicbot_r0 and len(action_plan) <= image_history_interval:
+                if observation is None or img is None:
+                    raise RuntimeError("Non-MagicBot_R0 policies require an observation at every eval step.")
                 left_wrist_img = observation["observation"]["left_camera"]["rgb"]
                 right_wrist_img = observation["observation"]["right_camera"]["rgb"]
 
@@ -781,6 +790,8 @@ def infer_once(args: InferenceArgs):
                 )
 
             if not action_plan:
+                if observation is None:
+                    raise RuntimeError("Observation is required when planning a new MagicBot_R0 action chunk.")
                 init_action = torch.as_tensor(observation["joint_action"]["vector"][None]).contiguous().cuda()
                 state = torch.from_numpy(observation["joint_action"]["vector"]).float().cuda()
                 task = TASK_ENV.get_instruction()
