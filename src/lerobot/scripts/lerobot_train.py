@@ -380,6 +380,15 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     device = accelerator.device
     if cfg.policy is not None:
         cfg.policy.device = str(device)
+    if _env_flag("LEROBOT_LOG_RANK_DEVICE_MAP", default=False):
+        cuda_current_device = torch.cuda.current_device() if torch.cuda.is_available() else "cpu"
+        print(
+            f"[rank={accelerator.process_index:02d}/{accelerator.num_processes:02d} "
+            f"local_rank={accelerator.local_process_index}] "
+            f"device={device}, cuda_current_device={cuda_current_device}, "
+            f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES', '<unset>')}",
+            flush=True,
+        )
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
 
