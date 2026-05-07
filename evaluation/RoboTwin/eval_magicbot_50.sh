@@ -34,7 +34,7 @@ echo "PROJ_ROOT  = ${PROJ_ROOT}"
 cd "${PROJ_ROOT}"
 export PYTHONPATH="${PROJ_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}"
 
-PRETRAINED_CKPT="${PRETRAINED_CKPT:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/MagicBot-VGA/outputs/MagicBot_R0/MagicBot_R0-magicbot_r0-robotwin-3d-abs-magicbot_r0_backbone-finetune-2026_04_28_19_33_58/checkpoints/180000/pretrained_model}"
+PRETRAINED_CKPT="${PRETRAINED_CKPT:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/MagicBot-VGA/outputs/MagicBot_R0/MagicBot_R0-magicbot_r0-robotwin-3d-abs-magicbot_r0_backbone-finetune-2026_04_28_19_33_58/checkpoints/200000/pretrained_model}"
 if (( $# > 1 )); then
     echo "Usage:"
     echo "  PRETRAINED_CKPT=/path/to/checkpoints/200000/pretrained_model bash evaluation/RoboTwin/${SCRIPT_NAME}"
@@ -109,7 +109,7 @@ CONCAT_MULTI_CAMERA="${CONCAT_MULTI_CAMERA:-robotwin}"
 STANDARDIZE_VIDEO_SIZE_BY_CAMERAS="${STANDARDIZE_VIDEO_SIZE_BY_CAMERAS:-true}"
 export STANDARDIZE_VIDEO_SIZE_BY_CAMERAS BINARIZE_GRIPPER SKIP_GET_OBS_WITHIN_REPLAN
 
-CKPT_TAG="${CKPT_TAG:-magicbot-r0-robotwin-180k-${ACTION_MODE}-s${SEED}h${INFER_HORIZON}}"
+CKPT_TAG="${CKPT_TAG:-magicbot-r0-robotwin-200k-binary${BINARIZE_GRIPPER}-${ACTION_MODE}-s${SEED}h${INFER_HORIZON}}"
 RUN_NAME="${RUN_NAME:-${CKPT_TAG}-$(date +%Y_%m_%d_%H_%M_%S)}"
 RUN_OUTPUT_PATH="${BASE_OUTPUT_PATH}/${RUN_NAME}"
 
