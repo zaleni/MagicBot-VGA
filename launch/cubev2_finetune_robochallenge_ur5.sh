@@ -5,7 +5,7 @@ set -euo pipefail
 ################################# ENV config ##################################
 
 export MASTER_ADDR="${MASTER_ADDR:-127.0.0.1}"
-export MASTER_PORT="${MASTER_PORT:-6379}"
+export MASTER_PORT="${MASTER_PORT:-6382}"
 echo "MASTER_ADDR=${MASTER_ADDR}, MASTER_PORT=${MASTER_PORT}"
 
 PROC_PER_NODE="${PROC_PER_NODE:-8}"
@@ -43,7 +43,7 @@ DA3_VARIANT="${DA3_VARIANT:-auto}"
 DA3_ALIGNMENT_MODE="${DA3_ALIGNMENT_MODE:-query_decoder}"
 DA3_CODE_ROOT="${DA3_CODE_ROOT:-}"
 
-ROBOCHALLENGE_ROOT="${ROBOCHALLENGE_ROOT:-${DATASET_ROOT:-/inspire/qb-ilm/project/embodied-basic-model/zhangjianing-253108140206/DATASET/Robochallengev2_lerobotv3/Robochallenge_aloha_v3}}"
+ROBOCHALLENGE_ROOT="${ROBOCHALLENGE_ROOT:-${DATASET_ROOT:-/inspire/qb-ilm/project/embodied-basic-model/zhangjianing-253108140206/DATASET/Robochallengev2_lerobotv3/Robochallenge_ur5_v3}}"
 DATASET_DIR="${DATASET_DIR:-}"
 DATASET_DIRS_FILE="${DATASET_DIRS_FILE:-}"
 
@@ -59,7 +59,7 @@ LAMBDA_3D="${LAMBDA_3D:-0.01}"
 
 USE_EXTERNAL_STATS="${USE_EXTERNAL_STATS:-true}"
 NORM_STATS_ROOT="${NORM_STATS_ROOT:-outputs_robochallenge/norm_stats}"
-DATASET_EXTERNAL_STATS_PATH="${DATASET_EXTERNAL_STATS_PATH:-${NORM_STATS_ROOT}/robochallenge_aloha/${ACTION_TYPE}/stats.json}"
+DATASET_EXTERNAL_STATS_PATH="${DATASET_EXTERNAL_STATS_PATH:-${NORM_STATS_ROOT}/robochallenge_ur5/${ACTION_TYPE}/stats.json}"
 
 ENABLE_IMAGE_AUG="${ENABLE_IMAGE_AUG:-false}"
 IMAGE_AUG_PRESET="${IMAGE_AUG_PRESET:-pi05}"
@@ -71,15 +71,14 @@ SAVE_FREQ="${SAVE_FREQ:-20000}"
 LOG_FREQ="${LOG_FREQ:-100}"
 NUM_WORKERS="${NUM_WORKERS:-12}"
 DIST_LOADING="${DIST_LOADING:-false}"
-WEIGHT_RULES_PATH="${WEIGHT_RULES_PATH:-configs/weight_rules_robochallenge_aloha.yaml}"
 
 BASE_OUTPUT_DIR="${BASE_OUTPUT_DIR:-outputs_robochallenge/${POLICY}}"
-JOB_NAME="${JOB_NAME:-${POLICY}-robochallenge_aloha-${ACTION_TYPE}-chunk${CHUNK_SIZE}-finetune-$(date +'%Y_%m_%d_%H_%M_%S')}"
+JOB_NAME="${JOB_NAME:-${POLICY}-robochallenge_ur5-${ACTION_TYPE}-chunk${CHUNK_SIZE}-finetune-$(date +'%Y_%m_%d_%H_%M_%S')}"
 OUTPUT_DIR="${BASE_OUTPUT_DIR}/${JOB_NAME}"
 REPO_ID_FILE="${REPO_ID_FILE:-${BASE_OUTPUT_DIR}/_repo_id_files/${JOB_NAME}.txt}"
 
 if [[ -z "${POLICY_INIT_PATH}" ]]; then
-  echo "Please set POLICY_INIT_PATH or PRETRAINED_PATH to the ALOHA/CubeV2 checkpoint you want to finetune."
+  echo "Please set POLICY_INIT_PATH or PRETRAINED_PATH to the UR5/CubeV2 checkpoint you want to finetune."
   exit 1
 fi
 
@@ -93,12 +92,7 @@ if [[ "${DIST_LOADING}" != "true" && "${DIST_LOADING}" != "false" ]]; then
   exit 1
 fi
 
-if [[ -n "${WEIGHT_RULES_PATH}" && ! -f "${WEIGHT_RULES_PATH}" ]]; then
-  echo "WEIGHT_RULES_PATH does not exist: ${WEIGHT_RULES_PATH}"
-  exit 1
-fi
-
-is_robochallenge_aloha_info() {
+is_robochallenge_ur5_info() {
   local info_path="$1"
   python - "${info_path}" <<'PY'
 import json
@@ -113,9 +107,8 @@ required = {
     "action",
     "observation.images.head",
     "observation.images.left",
-    "observation.images.right",
 }
-raise SystemExit(0 if robot_type in {"aloha", "ALOHA"} and required.issubset(features) else 1)
+raise SystemExit(0 if robot_type in {"ur5", "UR5"} and required.issubset(features) else 1)
 PY
 }
 
@@ -126,7 +119,7 @@ discover_dataset_dirs() {
   fi
 
   while IFS= read -r -d '' info_path; do
-    if is_robochallenge_aloha_info "${info_path}"; then
+    if is_robochallenge_ur5_info "${info_path}"; then
       dirname "$(dirname "${info_path}")"
     fi
   done < <(find -L "${root}" -path "*/meta/info.json" -print0 2>/dev/null) | sort -u
@@ -154,14 +147,14 @@ elif [[ -n "${DATASET_DIR}" ]]; then
   DATASET_REPO_IDS=("${DATASET_DIR}")
 else
   if [[ -z "${ROBOCHALLENGE_ROOT}" ]]; then
-    echo "Set ROBOCHALLENGE_ROOT to RoboChallenge_aloha_v3 or the parent Robochallengev2_lerobotv3 directory."
+    echo "Set ROBOCHALLENGE_ROOT to RoboChallenge_ur5_v3 or the parent Robochallengev2_lerobotv3 directory."
     exit 1
   fi
   mapfile -t DATASET_REPO_IDS < <(discover_dataset_dirs "${ROBOCHALLENGE_ROOT}")
 fi
 
 if [[ ${#DATASET_REPO_IDS[@]} -eq 0 ]]; then
-  echo "No RoboChallenge ALOHA LeRobot datasets found."
+  echo "No RoboChallenge UR5 LeRobot datasets found."
   exit 1
 fi
 
@@ -192,15 +185,15 @@ get_mask_mapping(robot_type, features)
 print(resolved)
 PY
   )"
-  if [[ "${resolved}" != "ALOHA" ]]; then
-    echo "Expected RoboChallenge ALOHA schema, got resolved_robot_type=${resolved} for ${ds_dir}"
+  if [[ "${resolved}" != "UR5" ]]; then
+    echo "Expected RoboChallenge UR5 schema, got resolved_robot_type=${resolved} for ${ds_dir}"
     exit 1
   fi
 done
 
 if [[ "${USE_EXTERNAL_STATS}" == "true" && ! -f "${DATASET_EXTERNAL_STATS_PATH}" ]]; then
   echo "Missing external stats: ${DATASET_EXTERNAL_STATS_PATH}"
-  echo "Compute them first with: ACTION_TYPE=${ACTION_TYPE} CHUNK_SIZE=${CHUNK_SIZE} ROBOCHALLENGE_ROOT=... bash launch/compute_norm_stats_robochallenge_aloha.sh"
+  echo "Compute them first with: ACTION_TYPE=${ACTION_TYPE} CHUNK_SIZE=${CHUNK_SIZE} ROBOCHALLENGE_ROOT=... bash launch/compute_norm_stats_robochallenge_ur5.sh"
   exit 1
 fi
 
@@ -218,7 +211,6 @@ echo "IMAGE_DELTA_INDICES=${IMAGE_DELTA_INDICES}"
 echo "BATCH_SIZE(per_device)=${BATCH_SIZE}"
 echo "GRADIENT_ACCUMULATION_STEPS=${GRADIENT_ACCUMULATION_STEPS}"
 echo "DIST_LOADING=${DIST_LOADING}"
-echo "WEIGHT_RULES_PATH=${WEIGHT_RULES_PATH:-<disabled>}"
 echo "USE_EXTERNAL_STATS=${USE_EXTERNAL_STATS}"
 echo "DATASET_EXTERNAL_STATS_PATH=${DATASET_EXTERNAL_STATS_PATH}"
 echo "ENABLE_IMAGE_AUG=${ENABLE_IMAGE_AUG}"
@@ -296,10 +288,6 @@ fi
 
 if [[ "${USE_EXTERNAL_STATS}" == "true" ]]; then
     ARGS+=(--dataset.external_stats_path="${DATASET_EXTERNAL_STATS_PATH}")
-fi
-
-if [[ -n "${WEIGHT_RULES_PATH}" ]]; then
-    ARGS+=(--dataset.weight_rules_path="${WEIGHT_RULES_PATH}")
 fi
 
 if [[ "${ENABLE_IMAGE_AUG}" == "true" ]]; then

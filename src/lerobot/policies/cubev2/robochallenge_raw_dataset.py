@@ -62,6 +62,9 @@ ROBOCHALLENGE_W1_TABLE30V2_EXTRA_TASKS = (
     "untie_the_shoelaces",
 )
 ROBOCHALLENGE_W1_TASK_PRESET_TABLE30V2 = "table30v2_w1"
+ROBOCHALLENGE_W1_TASK_SAMPLING_NONE = "none"
+ROBOCHALLENGE_W1_TASK_SAMPLING_PER_TASK = "per_task"
+ROBOCHALLENGE_W1_TASK_SAMPLING_GROUP_FRAMES_POW = "group_frames_pow"
 
 
 @dataclass(frozen=True)
@@ -140,6 +143,44 @@ def resolve_robochallenge_w1_task_weights(
         **{task: float(regular_task_weight) for task in ROBOCHALLENGE_W1_TABLE30V2_REGULAR_TASKS},
         **{task: float(extra_task_weight) for task in ROBOCHALLENGE_W1_TABLE30V2_EXTRA_TASKS},
     }
+
+
+def _table30v2_group_frame_pow_task_weights(
+    task_sample_counts: dict[str, int],
+    *,
+    regular_total_weight: float,
+    extra_total_weight: float,
+    gamma: float,
+) -> dict[str, float]:
+    if regular_total_weight <= 0:
+        raise ValueError("regular_total_weight must be positive")
+    if extra_total_weight <= 0:
+        raise ValueError("extra_total_weight must be positive")
+    if gamma < 0:
+        raise ValueError("task_sampling_gamma must be non-negative")
+
+    task_weights: dict[str, float] = {}
+    groups = (
+        (ROBOCHALLENGE_W1_TABLE30V2_REGULAR_TASKS, float(regular_total_weight)),
+        (ROBOCHALLENGE_W1_TABLE30V2_EXTRA_TASKS, float(extra_total_weight)),
+    )
+    for task_names, group_weight in groups:
+        present = [
+            (task_name, int(task_sample_counts[task_name]))
+            for task_name in task_names
+            if int(task_sample_counts.get(task_name, 0)) > 0
+        ]
+        if not present:
+            continue
+
+        scores = [float(sample_count) ** float(gamma) for _, sample_count in present]
+        total_score = sum(scores)
+        if total_score <= 0:
+            continue
+        for (task_name, _), score in zip(present, scores):
+            task_weights[task_name] = group_weight * score / total_score
+
+    return task_weights
 
 
 def _task_prompt(task_dir: Path, task_info: dict[str, Any]) -> str:
@@ -360,6 +401,10 @@ class RoboChallengeRawW1Dataset(Dataset):
         task_regex: str | None = None,
         task_names: Sequence[str] | None = None,
         task_sampling_weights: dict[str, float] | None = None,
+        task_sampling_mode: str = ROBOCHALLENGE_W1_TASK_SAMPLING_PER_TASK,
+        task_sampling_gamma: float = 1.0,
+        regular_task_total_weight: float | None = None,
+        extra_task_total_weight: float | None = None,
         state_cache_dir: str | Path | None = None,
         state_cache_size: int = 32,
         validate_videos: bool = False,
@@ -394,7 +439,13 @@ class RoboChallengeRawW1Dataset(Dataset):
             self._weighted_task_names,
             self._weighted_task_lengths,
             self._weighted_task_cum_lengths,
-        ) = self._build_weighted_task_plan(task_sampling_weights)
+        ) = self._build_weighted_task_plan(
+            task_sampling_weights,
+            task_sampling_mode=task_sampling_mode,
+            task_sampling_gamma=task_sampling_gamma,
+            regular_task_total_weight=regular_task_total_weight,
+            extra_task_total_weight=extra_task_total_weight,
+        )
         self._use_weighted_task_index = self._weighted_task_names is not None
         self.num_frames = (
             self._weighted_task_cum_lengths[-1] if self._use_weighted_task_index else self._base_num_frames
@@ -460,9 +511,35 @@ class RoboChallengeRawW1Dataset(Dataset):
     def _build_weighted_task_plan(
         self,
         task_sampling_weights: dict[str, float] | None,
+        *,
+        task_sampling_mode: str,
+        task_sampling_gamma: float,
+        regular_task_total_weight: float | None,
+        extra_task_total_weight: float | None,
     ) -> tuple[list[str] | None, list[int] | None, list[int] | None]:
-        if not task_sampling_weights:
+        task_sampling_mode = str(task_sampling_mode or ROBOCHALLENGE_W1_TASK_SAMPLING_NONE).strip().lower()
+        if task_sampling_mode in {"", ROBOCHALLENGE_W1_TASK_SAMPLING_NONE}:
             return None, None, None
+        if task_sampling_mode == ROBOCHALLENGE_W1_TASK_SAMPLING_GROUP_FRAMES_POW:
+            task_sampling_weights = _table30v2_group_frame_pow_task_weights(
+                self._task_sample_counts,
+                regular_total_weight=(
+                    float(regular_task_total_weight)
+                    if regular_task_total_weight is not None
+                    else float(len(ROBOCHALLENGE_W1_TABLE30V2_REGULAR_TASKS))
+                ),
+                extra_total_weight=(
+                    float(extra_task_total_weight)
+                    if extra_task_total_weight is not None
+                    else float(len(ROBOCHALLENGE_W1_TABLE30V2_REGULAR_TASKS))
+                ),
+                gamma=float(task_sampling_gamma),
+            )
+        elif task_sampling_mode == ROBOCHALLENGE_W1_TASK_SAMPLING_PER_TASK:
+            if not task_sampling_weights:
+                return None, None, None
+        else:
+            raise ValueError(f"Unknown RoboChallenge W1 task_sampling_mode={task_sampling_mode!r}")
 
         present = [
             (task_name, float(task_sampling_weights.get(task_name, 0.0)))
@@ -503,7 +580,9 @@ class RoboChallengeRawW1Dataset(Dataset):
             cum_lengths.append(cursor)
 
         logging.info(
-            "RoboChallenge W1 task-weighted sampling enabled: %s",
+            "RoboChallenge W1 task-weighted sampling enabled: mode=%s gamma=%s plan=%s",
+            task_sampling_mode,
+            task_sampling_gamma,
             {
                 task_name: {
                     "weight": float(task_sampling_weights[task_name]),

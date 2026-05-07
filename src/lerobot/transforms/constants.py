@@ -396,6 +396,16 @@ def infer_embodiment_variant(robot_type, feature_keys=None):
         if robochallenge_aloha_keys.issubset(keys):
             resolved_robot_type = "ALOHA"
 
+    if robot_type == "ur5" and keys is not None:
+        robochallenge_ur5_keys = {
+            "observation.state",
+            "action",
+            "observation.images.head",
+            "observation.images.left",
+        }
+        if robochallenge_ur5_keys.issubset(keys):
+            resolved_robot_type = "UR5"
+
     # LIBERO datasets are tagged as "franka" but use a different flattened
     # feature schema than the other Franka datasets in this codebase.
     if robot_type == "franka" and keys is not None:

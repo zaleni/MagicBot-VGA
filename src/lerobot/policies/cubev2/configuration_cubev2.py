@@ -111,8 +111,12 @@ class RoboChallengeRawW1DatasetConfig(CubeV2DatasetConfig):
     task_regex: str | None = None
     task_preset: str | None = None
     weighted_task_sampling: bool = False
+    task_sampling_mode: str = "per_task"
+    task_sampling_gamma: float = 1.0
     regular_task_weight: float = 1.0
     extra_task_weight: float = 0.8
+    regular_task_total_weight: float | None = None
+    extra_task_total_weight: float | None = None
     state_cache_dir: str | None = None
     state_cache_size: int = 32
     validate_videos: bool = False
@@ -123,10 +127,19 @@ class RoboChallengeRawW1DatasetConfig(CubeV2DatasetConfig):
             raise ValueError("frame_interval must be positive")
         if self.action_representation != "joint":
             raise ValueError("robochallenge_raw_w1 currently supports action_representation='joint' only")
+        self.task_sampling_mode = str(self.task_sampling_mode or "none").strip().lower()
+        if self.task_sampling_mode not in {"none", "per_task", "group_frames_pow"}:
+            raise ValueError("task_sampling_mode must be one of: none, per_task, group_frames_pow")
+        if self.task_sampling_gamma < 0:
+            raise ValueError("task_sampling_gamma must be non-negative")
         if self.regular_task_weight <= 0:
             raise ValueError("regular_task_weight must be positive")
         if self.extra_task_weight <= 0:
             raise ValueError("extra_task_weight must be positive")
+        if self.regular_task_total_weight is not None and self.regular_task_total_weight <= 0:
+            raise ValueError("regular_task_total_weight must be positive when set")
+        if self.extra_task_total_weight is not None and self.extra_task_total_weight <= 0:
+            raise ValueError("extra_task_total_weight must be positive when set")
 
 
 @PreTrainedConfig.register_subclass("cubev2")
@@ -155,6 +168,7 @@ class CubeV2Config(PreTrainedConfig):
     attention_mask_mode: str = "default"
 
     image_resolution: tuple[int, int] = (224, 224)
+    image_delta_indices: list[int] = field(default_factory=lambda: [-15, 0, 15])
     empty_cameras: int = 0
 
     normalization_mapping: dict[str, NormalizationMode] = field(
@@ -240,6 +254,9 @@ class CubeV2Config(PreTrainedConfig):
             raise ValueError(
                 f"attention_mask_mode must be one of {ATTENTION_MASK_MODES}, got {self.attention_mask_mode!r}"
             )
+        self.image_delta_indices = [int(idx) for idx in self.image_delta_indices]
+        if len(self.image_delta_indices) != 3:
+            raise ValueError("image_delta_indices must contain exactly 3 frame offsets.")
 
         supported_lora_modules = {"und", "gen", "act"}
         unsupported_lora_modules = set(self.lora_modules) - supported_lora_modules
@@ -402,7 +419,3 @@ class CubeV2Config(PreTrainedConfig):
     @property
     def reward_delta_indices(self) -> None:
         return None
-
-    @property
-    def image_delta_indices(self) -> list | None:
-        return [-15, 0, 15]

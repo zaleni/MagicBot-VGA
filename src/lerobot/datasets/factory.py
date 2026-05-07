@@ -899,15 +899,22 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
         )
 
         task_names = resolve_robochallenge_w1_task_names(cfg.dataset.task_preset)
+        if (
+            cfg.dataset.weighted_task_sampling
+            and cfg.dataset.task_sampling_mode == "group_frames_pow"
+            and str(cfg.dataset.task_preset).strip().lower() != "table30v2_w1"
+        ):
+            raise ValueError("RoboChallenge W1 group_frames_pow sampling requires task_preset=table30v2_w1.")
         task_sampling_weights = (
             resolve_robochallenge_w1_task_weights(
                 cfg.dataset.task_preset,
                 regular_task_weight=cfg.dataset.regular_task_weight,
                 extra_task_weight=cfg.dataset.extra_task_weight,
             )
-            if cfg.dataset.weighted_task_sampling
+            if cfg.dataset.weighted_task_sampling and cfg.dataset.task_sampling_mode == "per_task"
             else None
         )
+        task_sampling_mode = cfg.dataset.task_sampling_mode if cfg.dataset.weighted_task_sampling else "none"
 
         dataset = RoboChallengeRawW1Dataset(
             raw_root=cfg.dataset.raw_root,
@@ -921,6 +928,10 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
             task_regex=cfg.dataset.task_regex,
             task_names=task_names,
             task_sampling_weights=task_sampling_weights,
+            task_sampling_mode=task_sampling_mode,
+            task_sampling_gamma=cfg.dataset.task_sampling_gamma,
+            regular_task_total_weight=cfg.dataset.regular_task_total_weight,
+            extra_task_total_weight=cfg.dataset.extra_task_total_weight,
             state_cache_dir=cfg.dataset.state_cache_dir,
             state_cache_size=cfg.dataset.state_cache_size,
             validate_videos=cfg.dataset.validate_videos,
