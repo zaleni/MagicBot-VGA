@@ -45,10 +45,10 @@ TASK_SAMPLING_MODE="${TASK_SAMPLING_MODE:-group_frames_pow}"
 TASK_SAMPLING_GAMMA="${TASK_SAMPLING_GAMMA:-0.8}"
 REGULAR_TASK_WEIGHT="${REGULAR_TASK_WEIGHT:-1.0}"
 EXTRA_TASK_WEIGHT="${EXTRA_TASK_WEIGHT:-0.8}"
-# W1 table30v2 has 6 regular tasks and 4 extra tasks. Defaults below make the
-# two task types each occupy half of W1 training samples.
+# W1 table30v2 has 6 regular tasks and 4 extra tasks. Defaults below give the
+# regular group twice the sampling budget of the extra group.
 REGULAR_TASK_TOTAL_WEIGHT="${REGULAR_TASK_TOTAL_WEIGHT:-6.0}"
-EXTRA_TASK_TOTAL_WEIGHT="${EXTRA_TASK_TOTAL_WEIGHT:-6.0}"
+EXTRA_TASK_TOTAL_WEIGHT="${EXTRA_TASK_TOTAL_WEIGHT:-3.0}"
 FRAME_INTERVAL="${FRAME_INTERVAL:-1}"
 STATE_CACHE_DIR="${STATE_CACHE_DIR:-outputs_robochallenge/raw_cache/w1_states}"
 VALIDATE_VIDEOS="${VALIDATE_VIDEOS:-false}"

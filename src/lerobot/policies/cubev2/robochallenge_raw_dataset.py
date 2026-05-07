@@ -62,6 +62,8 @@ ROBOCHALLENGE_W1_TABLE30V2_EXTRA_TASKS = (
     "untie_the_shoelaces",
 )
 ROBOCHALLENGE_W1_TASK_PRESET_TABLE30V2 = "table30v2_w1"
+ROBOCHALLENGE_W1_TABLE30V2_REGULAR_TOTAL_WEIGHT = 6.0
+ROBOCHALLENGE_W1_TABLE30V2_EXTRA_TOTAL_WEIGHT = 3.0
 ROBOCHALLENGE_W1_TASK_SAMPLING_NONE = "none"
 ROBOCHALLENGE_W1_TASK_SAMPLING_PER_TASK = "per_task"
 ROBOCHALLENGE_W1_TASK_SAMPLING_GROUP_FRAMES_POW = "group_frames_pow"
@@ -526,12 +528,12 @@ class RoboChallengeRawW1Dataset(Dataset):
                 regular_total_weight=(
                     float(regular_task_total_weight)
                     if regular_task_total_weight is not None
-                    else float(len(ROBOCHALLENGE_W1_TABLE30V2_REGULAR_TASKS))
+                    else ROBOCHALLENGE_W1_TABLE30V2_REGULAR_TOTAL_WEIGHT
                 ),
                 extra_total_weight=(
                     float(extra_task_total_weight)
                     if extra_task_total_weight is not None
-                    else float(len(ROBOCHALLENGE_W1_TABLE30V2_REGULAR_TASKS))
+                    else ROBOCHALLENGE_W1_TABLE30V2_EXTRA_TOTAL_WEIGHT
                 ),
                 gamma=float(task_sampling_gamma),
             )
