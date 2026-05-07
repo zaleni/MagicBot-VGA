@@ -166,6 +166,8 @@ def _task_matches_embodiment(task_info: dict[str, Any], embodiment: str) -> bool
         aliases.update({"DOSW1", "W1"})
 
     tags = (task_info.get("task_desc") or {}).get("task_tag") or []
+    if isinstance(tags, str):
+        tags = [tags]
     normalized_tags = {_normalize_embodiment_name(tag) for tag in tags}
     return bool(aliases & normalized_tags)
 
@@ -265,7 +267,11 @@ def discover_robochallenge_w1_episodes(
         found_tasks = {record.task_name for record in episodes}
         missing_tasks = sorted(set(task_names) - found_tasks)
         if missing_tasks:
-            logging.warning("Missing RoboChallenge W1 task(s): %s", ", ".join(missing_tasks))
+            message = f"Missing RoboChallenge W1 task(s): {', '.join(missing_tasks)}"
+            if task_regex:
+                logging.warning(message)
+            else:
+                raise FileNotFoundError(message)
 
     return episodes
 

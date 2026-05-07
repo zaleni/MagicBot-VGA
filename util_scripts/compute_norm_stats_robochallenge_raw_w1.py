@@ -90,7 +90,7 @@ def parse_args():
     parser.add_argument("--frame-interval", type=int, default=1)
     parser.add_argument("--embodiment", default="DOS-W1")
     parser.add_argument("--task-preset", default="table30v2_w1")
-    parser.add_argument("--weighted-task-stats", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--weighted-task-stats", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--regular-task-weight", type=float, default=1.0)
     parser.add_argument("--extra-task-weight", type=float, default=0.8)
     parser.add_argument("--task-regex", default=None)
