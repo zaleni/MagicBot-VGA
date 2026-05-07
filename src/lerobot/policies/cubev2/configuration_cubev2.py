@@ -98,6 +98,37 @@ class CubeV2DatasetConfig(DatasetConfig):
                 self.data_transforms = replace(self.data_transforms, inputs=inputs)
 
 
+@DatasetConfig.register_subclass("robochallenge_raw_w1")
+@dataclass
+class RoboChallengeRawW1DatasetConfig(CubeV2DatasetConfig):
+    """CubeV2 dataset config for direct RoboChallenge DOS-W1 raw data loading."""
+
+    repo_id: str = "robochallenge_raw_w1"
+    raw_root: str = ""
+    embodiment: str = "DOS-W1"
+    action_representation: str = "joint"
+    frame_interval: int = 1
+    task_regex: str | None = None
+    task_preset: str | None = None
+    weighted_task_sampling: bool = False
+    regular_task_weight: float = 1.0
+    extra_task_weight: float = 0.8
+    state_cache_dir: str | None = None
+    state_cache_size: int = 32
+    validate_videos: bool = False
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.frame_interval <= 0:
+            raise ValueError("frame_interval must be positive")
+        if self.action_representation != "joint":
+            raise ValueError("robochallenge_raw_w1 currently supports action_representation='joint' only")
+        if self.regular_task_weight <= 0:
+            raise ValueError("regular_task_weight must be positive")
+        if self.extra_task_weight <= 0:
+            raise ValueError("extra_task_weight must be positive")
+
+
 @PreTrainedConfig.register_subclass("cubev2")
 @dataclass
 class CubeV2Config(PreTrainedConfig):

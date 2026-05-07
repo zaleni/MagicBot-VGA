@@ -42,6 +42,7 @@ from lerobot.datasets.transformed_dataset import (
 )
 from lerobot.policies.fastwam.configuration_fastwam import FastWAMDatasetConfig
 from lerobot.policies.MagicBot_R0.configuration_magicbot_r0 import MagicBotR0DatasetConfig
+from lerobot.policies.cubev2.configuration_cubev2 import CubeV2DatasetConfig, RoboChallengeRawW1DatasetConfig
 from lerobot.transforms.constants import get_feature_mapping, get_image_mapping, infer_embodiment_variant
 from lerobot.utils.constants import ACTION, OBS_PREFIX, REWARD, OBS_STATE
 from lerobot.utils.constants import HF_LEROBOT_HOME
@@ -869,7 +870,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
         return dataset, data_stats
 
     cubev2_pipeline_image_aug = (
-        cfg.dataset.__class__.__name__ == "CubeV2DatasetConfig"
+        isinstance(cfg.dataset, CubeV2DatasetConfig)
         and cfg.dataset.image_transforms.enable
         and cfg.dataset.image_transforms.preset in {"pi05", "pi0.5", "pi05_style"}
     )
@@ -879,6 +880,53 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
         image_transforms = ImageTransforms(cfg.dataset.image_transforms)
     else:
         image_transforms = None
+
+    if isinstance(cfg.dataset, RoboChallengeRawW1DatasetConfig):
+        if cfg.policy.type != "cubev2":
+            raise ValueError("dataset.type=robochallenge_raw_w1 is only supported with policy.type=cubev2.")
+        if not cfg.dataset.raw_root:
+            raise ValueError("dataset.raw_root must point to a RoboChallenge raw root for W1 training.")
+        if not cfg.dataset.use_external_stats or cfg.dataset.external_stats_path is None:
+            raise ValueError(
+                "RoboChallenge raw W1 training requires dataset.use_external_stats=true and "
+                "dataset.external_stats_path. Compute stats before training."
+            )
+
+        from lerobot.policies.cubev2.robochallenge_raw_dataset import (
+            RoboChallengeRawW1Dataset,
+            resolve_robochallenge_w1_task_names,
+            resolve_robochallenge_w1_task_weights,
+        )
+
+        task_names = resolve_robochallenge_w1_task_names(cfg.dataset.task_preset)
+        task_sampling_weights = (
+            resolve_robochallenge_w1_task_weights(
+                cfg.dataset.task_preset,
+                regular_task_weight=cfg.dataset.regular_task_weight,
+                extra_task_weight=cfg.dataset.extra_task_weight,
+            )
+            if cfg.dataset.weighted_task_sampling
+            else None
+        )
+
+        dataset = RoboChallengeRawW1Dataset(
+            raw_root=cfg.dataset.raw_root,
+            external_stats_path=cfg.dataset.external_stats_path,
+            transforms=cfg.dataset.data_transforms.inputs,
+            chunk_size=int(cfg.policy.chunk_size),
+            image_delta_indices=getattr(cfg.policy, "image_delta_indices", None),
+            image_transforms=image_transforms,
+            embodiment=cfg.dataset.embodiment,
+            frame_interval=cfg.dataset.frame_interval,
+            task_regex=cfg.dataset.task_regex,
+            task_names=task_names,
+            task_sampling_weights=task_sampling_weights,
+            state_cache_dir=cfg.dataset.state_cache_dir,
+            state_cache_size=cfg.dataset.state_cache_size,
+            validate_videos=cfg.dataset.validate_videos,
+        )
+        data_stats = {dataset.meta.robot_type: dataset.meta.stats}
+        return dataset, data_stats
 
     all_data_stats = {}
     all_repo_ids = resolve_repo_ids(cfg)

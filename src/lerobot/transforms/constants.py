@@ -28,6 +28,7 @@ MASK_MAPPING = {
     "UR5": make_bool_mask(6, -1),
     "ARX5": make_bool_mask(6, -1),
     "FRANKA": make_bool_mask(7, -2),
+    "DOS-W1": make_bool_mask(6, -1, 6, -1),
     # custom real robot
     "real_lift2": make_bool_mask(6, -1, 6, -1),
 }
@@ -253,6 +254,14 @@ FEATURE_MAPPING["real_lift2"] = {
         "action",
     ],
 }
+FEATURE_MAPPING["DOS-W1"] = {
+    OBS_STATE: [
+        "observation.state",
+    ],
+    ACTION: [
+        "action",
+    ],
+}
 
 
 IMAGE_MAPPING = dict(
@@ -332,6 +341,11 @@ IMAGE_MAPPING["UR5"] = {
     "observation.images.left": f"{OBS_IMAGES}.image1",
 }
 IMAGE_MAPPING["ARX5"] = {
+    "observation.images.head": f"{OBS_IMAGES}.image0",
+    "observation.images.left": f"{OBS_IMAGES}.image1",
+    "observation.images.right": f"{OBS_IMAGES}.image2",
+}
+IMAGE_MAPPING["DOS-W1"] = {
     "observation.images.head": f"{OBS_IMAGES}.image0",
     "observation.images.left": f"{OBS_IMAGES}.image1",
     "observation.images.right": f"{OBS_IMAGES}.image2",
