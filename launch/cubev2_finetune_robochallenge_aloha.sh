@@ -72,6 +72,20 @@ LOG_FREQ="${LOG_FREQ:-100}"
 NUM_WORKERS="${NUM_WORKERS:-12}"
 DIST_LOADING="${DIST_LOADING:-false}"
 WEIGHT_RULES_PATH="${WEIGHT_RULES_PATH:-configs/weight_rules_robochallenge_aloha.yaml}"
+DTYPE="${DTYPE:-bfloat16}"
+
+case "${DTYPE}" in
+  bfloat16)
+    ACCELERATE_MIXED_PRECISION="bf16"
+    ;;
+  float32)
+    ACCELERATE_MIXED_PRECISION="no"
+    ;;
+  *)
+    echo "Unsupported DTYPE=${DTYPE}. Expected bfloat16 or float32."
+    exit 1
+    ;;
+esac
 
 BASE_OUTPUT_DIR="${BASE_OUTPUT_DIR:-outputs_robochallenge/${POLICY}}"
 JOB_NAME="${JOB_NAME:-${POLICY}-robochallenge_aloha-${ACTION_TYPE}-chunk${CHUNK_SIZE}-finetune-$(date +'%Y_%m_%d_%H_%M_%S')}"
@@ -219,6 +233,7 @@ echo "BATCH_SIZE(per_device)=${BATCH_SIZE}"
 echo "GRADIENT_ACCUMULATION_STEPS=${GRADIENT_ACCUMULATION_STEPS}"
 echo "DIST_LOADING=${DIST_LOADING}"
 echo "WEIGHT_RULES_PATH=${WEIGHT_RULES_PATH:-<disabled>}"
+echo "DTYPE=${DTYPE}"
 echo "USE_EXTERNAL_STATS=${USE_EXTERNAL_STATS}"
 echo "DATASET_EXTERNAL_STATS_PATH=${DATASET_EXTERNAL_STATS_PATH}"
 echo "ENABLE_IMAGE_AUG=${ENABLE_IMAGE_AUG}"
@@ -229,6 +244,7 @@ printf '  - %s\n' "${DATASET_REPO_IDS[@]}"
 
 ARGS=(
     --multi_gpu
+    --mixed_precision="${ACCELERATE_MIXED_PRECISION}"
     --num_processes="${NUM_PROCESSES}"
     --num_machines="${NODE_COUNT}"
     --machine_rank="${NODE_RANK}"
@@ -247,7 +263,7 @@ ARGS=(
     --policy.cosmos_tokenizer_path_or_name="${COSMOS_TOKENIZER_PATH_OR_NAME}"
     --policy.push_to_hub=false
     --policy.gradient_checkpointing=false
-    --policy.dtype=bfloat16
+    --policy.dtype="${DTYPE}"
     --policy.optimizer_lr=5.0e-5
     --policy.scheduler_warmup_steps=3000
     --policy.scheduler_decay_steps="${STEPS}"
