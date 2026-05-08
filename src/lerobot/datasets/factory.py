@@ -883,30 +883,35 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
 
     if isinstance(cfg.dataset, RoboChallengeRawW1DatasetConfig):
         if cfg.policy.type != "cubev2":
-            raise ValueError("dataset.type=robochallenge_raw_w1 is only supported with policy.type=cubev2.")
+            raise ValueError("dataset.type=robochallenge_raw_* is only supported with policy.type=cubev2.")
         if not cfg.dataset.raw_root:
-            raise ValueError("dataset.raw_root must point to a RoboChallenge raw root for W1 training.")
+            raise ValueError("dataset.raw_root must point to a RoboChallenge raw root for raw training.")
         if not cfg.dataset.use_external_stats or cfg.dataset.external_stats_path is None:
             raise ValueError(
-                "RoboChallenge raw W1 training requires dataset.use_external_stats=true and "
+                "RoboChallenge raw training requires dataset.use_external_stats=true and "
                 "dataset.external_stats_path. Compute stats before training."
             )
 
         from lerobot.policies.cubev2.robochallenge_raw_dataset import (
+            RoboChallengeRawAlohaDataset,
             RoboChallengeRawW1Dataset,
-            resolve_robochallenge_w1_task_names,
-            resolve_robochallenge_w1_task_weights,
+            get_robochallenge_raw_spec,
+            resolve_robochallenge_raw_task_names,
+            resolve_robochallenge_raw_task_weights,
         )
 
-        task_names = resolve_robochallenge_w1_task_names(cfg.dataset.task_preset)
+        raw_spec = get_robochallenge_raw_spec(cfg.dataset.embodiment, cfg.dataset.task_preset)
+        task_names = resolve_robochallenge_raw_task_names(cfg.dataset.task_preset)
         if (
             cfg.dataset.weighted_task_sampling
             and cfg.dataset.task_sampling_mode == "group_frames_pow"
-            and str(cfg.dataset.task_preset).strip().lower() != "table30v2_w1"
+            and task_names is None
         ):
-            raise ValueError("RoboChallenge W1 group_frames_pow sampling requires task_preset=table30v2_w1.")
+            raise ValueError(
+                f"RoboChallenge {raw_spec.robot_type} group_frames_pow sampling requires a table30v2 task_preset."
+            )
         task_sampling_weights = (
-            resolve_robochallenge_w1_task_weights(
+            resolve_robochallenge_raw_task_weights(
                 cfg.dataset.task_preset,
                 regular_task_weight=cfg.dataset.regular_task_weight,
                 extra_task_weight=cfg.dataset.extra_task_weight,
@@ -915,15 +920,16 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
             else None
         )
         task_sampling_mode = cfg.dataset.task_sampling_mode if cfg.dataset.weighted_task_sampling else "none"
+        raw_dataset_cls = RoboChallengeRawAlohaDataset if raw_spec.key == "aloha" else RoboChallengeRawW1Dataset
 
-        dataset = RoboChallengeRawW1Dataset(
+        dataset = raw_dataset_cls(
             raw_root=cfg.dataset.raw_root,
             external_stats_path=cfg.dataset.external_stats_path,
             transforms=cfg.dataset.data_transforms.inputs,
             chunk_size=int(cfg.policy.chunk_size),
             image_delta_indices=getattr(cfg.policy, "image_delta_indices", None),
             image_transforms=image_transforms,
-            embodiment=cfg.dataset.embodiment,
+            embodiment=raw_spec.robot_type,
             frame_interval=cfg.dataset.frame_interval,
             task_regex=cfg.dataset.task_regex,
             task_names=task_names,

@@ -13,9 +13,10 @@ from lerobot.datasets.utils import write_json
 from lerobot.policies.cubev2.robochallenge_raw_dataset import (
     ROBOCHALLENGE_W1_DELTA_MASK,
     discover_robochallenge_w1_episodes,
+    get_robochallenge_raw_spec,
     load_robochallenge_w1_state_array,
-    resolve_robochallenge_w1_task_names,
-    resolve_robochallenge_w1_task_weights,
+    resolve_robochallenge_raw_task_names,
+    resolve_robochallenge_raw_task_weights,
 )
 from lerobot.utils.constants import ACTION, OBS_STATE
 
@@ -81,22 +82,31 @@ class RunningStats:
         }
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Compute CubeV2 stats for RoboChallenge raw DOS-W1 data.")
+def build_parser(
+    *,
+    description: str = "Compute CubeV2 stats for RoboChallenge raw dual-arm data.",
+    default_embodiment: str = "DOS-W1",
+    default_task_preset: str = "table30v2_w1",
+) -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=description)
     parser.add_argument("--raw-root", required=True, help="RoboChallenge raw root or one task directory.")
     parser.add_argument("--output-path", required=True, help="Output stats.json path.")
     parser.add_argument("--action-mode", choices=["abs", "delta"], default="delta")
     parser.add_argument("--chunk-size", type=int, default=50)
     parser.add_argument("--frame-interval", type=int, default=1)
-    parser.add_argument("--embodiment", default="DOS-W1")
-    parser.add_argument("--task-preset", default="table30v2_w1")
+    parser.add_argument("--embodiment", default=default_embodiment)
+    parser.add_argument("--task-preset", default=default_task_preset)
     parser.add_argument("--weighted-task-stats", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--regular-task-weight", type=float, default=1.0)
     parser.add_argument("--extra-task-weight", type=float, default=0.8)
     parser.add_argument("--task-regex", default=None)
     parser.add_argument("--state-cache-dir", default=None)
     parser.add_argument("--block-size", type=int, default=4096)
-    return parser.parse_args()
+    return parser
+
+
+def parse_args():
+    return build_parser().parse_args()
 
 
 def _sample_arrays(states: np.ndarray, sample_count: int, frame_interval: int) -> tuple[np.ndarray, np.ndarray]:
@@ -145,10 +155,10 @@ def compute_stats(args) -> None:
         embodiment=args.embodiment,
         frame_interval=args.frame_interval,
         task_regex=args.task_regex,
-        task_names=resolve_robochallenge_w1_task_names(args.task_preset),
+        task_names=resolve_robochallenge_raw_task_names(args.task_preset),
     )
     task_sampling_weights = (
-        resolve_robochallenge_w1_task_weights(
+        resolve_robochallenge_raw_task_weights(
             args.task_preset,
             regular_task_weight=args.regular_task_weight,
             extra_task_weight=args.extra_task_weight,
@@ -164,7 +174,9 @@ def compute_stats(args) -> None:
     action_stats = RunningStats()
     total_samples = 0
 
-    for record in tqdm.tqdm(episodes, desc="Computing W1 raw stats"):
+    spec = get_robochallenge_raw_spec(args.embodiment, args.task_preset)
+
+    for record in tqdm.tqdm(episodes, desc=f"Computing {spec.robot_type} raw stats"):
         states = load_robochallenge_w1_state_array(record, args.state_cache_dir)
         sample_count = record.sample_count
         state_rows, action_rows = _sample_arrays(states, sample_count, args.frame_interval)
@@ -204,6 +216,7 @@ def compute_stats(args) -> None:
     print(f"samples: {total_samples}")
     print(f"action_mode: {args.action_mode}")
     print(f"chunk_size: {args.chunk_size}")
+    print(f"embodiment: {spec.robot_type}")
     print(f"task_preset: {args.task_preset}")
     print(f"weighted_task_stats: {args.weighted_task_stats}")
     print(f"output: {output_path}")

@@ -126,7 +126,7 @@ class RoboChallengeRawW1DatasetConfig(CubeV2DatasetConfig):
         if self.frame_interval <= 0:
             raise ValueError("frame_interval must be positive")
         if self.action_representation != "joint":
-            raise ValueError("robochallenge_raw_w1 currently supports action_representation='joint' only")
+            raise ValueError("robochallenge_raw_* currently supports action_representation='joint' only")
         self.task_sampling_mode = str(self.task_sampling_mode or "none").strip().lower()
         if self.task_sampling_mode not in {"none", "per_task", "group_frames_pow"}:
             raise ValueError("task_sampling_mode must be one of: none, per_task, group_frames_pow")
@@ -140,6 +140,21 @@ class RoboChallengeRawW1DatasetConfig(CubeV2DatasetConfig):
             raise ValueError("regular_task_total_weight must be positive when set")
         if self.extra_task_total_weight is not None and self.extra_task_total_weight <= 0:
             raise ValueError("extra_task_total_weight must be positive when set")
+
+
+@DatasetConfig.register_subclass("robochallenge_raw_aloha")
+@dataclass
+class RoboChallengeRawAlohaDatasetConfig(RoboChallengeRawW1DatasetConfig):
+    """CubeV2 dataset config for direct RoboChallenge ALOHA raw data loading."""
+
+    repo_id: str = "robochallenge_raw_aloha"
+    embodiment: str = "ALOHA"
+    task_preset: str | None = "table30v2_aloha"
+    weighted_task_sampling: bool = True
+    task_sampling_mode: str = "group_frames_pow"
+    task_sampling_gamma: float = 0.8
+    regular_task_total_weight: float | None = 4.0
+    extra_task_total_weight: float | None = 4.0
 
 
 @PreTrainedConfig.register_subclass("cubev2")

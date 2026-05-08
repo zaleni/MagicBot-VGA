@@ -68,6 +68,81 @@ ROBOCHALLENGE_W1_TASK_SAMPLING_NONE = "none"
 ROBOCHALLENGE_W1_TASK_SAMPLING_PER_TASK = "per_task"
 ROBOCHALLENGE_W1_TASK_SAMPLING_GROUP_FRAMES_POW = "group_frames_pow"
 
+ROBOCHALLENGE_ALOHA_ROBOT_TYPE = "ALOHA"
+ROBOCHALLENGE_ALOHA_STATE_DIM = 14
+ROBOCHALLENGE_ALOHA_CAMERA_KEYS = ROBOCHALLENGE_W1_CAMERA_KEYS
+ROBOCHALLENGE_ALOHA_VIDEO_FILES = ROBOCHALLENGE_W1_VIDEO_FILES
+ROBOCHALLENGE_ALOHA_TABLE30V2_REGULAR_TASKS = (
+    "put_the_books_back",
+    "stamp_positioning",
+    "wipe_the_blackboard",
+    "scoop_with_a_small_spoon",
+)
+ROBOCHALLENGE_ALOHA_TABLE30V2_EXTRA_TASKS = (
+    "wrap_with_a_soft_cloth",
+    "paint_jam",
+    "pack_the_items",
+    "put_the_pencil_case_into_the_schoolbag",
+    "pack_the_toothbrush_holder",
+    "lint_roller_remove_dirt",
+)
+ROBOCHALLENGE_ALOHA_TASK_PRESET_TABLE30V2 = "table30v2_aloha"
+ROBOCHALLENGE_ALOHA_TABLE30V2_REGULAR_TOTAL_WEIGHT = 4.0
+ROBOCHALLENGE_ALOHA_TABLE30V2_EXTRA_TOTAL_WEIGHT = 4.0
+
+
+@dataclass(frozen=True)
+class RoboChallengeRawEmbodimentSpec:
+    key: str
+    robot_type: str
+    state_dim: int
+    camera_keys: tuple[str, ...]
+    video_files: dict[str, str]
+    regular_tasks: tuple[str, ...]
+    extra_tasks: tuple[str, ...]
+    task_preset: str
+    regular_total_weight: float
+    extra_total_weight: float
+
+    @property
+    def task_names(self) -> tuple[str, ...]:
+        return self.regular_tasks + self.extra_tasks
+
+
+ROBOCHALLENGE_RAW_W1_SPEC = RoboChallengeRawEmbodimentSpec(
+    key="w1",
+    robot_type=ROBOCHALLENGE_W1_ROBOT_TYPE,
+    state_dim=ROBOCHALLENGE_W1_STATE_DIM,
+    camera_keys=ROBOCHALLENGE_W1_CAMERA_KEYS,
+    video_files=ROBOCHALLENGE_W1_VIDEO_FILES,
+    regular_tasks=ROBOCHALLENGE_W1_TABLE30V2_REGULAR_TASKS,
+    extra_tasks=ROBOCHALLENGE_W1_TABLE30V2_EXTRA_TASKS,
+    task_preset=ROBOCHALLENGE_W1_TASK_PRESET_TABLE30V2,
+    regular_total_weight=ROBOCHALLENGE_W1_TABLE30V2_REGULAR_TOTAL_WEIGHT,
+    extra_total_weight=ROBOCHALLENGE_W1_TABLE30V2_EXTRA_TOTAL_WEIGHT,
+)
+ROBOCHALLENGE_RAW_ALOHA_SPEC = RoboChallengeRawEmbodimentSpec(
+    key="aloha",
+    robot_type=ROBOCHALLENGE_ALOHA_ROBOT_TYPE,
+    state_dim=ROBOCHALLENGE_ALOHA_STATE_DIM,
+    camera_keys=ROBOCHALLENGE_ALOHA_CAMERA_KEYS,
+    video_files=ROBOCHALLENGE_ALOHA_VIDEO_FILES,
+    regular_tasks=ROBOCHALLENGE_ALOHA_TABLE30V2_REGULAR_TASKS,
+    extra_tasks=ROBOCHALLENGE_ALOHA_TABLE30V2_EXTRA_TASKS,
+    task_preset=ROBOCHALLENGE_ALOHA_TASK_PRESET_TABLE30V2,
+    regular_total_weight=ROBOCHALLENGE_ALOHA_TABLE30V2_REGULAR_TOTAL_WEIGHT,
+    extra_total_weight=ROBOCHALLENGE_ALOHA_TABLE30V2_EXTRA_TOTAL_WEIGHT,
+)
+ROBOCHALLENGE_RAW_SPECS_BY_PRESET = {
+    ROBOCHALLENGE_RAW_W1_SPEC.task_preset: ROBOCHALLENGE_RAW_W1_SPEC,
+    ROBOCHALLENGE_RAW_ALOHA_SPEC.task_preset: ROBOCHALLENGE_RAW_ALOHA_SPEC,
+}
+ROBOCHALLENGE_RAW_SPECS_BY_EMBODIMENT = {
+    "DOSW1": ROBOCHALLENGE_RAW_W1_SPEC,
+    "W1": ROBOCHALLENGE_RAW_W1_SPEC,
+    "ALOHA": ROBOCHALLENGE_RAW_ALOHA_SPEC,
+}
+
 
 @dataclass(frozen=True)
 class RoboChallengeRawEpisode:
@@ -89,6 +164,34 @@ class RoboChallengeRawEpisode:
 
 def _normalize_embodiment_name(value: str) -> str:
     return re.sub(r"[^A-Z0-9]", "", str(value).upper())
+
+
+def _normalize_task_preset(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip().lower()
+    if normalized in {"", "all", "none", "null"}:
+        return None
+    return normalized
+
+
+def get_robochallenge_raw_spec(
+    embodiment: str | None = None,
+    task_preset: str | None = None,
+) -> RoboChallengeRawEmbodimentSpec:
+    preset = _normalize_task_preset(task_preset)
+    if preset is not None:
+        spec = ROBOCHALLENGE_RAW_SPECS_BY_PRESET.get(preset)
+        if spec is None:
+            raise ValueError(f"Unknown RoboChallenge raw task_preset={task_preset!r}")
+        return spec
+
+    normalized_embodiment = _normalize_embodiment_name(embodiment or ROBOCHALLENGE_W1_ROBOT_TYPE)
+    spec = ROBOCHALLENGE_RAW_SPECS_BY_EMBODIMENT.get(normalized_embodiment)
+    if spec is None:
+        available = ", ".join(sorted(spec.robot_type for spec in ROBOCHALLENGE_RAW_SPECS_BY_PRESET.values()))
+        raise ValueError(f"Unsupported RoboChallenge raw embodiment={embodiment!r}. Available: {available}")
+    return spec
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -118,17 +221,29 @@ def _resolve_robochallenge_task_dir(path: Path) -> Path | None:
     return None
 
 
+def resolve_robochallenge_raw_task_names(task_preset: str | None) -> tuple[str, ...] | None:
+    if _normalize_task_preset(task_preset) is None:
+        return None
+    return get_robochallenge_raw_spec(task_preset=task_preset).task_names
+
+
 def resolve_robochallenge_w1_task_names(task_preset: str | None) -> tuple[str, ...] | None:
-    if task_preset is None:
-        return None
+    return resolve_robochallenge_raw_task_names(task_preset)
 
-    normalized = str(task_preset).strip().lower()
-    if normalized in {"", "all", "none", "null"}:
-        return None
-    if normalized == ROBOCHALLENGE_W1_TASK_PRESET_TABLE30V2:
-        return ROBOCHALLENGE_W1_TABLE30V2_REGULAR_TASKS + ROBOCHALLENGE_W1_TABLE30V2_EXTRA_TASKS
 
-    raise ValueError(f"Unknown RoboChallenge W1 task_preset={task_preset!r}")
+def resolve_robochallenge_raw_task_weights(
+    task_preset: str | None,
+    *,
+    regular_task_weight: float = 1.0,
+    extra_task_weight: float = 0.8,
+) -> dict[str, float] | None:
+    if resolve_robochallenge_raw_task_names(task_preset) is None:
+        return None
+    spec = get_robochallenge_raw_spec(task_preset=task_preset)
+    return {
+        **{task: float(regular_task_weight) for task in spec.regular_tasks},
+        **{task: float(extra_task_weight) for task in spec.extra_tasks},
+    }
 
 
 def resolve_robochallenge_w1_task_weights(
@@ -137,19 +252,18 @@ def resolve_robochallenge_w1_task_weights(
     regular_task_weight: float = 1.0,
     extra_task_weight: float = 0.8,
 ) -> dict[str, float] | None:
-    if resolve_robochallenge_w1_task_names(task_preset) is None:
-        return None
-    if str(task_preset).strip().lower() != ROBOCHALLENGE_W1_TASK_PRESET_TABLE30V2:
-        raise ValueError(f"Unknown RoboChallenge W1 task_preset={task_preset!r}")
-    return {
-        **{task: float(regular_task_weight) for task in ROBOCHALLENGE_W1_TABLE30V2_REGULAR_TASKS},
-        **{task: float(extra_task_weight) for task in ROBOCHALLENGE_W1_TABLE30V2_EXTRA_TASKS},
-    }
+    return resolve_robochallenge_raw_task_weights(
+        task_preset,
+        regular_task_weight=regular_task_weight,
+        extra_task_weight=extra_task_weight,
+    )
 
 
 def _table30v2_group_frame_pow_task_weights(
     task_sample_counts: dict[str, int],
     *,
+    regular_tasks: Sequence[str],
+    extra_tasks: Sequence[str],
     regular_total_weight: float,
     extra_total_weight: float,
     gamma: float,
@@ -163,8 +277,8 @@ def _table30v2_group_frame_pow_task_weights(
 
     task_weights: dict[str, float] = {}
     groups = (
-        (ROBOCHALLENGE_W1_TABLE30V2_REGULAR_TASKS, float(regular_total_weight)),
-        (ROBOCHALLENGE_W1_TABLE30V2_EXTRA_TASKS, float(extra_total_weight)),
+        (tuple(regular_tasks), float(regular_total_weight)),
+        (tuple(extra_tasks), float(extra_total_weight)),
     )
     for task_names, group_weight in groups:
         present = [
@@ -232,6 +346,7 @@ def discover_robochallenge_w1_episodes(
         raise FileNotFoundError(f"RoboChallenge raw root does not exist: {raw_root}")
     if frame_interval <= 0:
         raise ValueError("frame_interval must be positive")
+    spec = get_robochallenge_raw_spec(embodiment=embodiment)
 
     task_dirs: list[Path]
     resolved_root = _resolve_robochallenge_task_dir(raw_root)
@@ -272,12 +387,12 @@ def discover_robochallenge_w1_episodes(
             right_states_path = states_dir / "right_states.jsonl"
             video_paths = {
                 key: videos_dir / filename
-                for key, filename in ROBOCHALLENGE_W1_VIDEO_FILES.items()
+                for key, filename in spec.video_files.items()
             }
 
             required_paths = [left_states_path, right_states_path, *video_paths.values()]
             if any(not path.is_file() for path in required_paths):
-                logging.warning("Skipping incomplete W1 episode: %s", episode_dir)
+                logging.warning("Skipping incomplete %s episode: %s", spec.robot_type, episode_dir)
                 continue
 
             n_states = min(_count_jsonl_lines(left_states_path), _count_jsonl_lines(right_states_path))
@@ -303,14 +418,14 @@ def discover_robochallenge_w1_episodes(
 
     if not episodes:
         raise FileNotFoundError(
-            f"No RoboChallenge {embodiment} raw episodes found under {raw_root}"
+            f"No RoboChallenge {spec.robot_type} raw episodes found under {raw_root}"
             + (f" with task_regex={task_regex!r}" if task_regex else "")
         )
     if task_names:
         found_tasks = {record.task_name for record in episodes}
         missing_tasks = sorted(set(task_names) - found_tasks)
         if missing_tasks:
-            message = f"Missing RoboChallenge W1 task(s): {', '.join(missing_tasks)}"
+            message = f"Missing RoboChallenge {spec.robot_type} task(s): {', '.join(missing_tasks)}"
             if task_regex:
                 logging.warning(message)
             else:
@@ -387,7 +502,7 @@ def load_robochallenge_w1_state_array(
 
 
 class RoboChallengeRawW1Dataset(Dataset):
-    """Direct RoboChallenge DOS-W1 raw dataset for CubeV2 training."""
+    """Direct RoboChallenge dual-arm raw dataset for CubeV2 training."""
 
     def __init__(
         self,
@@ -415,7 +530,8 @@ class RoboChallengeRawW1Dataset(Dataset):
         if chunk_size <= 0:
             raise ValueError("chunk_size must be positive")
 
-        self.repo_id = "robochallenge_raw_w1"
+        self.spec = get_robochallenge_raw_spec(embodiment=embodiment, task_preset=None)
+        self.camera_keys = self.spec.camera_keys
         self.raw_root = Path(raw_root).expanduser()
         self.chunk_size = int(chunk_size)
         self.image_delta_indices = tuple(image_delta_indices or (-15, 0, 15))
@@ -428,7 +544,7 @@ class RoboChallengeRawW1Dataset(Dataset):
 
         self.episodes = discover_robochallenge_w1_episodes(
             self.raw_root,
-            embodiment=embodiment,
+            embodiment=self.spec.robot_type,
             frame_interval=self.frame_interval,
             task_regex=task_regex,
             task_names=task_names,
@@ -455,19 +571,20 @@ class RoboChallengeRawW1Dataset(Dataset):
         self.num_episodes = len(self.episodes)
         self.dataset_weights = None
         self.fps = 30
+        self.repo_id = f"robochallenge_raw_{self.spec.key}"
 
         external_stats_path = Path(external_stats_path).expanduser()
         if not external_stats_path.is_file():
-            raise FileNotFoundError(f"Missing RoboChallenge W1 raw stats: {external_stats_path}")
+            raise FileNotFoundError(f"Missing RoboChallenge {self.spec.robot_type} raw stats: {external_stats_path}")
         stats = cast_stats_to_numpy(load_json(external_stats_path))
 
         image_height, image_width = self._probe_image_shape()
         self.meta = SimpleNamespace(
-            robot_type=ROBOCHALLENGE_W1_ROBOT_TYPE,
+            robot_type=self.spec.robot_type,
             features=self._build_features(image_height=image_height, image_width=image_width),
-            video_keys=list(ROBOCHALLENGE_W1_CAMERA_KEYS),
+            video_keys=list(self.camera_keys),
             image_keys=[],
-            camera_keys=list(ROBOCHALLENGE_W1_CAMERA_KEYS),
+            camera_keys=list(self.camera_keys),
             stats=stats,
             episodes={
                 "dataset_from_index": [record.sample_start for record in self.episodes],
@@ -523,17 +640,20 @@ class RoboChallengeRawW1Dataset(Dataset):
         if task_sampling_mode in {"", ROBOCHALLENGE_W1_TASK_SAMPLING_NONE}:
             return None, None, None
         if task_sampling_mode == ROBOCHALLENGE_W1_TASK_SAMPLING_GROUP_FRAMES_POW:
+            spec = get_robochallenge_raw_spec(embodiment=getattr(self, "spec", ROBOCHALLENGE_RAW_W1_SPEC).robot_type)
             task_sampling_weights = _table30v2_group_frame_pow_task_weights(
                 self._task_sample_counts,
+                regular_tasks=spec.regular_tasks,
+                extra_tasks=spec.extra_tasks,
                 regular_total_weight=(
                     float(regular_task_total_weight)
                     if regular_task_total_weight is not None
-                    else ROBOCHALLENGE_W1_TABLE30V2_REGULAR_TOTAL_WEIGHT
+                    else spec.regular_total_weight
                 ),
                 extra_total_weight=(
                     float(extra_task_total_weight)
                     if extra_task_total_weight is not None
-                    else ROBOCHALLENGE_W1_TABLE30V2_EXTRA_TOTAL_WEIGHT
+                    else spec.extra_total_weight
                 ),
                 gamma=float(task_sampling_gamma),
             )
@@ -541,7 +661,7 @@ class RoboChallengeRawW1Dataset(Dataset):
             if not task_sampling_weights:
                 return None, None, None
         else:
-            raise ValueError(f"Unknown RoboChallenge W1 task_sampling_mode={task_sampling_mode!r}")
+            raise ValueError(f"Unknown RoboChallenge raw task_sampling_mode={task_sampling_mode!r}")
 
         present = [
             (task_name, float(task_sampling_weights.get(task_name, 0.0)))
@@ -549,7 +669,9 @@ class RoboChallengeRawW1Dataset(Dataset):
             if float(task_sampling_weights.get(task_name, 0.0)) > 0.0
         ]
         if not present:
-            raise ValueError("task_sampling_weights did not match any discovered RoboChallenge W1 task.")
+            raise ValueError(
+                f"task_sampling_weights did not match any discovered RoboChallenge {self.spec.robot_type} task."
+            )
 
         total_real_samples = sum(self._task_sample_counts[task_name] for task_name, _ in present)
         total_weight = sum(weight for _, weight in present)
@@ -582,7 +704,8 @@ class RoboChallengeRawW1Dataset(Dataset):
             cum_lengths.append(cursor)
 
         logging.info(
-            "RoboChallenge W1 task-weighted sampling enabled: mode=%s gamma=%s plan=%s",
+            "RoboChallenge %s task-weighted sampling enabled: mode=%s gamma=%s plan=%s",
+            self.spec.robot_type,
             task_sampling_mode,
             task_sampling_gamma,
             {
@@ -597,21 +720,20 @@ class RoboChallengeRawW1Dataset(Dataset):
 
         return task_names, virtual_lengths, cum_lengths
 
-    @staticmethod
-    def _build_features(*, image_height: int, image_width: int) -> dict[str, dict[str, Any]]:
+    def _build_features(self, *, image_height: int, image_width: int) -> dict[str, dict[str, Any]]:
         features: dict[str, dict[str, Any]] = {
             OBS_STATE: {
                 "dtype": "float32",
-                "shape": [ROBOCHALLENGE_W1_STATE_DIM],
+                "shape": [self.spec.state_dim],
                 "names": ["state"],
             },
             ACTION: {
                 "dtype": "float32",
-                "shape": [ROBOCHALLENGE_W1_STATE_DIM],
+                "shape": [self.spec.state_dim],
                 "names": ["action"],
             },
         }
-        for key in ROBOCHALLENGE_W1_CAMERA_KEYS:
+        for key in self.camera_keys:
             features[key] = {
                 "dtype": "video",
                 "shape": [3, int(image_height), int(image_width)],
@@ -620,7 +742,7 @@ class RoboChallengeRawW1Dataset(Dataset):
         return features
 
     def _probe_image_shape(self) -> tuple[int, int]:
-        first_video = self.episodes[0].video_paths[ROBOCHALLENGE_W1_CAMERA_KEYS[0]]
+        first_video = self.episodes[0].video_paths[self.camera_keys[0]]
         cv2 = self._cv2()
         cap = self._open_temporary_capture(first_video)
         try:
@@ -649,7 +771,7 @@ class RoboChallengeRawW1Dataset(Dataset):
         try:
             import cv2
         except ImportError as exc:
-            raise ImportError("RoboChallenge raw W1 training requires opencv-python (`cv2`).") from exc
+            raise ImportError("RoboChallenge raw training requires opencv-python (`cv2`).") from exc
         return cv2
 
     def _open_temporary_capture(self, path: Path):
@@ -768,11 +890,11 @@ class RoboChallengeRawW1Dataset(Dataset):
             "task": record.prompt,
             "robot_type": self.meta.robot_type,
         }
-        for camera_key in ROBOCHALLENGE_W1_CAMERA_KEYS:
+        for camera_key in self.camera_keys:
             item[camera_key] = self._read_camera_clip(record, camera_key, current_raw_idx)
 
         if self.image_transforms is not None:
-            for camera_key in ROBOCHALLENGE_W1_CAMERA_KEYS:
+            for camera_key in self.camera_keys:
                 if hasattr(self.image_transforms, "set_current_key"):
                     self.image_transforms.set_current_key(camera_key)
                 item[camera_key] = self.image_transforms(item[camera_key])
@@ -790,3 +912,10 @@ class RoboChallengeRawW1Dataset(Dataset):
     def __del__(self):
         for cap in getattr(self, "_video_cache", {}).values():
             cap.release()
+
+
+class RoboChallengeRawAlohaDataset(RoboChallengeRawW1Dataset):
+    """ALOHA-named wrapper over the shared dual-arm RoboChallenge raw loader."""
+
+    def __init__(self, *args, embodiment: str = ROBOCHALLENGE_ALOHA_ROBOT_TYPE, **kwargs) -> None:
+        super().__init__(*args, embodiment=embodiment, **kwargs)
