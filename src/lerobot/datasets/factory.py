@@ -665,7 +665,10 @@ def _build_single_dataset(
 
     # Optional: override stats using ImageNet norm
     if cfg.dataset.use_imagenet_stats:
+        if base_ds.meta.stats is None:
+            base_ds.meta.stats = {}
         for key in base_ds.meta.camera_keys:
+            base_ds.meta.stats.setdefault(key, {})
             for stats_type, stats in IMAGENET_STATS.items():
                 base_ds.meta.stats[key][stats_type] = torch.tensor(
                     stats, dtype=torch.float32
