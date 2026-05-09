@@ -122,14 +122,28 @@ from pathlib import Path
 info = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 robot_type = str(info.get("robot_type", ""))
 features = set((info.get("features") or {}).keys())
-required = {
+required_base = {
     "observation.state",
     "action",
-    "observation.images.head",
-    "observation.images.left",
-    "observation.images.right",
 }
-raise SystemExit(0 if robot_type in {"aloha", "ALOHA"} and required.issubset(features) else 1)
+camera_schemas = (
+    {
+        "observation.images.head",
+        "observation.images.left",
+        "observation.images.right",
+    },
+    {
+        "observation.images.cam_high",
+        "observation.images.cam_left_wrist",
+        "observation.images.cam_right_wrist",
+    },
+)
+ok = (
+    robot_type in {"aloha", "ALOHA"}
+    and required_base.issubset(features)
+    and any(camera_schema.issubset(features) for camera_schema in camera_schemas)
+)
+raise SystemExit(0 if ok else 1)
 PY
 }
 
@@ -206,7 +220,7 @@ get_mask_mapping(robot_type, features)
 print(resolved)
 PY
   )"
-  if [[ "${resolved}" != "ALOHA" ]]; then
+  if [[ "${resolved}" != "ALOHA" && "${resolved}" != "ALOHA_STARVLA" && "${resolved}" != "aloha" ]]; then
     echo "Expected RoboChallenge ALOHA schema, got resolved_robot_type=${resolved} for ${ds_dir}"
     exit 1
   fi

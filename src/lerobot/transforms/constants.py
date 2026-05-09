@@ -25,6 +25,7 @@ MASK_MAPPING = {
     "egodex_v": make_bool_mask(2),
     # RoboChallenge
     "ALOHA": make_bool_mask(6, -1, 6, -1),
+    "ALOHA_STARVLA": make_bool_mask(6, -1, 6, -1),
     "UR5": make_bool_mask(6, -1),
     "ARX5": make_bool_mask(6, -1),
     "FRANKA": make_bool_mask(7, -2),
@@ -262,6 +263,7 @@ FEATURE_MAPPING["DOS-W1"] = {
         "action",
     ],
 }
+FEATURE_MAPPING["ALOHA_STARVLA"] = FEATURE_MAPPING["ALOHA"]
 
 
 IMAGE_MAPPING = dict(
@@ -336,6 +338,11 @@ IMAGE_MAPPING["ALOHA"] = {
     "observation.images.left": f"{OBS_IMAGES}.image1",
     "observation.images.right": f"{OBS_IMAGES}.image2",
 }
+IMAGE_MAPPING["ALOHA_STARVLA"] = {
+    "observation.images.cam_high": f"{OBS_IMAGES}.image0",
+    "observation.images.cam_left_wrist": f"{OBS_IMAGES}.image1",
+    "observation.images.cam_right_wrist": f"{OBS_IMAGES}.image2",
+}
 IMAGE_MAPPING["UR5"] = {
     "observation.images.head": f"{OBS_IMAGES}.image0",
     "observation.images.left": f"{OBS_IMAGES}.image1",
@@ -395,6 +402,17 @@ def infer_embodiment_variant(robot_type, feature_keys=None):
         }
         if robochallenge_aloha_keys.issubset(keys):
             resolved_robot_type = "ALOHA"
+
+    if robot_type == "ALOHA" and keys is not None:
+        starvla_aloha_keys = {
+            "observation.state",
+            "action",
+            "observation.images.cam_high",
+            "observation.images.cam_left_wrist",
+            "observation.images.cam_right_wrist",
+        }
+        if starvla_aloha_keys.issubset(keys):
+            resolved_robot_type = "ALOHA_STARVLA"
 
     if robot_type == "ur5" and keys is not None:
         robochallenge_ur5_keys = {
