@@ -739,7 +739,13 @@ def compute_norm_stats_multi(cfg):
     # Visual stats: take from the first repo for simplicity
     first_ds, _ = resolve_dataset_entry(repo_ids[0], cfg.root)
     for k in first_ds.meta.video_keys + first_ds.meta.image_keys:
-        output_dict[k] = _normalize_visual_stats(first_ds.meta.stats[k])
+        if first_ds.meta.stats is not None and k in first_ds.meta.stats:
+            output_dict[k] = _normalize_visual_stats(first_ds.meta.stats[k])
+        else:
+            print(
+                f"[warn] Missing visual stats for {k!r} in first repo; "
+                "skipping it because CubeV2 normalization only uses state/action stats."
+            )
 
     # Output path
     output_path, output_dir, group_name = _resolve_output_path(
