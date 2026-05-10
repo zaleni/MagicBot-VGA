@@ -61,13 +61,14 @@ LAMBDA_3D="${LAMBDA_3D:-0.01}"
 USE_EXTERNAL_STATS="${USE_EXTERNAL_STATS:-true}"
 NORM_STATS_ROOT="${NORM_STATS_ROOT:-outputs_robochallenge/norm_stats}"
 DATASET_EXTERNAL_STATS_PATH="${DATASET_EXTERNAL_STATS_PATH:-${NORM_STATS_ROOT}/robochallenge_arx5/${ACTION_TYPE}/stats.json}"
+WEIGHT_RULES_PATH="${WEIGHT_RULES_PATH:-configs/weight_rules_robochallenge_arx5.yaml}"
 
 ENABLE_IMAGE_AUG="${ENABLE_IMAGE_AUG:-false}"
 IMAGE_AUG_PRESET="${IMAGE_AUG_PRESET:-pi05}"
 
 BATCH_SIZE="${BATCH_SIZE:-12}"
 GRADIENT_ACCUMULATION_STEPS="${GRADIENT_ACCUMULATION_STEPS:-1}"
-STEPS="${STEPS:-220000}"
+STEPS="${STEPS:-200000}"
 SAVE_FREQ="${SAVE_FREQ:-10000}"
 LOG_FREQ="${LOG_FREQ:-100}"
 NUM_WORKERS="${NUM_WORKERS:-12}"
@@ -104,6 +105,11 @@ fi
 
 if [[ "${DIST_LOADING}" != "true" && "${DIST_LOADING}" != "false" ]]; then
   echo "DIST_LOADING must be true or false, got ${DIST_LOADING}"
+  exit 1
+fi
+
+if [[ -n "${WEIGHT_RULES_PATH}" && ! -f "${WEIGHT_RULES_PATH}" ]]; then
+  echo "WEIGHT_RULES_PATH does not exist: ${WEIGHT_RULES_PATH}"
   exit 1
 fi
 
@@ -253,6 +259,7 @@ echo "DIST_LOADING=${DIST_LOADING}"
 echo "DTYPE=${DTYPE}"
 echo "USE_EXTERNAL_STATS=${USE_EXTERNAL_STATS}"
 echo "DATASET_EXTERNAL_STATS_PATH=${DATASET_EXTERNAL_STATS_PATH}"
+echo "WEIGHT_RULES_PATH=${WEIGHT_RULES_PATH:-<disabled>}"
 echo "ENABLE_IMAGE_AUG=${ENABLE_IMAGE_AUG}"
 echo "IMAGE_AUG_PRESET=${IMAGE_AUG_PRESET}"
 echo "JOB_NAME=${JOB_NAME}"
@@ -329,6 +336,10 @@ fi
 
 if [[ "${USE_EXTERNAL_STATS}" == "true" ]]; then
     ARGS+=(--dataset.external_stats_path="${DATASET_EXTERNAL_STATS_PATH}")
+fi
+
+if [[ -n "${WEIGHT_RULES_PATH}" ]]; then
+    ARGS+=(--dataset.weight_rules_path="${WEIGHT_RULES_PATH}")
 fi
 
 if [[ "${ENABLE_IMAGE_AUG}" == "true" ]]; then

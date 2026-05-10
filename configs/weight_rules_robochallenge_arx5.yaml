@@ -1,0 +1,17 @@
+# RoboChallenge ARX5 task sampling weights.
+#
+# The sampler normalizes weights globally after computing repo-level weights.
+# These 7 ARX5 tasks share one group budget; inside the group, each task/repo is
+# allocated by frame_count^0.5.
+
+groups:
+  - name: robochallenge_arx5_tasks
+    match: '(?i)(^|[\\/])(arrange_flowers_temp|hang_the_cup|pick_out_the_green_blocks|press_the_button|turn_on_the_light_switch|water_the_flowers|wipe_the_table)([\\/]|$)'
+    total_weight: 7.0
+    inside: frames_pow
+    gamma: 0.5
+
+default:
+  total_weight: 0.0
+  inside: uniform
+  on_match: error
