@@ -13,6 +13,43 @@ ROBOCHALLENGE_ROOT="${ROBOCHALLENGE_ROOT:-${DATASET_ROOT:-/inspire/qb-ilm/projec
 DATASET_DIR="${DATASET_DIR:-}"
 DATASET_DIRS_FILE="${DATASET_DIRS_FILE:-}"
 
+DEFAULT_ROBOCHALLENGE_ALOHA_REGULAR_TASKS="put_the_books_back stamp_positioning wipe_the_blackboard scoop_with_a_small_spoon"
+DEFAULT_ROBOCHALLENGE_ALOHA_EXTRA_TASKS="wrap_with_a_soft_cloth paint_jam pack_the_items put_the_pencil_case_into_the_schoolbag pack_the_toothbrush_holder lint_roller_remove_dirt"
+# Keep empty strings intentional: set ROBOCHALLENGE_ALOHA_EXTRA_TASKS="" for regular-only stats.
+ROBOCHALLENGE_ALOHA_REGULAR_TASKS="${ROBOCHALLENGE_ALOHA_REGULAR_TASKS-${DEFAULT_ROBOCHALLENGE_ALOHA_REGULAR_TASKS}}"
+ROBOCHALLENGE_ALOHA_EXTRA_TASKS="${ROBOCHALLENGE_ALOHA_EXTRA_TASKS-${DEFAULT_ROBOCHALLENGE_ALOHA_EXTRA_TASKS}}"
+ROBOCHALLENGE_ALOHA_TASKS="${ROBOCHALLENGE_ALOHA_TASKS-}"
+if [[ -n "${ROBOCHALLENGE_ALOHA_TASKS}" ]]; then
+  if [[ "${ROBOCHALLENGE_ALOHA_TASKS}" == "all" ]]; then
+    ROBOCHALLENGE_ALOHA_SELECTED_TASKS="${DEFAULT_ROBOCHALLENGE_ALOHA_REGULAR_TASKS} ${DEFAULT_ROBOCHALLENGE_ALOHA_EXTRA_TASKS}"
+  else
+    ROBOCHALLENGE_ALOHA_SELECTED_TASKS="${ROBOCHALLENGE_ALOHA_TASKS}"
+  fi
+else
+  ROBOCHALLENGE_ALOHA_SELECTED_TASKS="${ROBOCHALLENGE_ALOHA_REGULAR_TASKS} ${ROBOCHALLENGE_ALOHA_EXTRA_TASKS}"
+fi
+ROBOCHALLENGE_ALOHA_TASK_SET="${ROBOCHALLENGE_ALOHA_TASK_SET-}"
+if [[ -z "${ROBOCHALLENGE_ALOHA_TASK_SET}" ]]; then
+  ROBOCHALLENGE_ALOHA_TASK_SET="$(
+    python - "${ROBOCHALLENGE_ALOHA_SELECTED_TASKS}" "${DEFAULT_ROBOCHALLENGE_ALOHA_REGULAR_TASKS}" "${DEFAULT_ROBOCHALLENGE_ALOHA_EXTRA_TASKS}" <<'PY'
+import hashlib
+import sys
+
+selected = tuple(name for name in sys.argv[1].split() if name)
+regular = tuple(name for name in sys.argv[2].split() if name)
+extra = tuple(name for name in sys.argv[3].split() if name)
+if not selected:
+    raise SystemExit("No RoboChallenge ALOHA tasks selected.")
+if selected == regular + extra:
+    print("all")
+elif selected == regular:
+    print("regular_only")
+else:
+    print("tasks_" + hashlib.sha1(",".join(selected).encode("utf-8")).hexdigest()[:8])
+PY
+  )"
+fi
+
 ACTION_TYPE="${ACTION_TYPE:-delta}"
 CHUNK_SIZE="${CHUNK_SIZE:-50}"
 NUM_WORKERS="${NUM_WORKERS:-8}"
@@ -21,8 +58,15 @@ MAX_CHUNKS_PER_EPISODE="${MAX_CHUNKS_PER_EPISODE:-}"
 MAX_CHUNKS_PER_REPO="${MAX_CHUNKS_PER_REPO:-}"
 
 NORM_STATS_ROOT="${NORM_STATS_ROOT:-outputs_robochallenge/norm_stats}"
-NORM_STATS_PATH="${NORM_STATS_PATH:-${NORM_STATS_ROOT}/robochallenge_aloha/${ACTION_TYPE}/stats.json}"
-REPO_ID_FILE="${REPO_ID_FILE:-${NORM_STATS_ROOT}/_repo_id_files/robochallenge_aloha_${ACTION_TYPE}.txt}"
+if [[ "${ROBOCHALLENGE_ALOHA_TASK_SET}" == "all" ]]; then
+  DEFAULT_NORM_STATS_PATH="${NORM_STATS_ROOT}/robochallenge_aloha/${ACTION_TYPE}/stats.json"
+  DEFAULT_REPO_ID_FILE="${NORM_STATS_ROOT}/_repo_id_files/robochallenge_aloha_${ACTION_TYPE}.txt"
+else
+  DEFAULT_NORM_STATS_PATH="${NORM_STATS_ROOT}/robochallenge_aloha/${ROBOCHALLENGE_ALOHA_TASK_SET}/${ACTION_TYPE}/stats.json"
+  DEFAULT_REPO_ID_FILE="${NORM_STATS_ROOT}/_repo_id_files/robochallenge_aloha_${ROBOCHALLENGE_ALOHA_TASK_SET}_${ACTION_TYPE}.txt"
+fi
+NORM_STATS_PATH="${NORM_STATS_PATH:-${DEFAULT_NORM_STATS_PATH}}"
+REPO_ID_FILE="${REPO_ID_FILE:-${DEFAULT_REPO_ID_FILE}}"
 
 if [[ "${ACTION_TYPE}" != "delta" && "${ACTION_TYPE}" != "abs" ]]; then
   echo "ACTION_TYPE must be abs or delta, got ${ACTION_TYPE}"
@@ -88,6 +132,24 @@ read_dataset_dirs_file() {
   done < "${path}"
 }
 
+filter_dataset_dirs_by_task_names() {
+  local task_names="$1"
+  shift
+  python - "${task_names}" "$@" <<'PY'
+import sys
+from pathlib import Path
+
+task_names = {name for name in sys.argv[1].split() if name}
+if not task_names:
+    raise SystemExit("No RoboChallenge ALOHA tasks selected.")
+
+for dataset_dir in sys.argv[2:]:
+    path = Path(dataset_dir)
+    if path.name in task_names or task_names.intersection(path.parts):
+        print(dataset_dir)
+PY
+}
+
 declare -a DATASET_REPO_IDS=()
 if [[ -n "${DATASET_DIRS_FILE}" ]]; then
   if [[ ! -f "${DATASET_DIRS_FILE}" ]]; then
@@ -105,8 +167,10 @@ else
   mapfile -t DATASET_REPO_IDS < <(discover_dataset_dirs "${ROBOCHALLENGE_ROOT}")
 fi
 
+mapfile -t DATASET_REPO_IDS < <(filter_dataset_dirs_by_task_names "${ROBOCHALLENGE_ALOHA_SELECTED_TASKS}" "${DATASET_REPO_IDS[@]}")
+
 if [[ ${#DATASET_REPO_IDS[@]} -eq 0 ]]; then
-  echo "No RoboChallenge ALOHA LeRobot datasets found."
+  echo "No RoboChallenge ALOHA LeRobot datasets found for selected tasks: ${ROBOCHALLENGE_ALOHA_SELECTED_TASKS}"
   exit 1
 fi
 
@@ -137,6 +201,8 @@ printf '%s\n' "${DATASET_REPO_IDS[@]}" > "${REPO_ID_FILE}"
 
 echo "DATASET_COUNT=${#DATASET_REPO_IDS[@]}"
 echo "REPO_ID_FILE=${REPO_ID_FILE}"
+echo "ROBOCHALLENGE_ALOHA_TASK_SET=${ROBOCHALLENGE_ALOHA_TASK_SET}"
+echo "ROBOCHALLENGE_ALOHA_SELECTED_TASKS=${ROBOCHALLENGE_ALOHA_SELECTED_TASKS}"
 echo "ACTION_TYPE=${ACTION_TYPE}"
 echo "CHUNK_SIZE=${CHUNK_SIZE}"
 echo "NUM_WORKERS=${NUM_WORKERS}"
