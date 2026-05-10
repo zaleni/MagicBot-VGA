@@ -352,6 +352,11 @@ IMAGE_MAPPING["ARX5"] = {
     "observation.images.left": f"{OBS_IMAGES}.image1",
     "observation.images.right": f"{OBS_IMAGES}.image2",
 }
+ARX5_GLOBAL_ARM_SIDE_IMAGE_MAPPING = {
+    "observation.images.cam_global": f"{OBS_IMAGES}.image0",
+    "observation.images.cam_arm": f"{OBS_IMAGES}.image1",
+    "observation.images.cam_side": f"{OBS_IMAGES}.image2",
+}
 IMAGE_MAPPING["DOS-W1"] = {
     "observation.images.head": f"{OBS_IMAGES}.image0",
     "observation.images.left": f"{OBS_IMAGES}.image1",
@@ -477,4 +482,15 @@ def get_feature_mapping(robot_type, feature_keys=None):
 
 
 def get_image_mapping(robot_type, feature_keys=None):
+    keys = _feature_key_set(feature_keys)
+    if robot_type == "ARX5" and keys is not None:
+        arx5_special_keys = set(ARX5_GLOBAL_ARM_SIDE_IMAGE_MAPPING)
+        if arx5_special_keys.issubset(keys):
+            return ARX5_GLOBAL_ARM_SIDE_IMAGE_MAPPING
+        if arx5_special_keys & keys:
+            missing = ", ".join(sorted(arx5_special_keys - keys))
+            raise KeyError(
+                "Partial ARX5 global/arm/side camera schema. "
+                f"Missing keys: {missing}"
+            )
     return _get_required_mapping("IMAGE_MAPPING", IMAGE_MAPPING, robot_type, feature_keys)
