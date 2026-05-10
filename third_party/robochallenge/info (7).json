@@ -1,0 +1,167 @@
+{
+    "codebase_version": "v3.0",
+    "robot_type": "ARX5",
+    "total_episodes": 1070,
+    "total_frames": 2959361,
+    "total_tasks": 1,
+    "chunks_size": 1000,
+    "fps": 30,
+    "splits": {
+        "train": "0:1070"
+    },
+    "data_path": "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet",
+    "video_path": "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4",
+    "features": {
+        "observation.images.cam_global": {
+            "dtype": "video",
+            "shape": [
+                720,
+                1280,
+                3
+            ],
+            "names": [
+                "height",
+                "width",
+                "channel"
+            ],
+            "info": {
+                "video.height": 720,
+                "video.width": 1280,
+                "video.channels": 3,
+                "video.fps": 30,
+                "video.codec": "h264",
+                "video.pix_fmt": "yuv420p",
+                "video.is_depth_map": false,
+                "has_audio": false
+            }
+        },
+        "observation.images.cam_arm": {
+            "dtype": "video",
+            "shape": [
+                720,
+                1280,
+                3
+            ],
+            "names": [
+                "height",
+                "width",
+                "channel"
+            ],
+            "info": {
+                "video.height": 720,
+                "video.width": 1280,
+                "video.channels": 3,
+                "video.fps": 30,
+                "video.codec": "h264",
+                "video.pix_fmt": "yuv420p",
+                "video.is_depth_map": false,
+                "has_audio": false
+            }
+        },
+        "observation.images.cam_side": {
+            "dtype": "video",
+            "shape": [
+                720,
+                1280,
+                3
+            ],
+            "names": [
+                "height",
+                "width",
+                "channel"
+            ],
+            "info": {
+                "video.height": 720,
+                "video.width": 1280,
+                "video.channels": 3,
+                "video.fps": 30,
+                "video.codec": "h264",
+                "video.pix_fmt": "yuv420p",
+                "video.is_depth_map": false,
+                "has_audio": false
+            }
+        },
+        "observation.state": {
+            "dtype": "float32",
+            "shape": [
+                7
+            ],
+            "names": [
+                "state"
+            ],
+            "fps": 30
+        },
+        "observation.state.endpose": {
+            "dtype": "float32",
+            "shape": [
+                7
+            ],
+            "names": [
+                "state.endpose"
+            ],
+            "fps": 30
+        },
+        "action": {
+            "dtype": "float32",
+            "shape": [
+                7
+            ],
+            "names": [
+                "actions"
+            ],
+            "fps": 30
+        },
+        "action.endpose": {
+            "dtype": "float32",
+            "shape": [
+                7
+            ],
+            "names": [
+                "actions.endpose"
+            ],
+            "fps": 30
+        },
+        "timestamp": {
+            "dtype": "float32",
+            "shape": [
+                1
+            ],
+            "names": null,
+            "fps": 30
+        },
+        "frame_index": {
+            "dtype": "int64",
+            "shape": [
+                1
+            ],
+            "names": null,
+            "fps": 30
+        },
+        "episode_index": {
+            "dtype": "int64",
+            "shape": [
+                1
+            ],
+            "names": null,
+            "fps": 30
+        },
+        "index": {
+            "dtype": "int64",
+            "shape": [
+                1
+            ],
+            "names": null,
+            "fps": 30
+        },
+        "task_index": {
+            "dtype": "int64",
+            "shape": [
+                1
+            ],
+            "names": null,
+            "fps": 30
+        }
+    },
+    "data_files_size_in_mb": 100,
+    "video_files_size_in_mb": 500
+}
