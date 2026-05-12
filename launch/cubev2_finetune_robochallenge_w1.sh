@@ -5,7 +5,7 @@ set -euo pipefail
 ################################# ENV config ##################################
 
 export MASTER_ADDR="${MASTER_ADDR:-127.0.0.1}"
-export MASTER_PORT="${MASTER_PORT:-6389}"
+export MASTER_PORT="${MASTER_PORT:-6689}"
 echo "MASTER_ADDR=${MASTER_ADDR}, MASTER_PORT=${MASTER_PORT}"
 
 PROC_PER_NODE="${PROC_PER_NODE:-8}"
@@ -110,8 +110,8 @@ IMAGE_AUG_PRESET="${IMAGE_AUG_PRESET:-pi05}"
 
 BATCH_SIZE="${BATCH_SIZE:-12}"
 GRADIENT_ACCUMULATION_STEPS="${GRADIENT_ACCUMULATION_STEPS:-1}"
-STEPS="${STEPS:-300000}"
-SAVE_FREQ="${SAVE_FREQ:-20000}"
+STEPS="${STEPS:-140000}"
+SAVE_FREQ="${SAVE_FREQ:-10000}"
 LOG_FREQ="${LOG_FREQ:-100}"
 NUM_WORKERS="${NUM_WORKERS:-12}"
 DIST_LOADING="${DIST_LOADING:-false}"
@@ -335,10 +335,10 @@ ARGS=(
     --policy.push_to_hub=false
     --policy.gradient_checkpointing=false
     --policy.dtype="${DTYPE}"
-    --policy.optimizer_lr=5.0e-5
-    --policy.scheduler_warmup_steps=3000
+    --policy.optimizer_lr=4.5e-5
+    --policy.scheduler_warmup_steps=700
     --policy.scheduler_decay_steps="${STEPS}"
-    --policy.scheduler_decay_lr=5.0e-6
+    --policy.scheduler_decay_lr=4.8e-6
     --policy.freeze_vision_encoder=false
     --policy.train_expert_only=false
     --policy.train_vlm_only=false
