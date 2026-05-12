@@ -1,0 +1,17 @@
+# RoboChallenge DOS-W1 task sampling weights.
+#
+# Default W1 converted-data finetuning uses only the 6 regular tasks.
+# `inside: frames_pow` allocates each group's budget by repo frame count:
+#   repo weight within group ~= num_frames^gamma.
+
+groups:
+  - name: robochallenge_w1_regular
+    match: '(?i)(^|[\\/])(fold_the_clothes|tidy_up_the_makeup_table|put_in_pen_container|hold_the_tray_with_both_hands|stack_bowls|place_objects_into_desk_drawer)([\\/]|$)'
+    total_weight: 6.0
+    inside: frames_pow
+    gamma: 0.5
+
+default:
+  total_weight: 0.0
+  inside: uniform
+  on_match: error
