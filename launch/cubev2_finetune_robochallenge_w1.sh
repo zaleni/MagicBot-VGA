@@ -117,6 +117,7 @@ NUM_WORKERS="${NUM_WORKERS:-12}"
 DIST_LOADING="${DIST_LOADING:-false}"
 WEIGHT_RULES_PATH="${WEIGHT_RULES_PATH:-configs/weight_rules_robochallenge_w1.yaml}"
 DTYPE="${DTYPE:-bfloat16}"
+SEED="${SEED:-242}"
 
 case "${DTYPE}" in
   bfloat16)
@@ -305,6 +306,7 @@ echo "GRADIENT_ACCUMULATION_STEPS=${GRADIENT_ACCUMULATION_STEPS}"
 echo "DIST_LOADING=${DIST_LOADING}"
 echo "WEIGHT_RULES_PATH=${WEIGHT_RULES_PATH:-<disabled>}"
 echo "DTYPE=${DTYPE}"
+echo "SEED=${SEED}"
 echo "USE_EXTERNAL_STATS=${USE_EXTERNAL_STATS}"
 echo "DATASET_EXTERNAL_STATS_PATH=${DATASET_EXTERNAL_STATS_PATH}"
 echo "ENABLE_IMAGE_AUG=${ENABLE_IMAGE_AUG}"
@@ -365,7 +367,7 @@ ARGS=(
     --dataset.use_external_stats="${USE_EXTERNAL_STATS}"
     --dataset.dist_loading="${DIST_LOADING}"
 
-    --seed=42
+    --seed="${SEED}"
     --batch_size="${BATCH_SIZE}"
     --gradient_accumulation_steps="${GRADIENT_ACCUMULATION_STEPS}"
     --steps="${STEPS}"
