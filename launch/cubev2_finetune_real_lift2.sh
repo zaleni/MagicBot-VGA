@@ -47,7 +47,7 @@ DATASET_DIR="${DATASET_DIR:-/inspire/qb-ilm/project/embodied-basic-model/zhangji
 DATASET_NAME="${DATASET_NAME:-$(basename "${DATASET_DIR}")}"
 DATASET_REPO_ID="${DATASET_REPO_ID:-${DATASET_DIR}}"
 
-ACTION_TYPE="${ACTION_TYPE:-delta}"
+ACTION_TYPE="${ACTION_TYPE:-abs}"
 CHUNK_SIZE="${CHUNK_SIZE:-50}"
 N_ACTION_STEPS="${N_ACTION_STEPS:-${CHUNK_SIZE}}"
 ENABLE_3D_QUERIES="${ENABLE_3D_QUERIES:-true}"
@@ -55,17 +55,31 @@ NUM_3D_QUERY_TOKENS="${NUM_3D_QUERY_TOKENS:-432}"
 CUBEV2_ATTENTION_MASK_MODE="${CUBEV2_ATTENTION_MASK_MODE:-default}"
 LAMBDA_3D="${LAMBDA_3D:-0.01}"
 
-USE_EXTERNAL_STATS="${USE_EXTERNAL_STATS:-true}"
+if [[ "${ACTION_TYPE}" != "delta" && "${ACTION_TYPE}" != "abs" ]]; then
+  echo "ACTION_TYPE must be abs or delta, got ${ACTION_TYPE}"
+  exit 1
+fi
+
+# Delta actions are normalized after the delta transform, so they need
+# separately computed stats. Abs actions can use the LeRobot dataset meta stats.
+if [[ -z "${USE_EXTERNAL_STATS+x}" ]]; then
+  if [[ "${ACTION_TYPE}" == "delta" ]]; then
+    USE_EXTERNAL_STATS=true
+  else
+    USE_EXTERNAL_STATS=false
+  fi
+fi
+
 NORM_STATS_ROOT="${NORM_STATS_ROOT:-/inspire/qb-ilm/project/embodied-basic-model/zhangjianing-253108140206/zhenji/norm_stats}"
 DATASET_EXTERNAL_STATS_PATH="${DATASET_EXTERNAL_STATS_PATH:-${NORM_STATS_ROOT}/${ACTION_TYPE}/${DATASET_NAME}/stats.json}"
 
 # Enable an image augmentation preset for real-robot finetuning.
-ENABLE_IMAGE_AUG="${ENABLE_IMAGE_AUG:-false}"
-IMAGE_AUG_PRESET="${IMAGE_AUG_PRESET:-lightly}"
+ENABLE_IMAGE_AUG="${ENABLE_IMAGE_AUG:-true}"
+IMAGE_AUG_PRESET="${IMAGE_AUG_PRESET:-pi05}"
 
-BATCH_SIZE="${BATCH_SIZE:-12}"
-STEPS="${STEPS:-60000}"
-SAVE_FREQ="${SAVE_FREQ:-10000}"
+BATCH_SIZE="${BATCH_SIZE:-16}"
+STEPS="${STEPS:-30000}"
+SAVE_FREQ="${SAVE_FREQ:-${STEPS}}"
 LOG_FREQ="${LOG_FREQ:-50}"
 
 if [[ -z "${POLICY_INIT_PATH}" ]]; then
@@ -92,11 +106,6 @@ robot_type="$(
 if [[ "${robot_type}" != "real_lift2" ]]; then
   echo "Expected robot_type=real_lift2, got ${robot_type}"
   echo "Please reconvert the dataset or update meta/info.json."
-  exit 1
-fi
-
-if [[ "${ACTION_TYPE}" != "delta" && "${ACTION_TYPE}" != "abs" ]]; then
-  echo "ACTION_TYPE must be abs or delta, got ${ACTION_TYPE}"
   exit 1
 fi
 
@@ -148,8 +157,8 @@ ARGS=(
     --policy.push_to_hub=false
     --policy.gradient_checkpointing=false
     --policy.dtype=bfloat16
-    --policy.optimizer_lr=3.5e-5
-    --policy.scheduler_warmup_steps=2000
+    --policy.optimizer_lr=5.0e-5
+    --policy.scheduler_warmup_steps=600
     --policy.scheduler_decay_steps="${STEPS}"
     --policy.scheduler_decay_lr=5.0e-6
     --policy.freeze_vision_encoder=false
