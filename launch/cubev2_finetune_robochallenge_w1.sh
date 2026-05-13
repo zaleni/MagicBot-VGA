@@ -118,6 +118,9 @@ DIST_LOADING="${DIST_LOADING:-false}"
 WEIGHT_RULES_PATH="${WEIGHT_RULES_PATH:-configs/weight_rules_robochallenge_w1.yaml}"
 DTYPE="${DTYPE:-bfloat16}"
 SEED="${SEED:-242}"
+OPTIMIZER_LR="${OPTIMIZER_LR:-4.5e-5}"
+SCHEDULER_WARMUP_STEPS="${SCHEDULER_WARMUP_STEPS:-700}"
+SCHEDULER_DECAY_LR="${SCHEDULER_DECAY_LR:-4.8e-6}"
 
 case "${DTYPE}" in
   bfloat16)
@@ -138,7 +141,8 @@ if [[ "${ROBOCHALLENGE_W1_TASK_SET}" == "all" ]]; then
 else
   JOB_TASK_SUFFIX="-${ROBOCHALLENGE_W1_TASK_SET}"
 fi
-JOB_NAME="${JOB_NAME:-${POLICY}-robochallenge_w1_from_raw25w${JOB_TASK_SUFFIX}-${ACTION_TYPE}-chunk${CHUNK_SIZE}-finetune-$(date +'%Y_%m_%d_%H_%M_%S')}"
+JOB_SOURCE_TAG="${JOB_SOURCE_TAG:-from_raw25w}"
+JOB_NAME="${JOB_NAME:-${POLICY}-robochallenge_w1_${JOB_SOURCE_TAG}${JOB_TASK_SUFFIX}-${ACTION_TYPE}-chunk${CHUNK_SIZE}-finetune-$(date +'%Y_%m_%d_%H_%M_%S')}"
 OUTPUT_DIR="${BASE_OUTPUT_DIR}/${JOB_NAME}"
 REPO_ID_FILE="${REPO_ID_FILE:-${BASE_OUTPUT_DIR}/_repo_id_files/${JOB_NAME}.txt}"
 
@@ -307,6 +311,9 @@ echo "DIST_LOADING=${DIST_LOADING}"
 echo "WEIGHT_RULES_PATH=${WEIGHT_RULES_PATH:-<disabled>}"
 echo "DTYPE=${DTYPE}"
 echo "SEED=${SEED}"
+echo "OPTIMIZER_LR=${OPTIMIZER_LR}"
+echo "SCHEDULER_WARMUP_STEPS=${SCHEDULER_WARMUP_STEPS}"
+echo "SCHEDULER_DECAY_LR=${SCHEDULER_DECAY_LR}"
 echo "USE_EXTERNAL_STATS=${USE_EXTERNAL_STATS}"
 echo "DATASET_EXTERNAL_STATS_PATH=${DATASET_EXTERNAL_STATS_PATH}"
 echo "ENABLE_IMAGE_AUG=${ENABLE_IMAGE_AUG}"
@@ -337,10 +344,10 @@ ARGS=(
     --policy.push_to_hub=false
     --policy.gradient_checkpointing=false
     --policy.dtype="${DTYPE}"
-    --policy.optimizer_lr=4.5e-5
-    --policy.scheduler_warmup_steps=700
+    --policy.optimizer_lr="${OPTIMIZER_LR}"
+    --policy.scheduler_warmup_steps="${SCHEDULER_WARMUP_STEPS}"
     --policy.scheduler_decay_steps="${STEPS}"
-    --policy.scheduler_decay_lr=4.8e-6
+    --policy.scheduler_decay_lr="${SCHEDULER_DECAY_LR}"
     --policy.freeze_vision_encoder=false
     --policy.train_expert_only=false
     --policy.train_vlm_only=false
