@@ -1,0 +1,16 @@
+# RoboChallenge ALOHA regular-only task sampling weights.
+#
+# The 4 regular ALOHA tasks share one group budget. Inside the group, each
+# task/repo is allocated by frame_count^0.5 to keep smaller tasks better covered.
+
+groups:
+  - name: robochallenge_aloha_regular_gamma05
+    match: '(?i)(^|[\\/])(put_the_books_back|stamp_positioning|wipe_the_blackboard|scoop_with_a_small_spoon)([\\/]|$)'
+    total_weight: 4.0
+    inside: frames_pow
+    gamma: 0.5
+
+default:
+  total_weight: 0.0
+  inside: uniform
+  on_match: error
