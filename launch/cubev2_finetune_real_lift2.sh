@@ -43,7 +43,7 @@ DA3_VARIANT="${DA3_VARIANT:-auto}"
 DA3_ALIGNMENT_MODE="${DA3_ALIGNMENT_MODE:-query_decoder}"
 DA3_CODE_ROOT="${DA3_CODE_ROOT:-}"
 
-DATASET_DIR="${DATASET_DIR:-/inspire/qb-ilm/project/embodied-basic-model/zhangjianing-253108140206/zhenji/new_data_0416/scene1_joint_96_60hz_v30}"
+DATASET_DIR="${DATASET_DIR:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/zhenji/lerobot_v30/zip_bag_30_lerobot30}"
 DATASET_NAME="${DATASET_NAME:-$(basename "${DATASET_DIR}")}"
 DATASET_REPO_ID="${DATASET_REPO_ID:-${DATASET_DIR}}"
 
@@ -52,7 +52,7 @@ CHUNK_SIZE="${CHUNK_SIZE:-50}"
 N_ACTION_STEPS="${N_ACTION_STEPS:-${CHUNK_SIZE}}"
 ENABLE_3D_QUERIES="${ENABLE_3D_QUERIES:-true}"
 NUM_3D_QUERY_TOKENS="${NUM_3D_QUERY_TOKENS:-432}"
-CUBEV2_ATTENTION_MASK_MODE="${CUBEV2_ATTENTION_MASK_MODE:-default}"
+CUBEV2_ATTENTION_MASK_MODE="${CUBEV2_ATTENTION_MASK_MODE:-causal}"
 LAMBDA_3D="${LAMBDA_3D:-0.01}"
 
 if [[ "${ACTION_TYPE}" != "delta" && "${ACTION_TYPE}" != "abs" ]]; then
@@ -119,7 +119,7 @@ python -c 'from lerobot.transforms.constants import MASK_MAPPING, FEATURE_MAPPIN
   "${robot_type}"
 
 BASE_OUTPUT_DIR="outputs_real/${POLICY}"
-JOB_NAME="${POLICY}-real_lift2-${ACTION_TYPE}-chunk${CHUNK_SIZE}-finetune-$(date +'%Y_%m_%d_%H_%M_%S')"
+JOB_NAME="${POLICY}-real_lift2-${DATASET_NAME}-${ACTION_TYPE}-chunk${CHUNK_SIZE}-attn-${CUBEV2_ATTENTION_MASK_MODE}-finetune-$(date +'%Y_%m_%d_%H_%M_%S')"
 OUTPUT_DIR="${BASE_OUTPUT_DIR}/${JOB_NAME}"
 
 echo "DATASET_DIR=${DATASET_DIR}"
@@ -190,7 +190,7 @@ ARGS=(
     --log_freq="${LOG_FREQ}"
 
     --wandb.enable=true
-    --wandb.project=CUBEv2
+    --wandb.project=CUBEv2_RealLift2
     --wandb.mode="${WANDB_MODE}"
 )
 
