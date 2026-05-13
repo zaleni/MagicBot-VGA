@@ -407,7 +407,21 @@ class MagicBotR0Policy(PreTrainedPolicy):
                 self._stats_filename,
             )
             return
-        self._load_action_postprocess_from_stats_path(stats_path)
+        try:
+            self._load_action_postprocess_from_stats_path(stats_path)
+        except ValueError as exc:
+            message = str(exc)
+            if (
+                "Cannot adapt framework stats" not in message
+                and "MagicBot_R0 stats payload must contain an `action` section" not in message
+            ):
+                raise
+            logging.warning(
+                "Skipping automatic MagicBot_R0 action stats load from %s: %s. "
+                "Provide task-specific stats through `policy.action_stats_path` or the evaluation adapter.",
+                stats_path,
+                exc,
+            )
 
     def _configure_dit_trainable_params_once(self) -> None:
         if self._dit_trainable_params_configured:

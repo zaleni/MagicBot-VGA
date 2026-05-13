@@ -96,7 +96,7 @@ def save_checkpoint(
     pretrained_dir = checkpoint_dir / PRETRAINED_MODEL_DIR
     policy.save_pretrained(pretrained_dir)
     cfg.save_pretrained(pretrained_dir)
-    if data_stats is not None:
+    if data_stats:
         write_json(serialize_dict(data_stats), pretrained_dir / 'stats.json')
     save_training_state(checkpoint_dir, step, optimizer, scheduler)
 

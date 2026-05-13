@@ -7,7 +7,7 @@ import logging
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Union
+from typing import Any, Iterable, Union
 
 ROOT_PATH = Path(__file__).resolve().parents[2]
 SRC_ROOT = ROOT_PATH / "src"
@@ -348,6 +348,144 @@ def magicbot_r0_shape_meta(config: PreTrainedConfig) -> dict[str, list[dict[str,
     }
 
 
+def _dedupe_paths(paths: Iterable[Path]) -> list[Path]:
+    seen: set[str] = set()
+    deduped: list[Path] = []
+    for path in paths:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(path)
+    return deduped
+
+
+def _candidate_relative_roots(path_value: str | Path, ckpt_dir: Path) -> list[Path]:
+    raw_path = Path(path_value).expanduser()
+    if raw_path.is_absolute():
+        return [raw_path]
+
+    candidates = [raw_path, ROOT_PATH / raw_path, ckpt_dir / raw_path]
+    candidates.extend(parent / raw_path for parent in list(ckpt_dir.parents)[:5])
+    return _dedupe_paths(candidates)
+
+
+def _select_magicbot_r0_stats_payload(stats_payload: dict[str, Any], stats_key: str) -> dict[str, Any]:
+    if "magicbot_r0" in stats_payload:
+        return stats_payload
+    keyed_payload = stats_payload.get(stats_key)
+    if isinstance(keyed_payload, dict):
+        return keyed_payload
+    return stats_payload
+
+
+def _iter_magicbot_r0_stats_candidates(
+    args: "InferenceArgs",
+    ckpt_dir: Path,
+    train_config: TrainPipelineConfig | None,
+) -> Iterable[tuple[Path, str, bool]]:
+    explicit_stats_path = resolve_optional_env(args.magicbot_r0_stats_path, "MAGICBOT_R0_STATS_PATH")
+    if explicit_stats_path is not None:
+        explicit_candidates = _candidate_relative_roots(explicit_stats_path, ckpt_dir)
+        for explicit_candidate in explicit_candidates:
+            if explicit_candidate.is_file():
+                yield explicit_candidate, "explicit MagicBot_R0 stats path", True
+                return
+        yield explicit_candidates[0], "explicit MagicBot_R0 stats path", True
+        return
+
+    checkpoint_stats_path = ckpt_dir / "stats.json"
+    if checkpoint_stats_path.is_file():
+        yield checkpoint_stats_path, "checkpoint stats", False
+
+    dataset_config = None if train_config is None else getattr(train_config, "dataset", None)
+    external_stats_root = None if dataset_config is None else getattr(dataset_config, "external_stats_root", None)
+    if external_stats_root is None or not str(external_stats_root).strip():
+        return
+
+    action_modes: list[str] = []
+    for action_mode in (args.action_mode, getattr(dataset_config, "action_mode", None)):
+        if action_mode is not None and str(action_mode) not in action_modes:
+            action_modes.append(str(action_mode))
+
+    candidate_files: list[Path] = []
+    for stats_root in _candidate_relative_roots(external_stats_root, ckpt_dir):
+        for action_mode in action_modes:
+            candidate_files.append(stats_root / args.stats_key / action_mode / "stats.json")
+    for candidate_file in _dedupe_paths(candidate_files):
+        if candidate_file.is_file():
+            yield candidate_file, "external per-embodiment stats", False
+
+
+def load_magicbot_r0_runtime_stats(
+    args: "InferenceArgs",
+    config: PreTrainedConfig,
+    ckpt_dir: Path,
+    train_config: TrainPipelineConfig | None,
+    *,
+    require_state: bool,
+) -> tuple[dict[str, Any] | None, Path | None]:
+    shape_meta = magicbot_r0_shape_meta(config)
+    errors: list[str] = []
+    for stats_path, source, explicit in _iter_magicbot_r0_stats_candidates(args, ckpt_dir, train_config):
+        if not stats_path.is_file():
+            message = f"{source} not found: {stats_path}"
+            if explicit:
+                raise FileNotFoundError(message)
+            errors.append(message)
+            continue
+        try:
+            raw_payload = load_dataset_stats_from_json(str(stats_path))
+            selected_payload = _select_magicbot_r0_stats_payload(raw_payload, args.stats_key)
+            converted_payload = ensure_magicbot_r0_stats_format(
+                selected_payload,
+                shape_meta=shape_meta,
+                require_state=require_state,
+            )
+        except Exception as exc:
+            message = f"{source} at {stats_path} is not usable for MagicBot_R0 stats: {exc}"
+            if explicit:
+                raise ValueError(message) from exc
+            errors.append(message)
+            continue
+        logging.info("Loaded MagicBot_R0 runtime stats from %s (%s).", stats_path, source)
+        return converted_payload, stats_path
+
+    if errors:
+        logging.warning("Could not load MagicBot_R0 runtime stats. Last error: %s", errors[-1])
+    return None, None
+
+
+def maybe_load_magicbot_r0_action_postprocess(
+    policy,
+    args: "InferenceArgs",
+    config: PreTrainedConfig,
+    ckpt_dir: Path,
+    train_config: TrainPipelineConfig | None,
+) -> None:
+    if getattr(policy, "_action_denorm_specs", None):
+        return
+    stats_payload, stats_path = load_magicbot_r0_runtime_stats(
+        args,
+        config,
+        ckpt_dir,
+        train_config,
+        require_state=False,
+    )
+    if stats_payload is None:
+        logging.warning(
+            "MagicBot_R0 action denormalization stats were not loaded. "
+            "For pretraining checkpoints, set MAGICBOT_R0_STATS_PATH or keep train_config.dataset.external_stats_root "
+            "available so RoboTwin can resolve %s/%s/stats.json.",
+            args.stats_key,
+            args.action_mode,
+        )
+        return
+    policy.set_action_postprocess_from_stats(stats_payload)
+    if hasattr(policy, "_action_stats_source"):
+        policy._action_stats_source = str(stats_path)
+
+
 def resize_magicbot_r0_video_view(video: torch.Tensor, size: tuple[int, int]) -> torch.Tensor:
     try:
         return F.interpolate(video, size=size, mode="bilinear", align_corners=False, antialias=True)
@@ -417,11 +555,19 @@ def concat_magicbot_r0_camera_views(
 
 
 class MagicBotR0RuntimeAdapter:
-    def __init__(self, args: "InferenceArgs", config: PreTrainedConfig, ckpt_dir: Path):
+    def __init__(
+        self,
+        args: "InferenceArgs",
+        config: PreTrainedConfig,
+        ckpt_dir: Path,
+        train_config: TrainPipelineConfig | None,
+    ):
         self.args = args
         self.config = config
+        self.ckpt_dir = ckpt_dir
+        self.train_config = train_config
         self.target_proprio_dim = int(getattr(config, "proprio_dim", 14))
-        self.state_normalizer = self._build_state_normalizer(ckpt_dir)
+        self.state_normalizer = self._build_state_normalizer()
 
     @staticmethod
     def _image_to_chw_float(image: np.ndarray) -> torch.Tensor:
@@ -433,24 +579,18 @@ class MagicBotR0RuntimeAdapter:
             return tensor.to(torch.float32) / 255.0
         return tensor.to(torch.float32)
 
-    def _build_state_normalizer(self, ckpt_dir: Path) -> SingleFieldLinearNormalizer | None:
-        stats_path = resolve_optional_env(self.args.magicbot_r0_stats_path, "MAGICBOT_R0_STATS_PATH")
-        stats_file = Path(stats_path) if stats_path is not None else ckpt_dir / "stats.json"
-        if not stats_file.is_file():
-            logging.warning(
-                "MagicBot_R0 stats file not found at %s; proprio will be passed without normalization.",
-                stats_file,
-            )
-            return None
-
-        stats_payload = load_dataset_stats_from_json(str(stats_file))
-        if "magicbot_r0" not in stats_payload and self.args.stats_key in stats_payload:
-            stats_payload = stats_payload[self.args.stats_key]
-        stats_payload = ensure_magicbot_r0_stats_format(
-            stats_payload,
-            shape_meta=magicbot_r0_shape_meta(self.config),
+    def _build_state_normalizer(self) -> SingleFieldLinearNormalizer | None:
+        stats_payload, stats_file = load_magicbot_r0_runtime_stats(
+            self.args,
+            self.config,
+            self.ckpt_dir,
+            self.train_config,
             require_state=True,
         )
+        if stats_payload is None:
+            logging.warning("MagicBot_R0 state stats were not loaded; proprio will be passed without normalization.")
+            return None
+
         state_stats = stats_payload.get("state", {})
         if not state_stats:
             logging.warning("MagicBot_R0 stats contain no state section; proprio will be passed raw.")
@@ -529,6 +669,7 @@ def build_policy_and_transforms(args: "InferenceArgs", dtype: torch.dtype):
     config.device = "cuda" if torch.cuda.is_available() else "cpu"
 
     policy_cls, processor_transform_cls = resolve_policy_components(config)
+    train_config = load_train_config_or_none(ckpt_dir) if config.type == "MagicBot_R0" else None
     policy = policy_cls.from_pretrained(config=config, pretrained_name_or_path=ckpt_dir)
     policy.to(device=config.device, dtype=dtype).eval()
 
@@ -537,17 +678,12 @@ def build_policy_and_transforms(args: "InferenceArgs", dtype: torch.dtype):
         logging.info("%s eval mode: disabled DA3 teacher instantiation.", config.type)
 
     if config.type == "MagicBot_R0":
-        train_config = load_train_config_or_none(ckpt_dir)
         dataset_config = None if train_config is None else getattr(train_config, "dataset", None)
         if dataset_config is not None:
             dataset_name = getattr(dataset_config, "type", dataset_config.__class__.__name__)
             logging.info("Loaded MagicBot_R0 train_config dataset: %s", dataset_name)
-        if not getattr(policy, "_action_denorm_specs", None):
-            logging.warning(
-                "MagicBot_R0 action denormalization stats were not loaded. "
-                "Check that stats.json exists in the pretrained_model directory."
-            )
-        return policy, MagicBotR0RuntimeAdapter(args, config, ckpt_dir), None, config
+        maybe_load_magicbot_r0_action_postprocess(policy, args, config, ckpt_dir, train_config)
+        return policy, MagicBotR0RuntimeAdapter(args, config, ckpt_dir, train_config), None, config
 
     stats = load_json(ckpt_dir / "stats.json")[args.stats_key]
     stat_keys = ["min", "max", "mean", "std"]
