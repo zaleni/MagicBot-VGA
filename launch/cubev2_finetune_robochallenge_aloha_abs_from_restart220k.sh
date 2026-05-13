@@ -13,17 +13,17 @@ export POLICY_INIT_PATH="${POLICY_INIT_PATH:-${PRETRAINED_PATH:-/inspire/ssd/pro
 export JOB_NAME="${JOB_NAME:-cubev2-robochallenge_aloha-regular_only-abs-from_delta_restart220k-chunk50-finetune-$(date +'%Y_%m_%d_%H_%M_%S')}"
 export MASTER_PORT="${MASTER_PORT:-6690}"
 export SEED="${SEED:-442}"
-export BATCH_SIZE="${BATCH_SIZE:-10}"
+export BATCH_SIZE="${BATCH_SIZE:-12}"
 
 # Keep regular-only ALOHA by default, matching the delta restart run this
 # continues from.
 export ROBOCHALLENGE_ALOHA_EXTRA_TASKS="${ROBOCHALLENGE_ALOHA_EXTRA_TASKS-}"
 
 # Match the W1 abs-from-delta launcher defaults.
-export OPTIMIZER_LR="${OPTIMIZER_LR:-3.4e-5}"
-export SCHEDULER_WARMUP_STEPS="${SCHEDULER_WARMUP_STEPS:-1000}"
-export SCHEDULER_DECAY_LR="${SCHEDULER_DECAY_LR:-3.4e-6}"
-export STEPS="${STEPS:-140000}"
+export OPTIMIZER_LR="${OPTIMIZER_LR:-3.5e-5}"
+export SCHEDULER_WARMUP_STEPS="${SCHEDULER_WARMUP_STEPS:-900}"
+export SCHEDULER_DECAY_LR="${SCHEDULER_DECAY_LR:-3.5e-6}"
+export STEPS="${STEPS:-120000}"
 export ENABLE_IMAGE_AUG="${ENABLE_IMAGE_AUG:-true}"
 export IMAGE_AUG_PRESET="${IMAGE_AUG_PRESET:-pi05}"
 export WEIGHT_RULES_PATH="${WEIGHT_RULES_PATH:-configs/weight_rules_robochallenge_aloha_regular_gamma05.yaml}"
