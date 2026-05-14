@@ -25,6 +25,7 @@ os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.train import TrainPipelineConfig
@@ -38,6 +39,16 @@ from lerobot.policies.cubev2.transform_cubev2 import (
     Qwen3_VLProcessorTransformFn as CubeV2ProcessorTransformFn,
 )
 from lerobot.policies.factory import get_policy_class
+from lerobot.policies.MagicBot_R0.core.data.lerobot.utils.normalizer import (
+    SingleFieldLinearNormalizer,
+    load_dataset_stats_from_json,
+)
+from lerobot.policies.MagicBot_R0.dataset_magicbot_r0 import (
+    resolve_magicbot_r0_concat_layout,
+    resolve_magicbot_r0_video_size,
+)
+from lerobot.policies.MagicBot_R0.stats_adapter import ensure_magicbot_r0_stats_format
+from lerobot.policies.MagicBot_R0.text_cache import build_magicbot_r0_prompt
 from lerobot.policies.rtc import RTCConfig, RTCProcessor
 from lerobot.transforms.constants import get_mask_mapping
 from lerobot.transforms.core import NormalizeTransformFn, ResizeImagesWithPadFn, UnNormalizeTransformFn
@@ -55,7 +66,7 @@ CAMERA_ALIASES = {
     f"{OBS_IMAGES}.image2": ("cam_right_wrist", "right_wrist", "right", "image2"),
 }
 
-SUPPORTED_POLICY_TYPES = {"cubev2", "qwena1", "internvla_a1_3b"}
+SUPPORTED_POLICY_TYPES = {"cubev2", "qwena1", "internvla_a1_3b", "MagicBot_R0"}
 
 
 @dataclass
@@ -87,6 +98,18 @@ class ServeArgs:
     rtc_prefix_attention_schedule: str = "linear"
     disable_3d_teacher_for_eval: bool = True
     omit_visual_tokens_in_causal_inference: bool = True
+    magicbot_r0_model_id: str | None = None
+    magicbot_r0_tokenizer_model_id: str | None = None
+    magicbot_r0_action_dit_pretrained_path: str | None = None
+    magicbot_r0_future_3d_pretrained_path: str | None = None
+    magicbot_r0_load_text_encoder: bool = True
+    magicbot_r0_redirect_common_files: bool = True
+    magicbot_r0_skip_dit_load_from_pretrain: bool = True
+    magicbot_r0_state_key: str = "default"
+    magicbot_r0_video_height: int = 384
+    magicbot_r0_video_width: int = 320
+    magicbot_r0_standardize_video_size_by_cameras: bool = True
+    magicbot_r0_concat_multi_camera: str = "robotwin"
 
 
 def _env_fallback(value: str | None, env_name: str) -> str | None:
@@ -159,6 +182,39 @@ def parse_args() -> ServeArgs:
         default=True,
         help="Skip causal visual-generation middle tokens for action-only CubeV2 inference.",
     )
+    parser.add_argument("--magicbot_r0_model_id", default=None)
+    parser.add_argument("--magicbot_r0_tokenizer_model_id", default=None)
+    parser.add_argument("--magicbot_r0_action_dit_pretrained_path", default=None)
+    parser.add_argument("--magicbot_r0_future_3d_pretrained_path", default=None)
+    parser.add_argument(
+        "--magicbot_r0_load_text_encoder",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Load MagicBot_R0 text encoder so sync requests can send plain text prompts.",
+    )
+    parser.add_argument(
+        "--magicbot_r0_redirect_common_files",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    parser.add_argument(
+        "--magicbot_r0_skip_dit_load_from_pretrain",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    parser.add_argument("--magicbot_r0_state_key", default="default")
+    parser.add_argument("--magicbot_r0_video_height", type=int, default=384)
+    parser.add_argument("--magicbot_r0_video_width", type=int, default=320)
+    parser.add_argument(
+        "--magicbot_r0_standardize_video_size_by_cameras",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    parser.add_argument(
+        "--magicbot_r0_concat_multi_camera",
+        choices=["single", "horizontal", "vertical", "robotwin"],
+        default="robotwin",
+    )
     parsed = ServeArgs(**vars(parser.parse_args()))
     parsed.stats_key = _env_fallback(parsed.stats_key, "STATS_KEY")
     parsed.stats_path = _env_fallback(parsed.stats_path, "STATS_PATH")
@@ -175,6 +231,31 @@ def parse_args() -> ServeArgs:
     parsed.omit_visual_tokens_in_causal_inference = _bool_env_fallback(
         parsed.omit_visual_tokens_in_causal_inference,
         "OMIT_VISUAL_TOKENS_IN_CAUSAL_INFERENCE",
+    )
+    parsed.magicbot_r0_model_id = _env_fallback(parsed.magicbot_r0_model_id, "WAN_MODEL_ID")
+    parsed.magicbot_r0_tokenizer_model_id = _env_fallback(
+        parsed.magicbot_r0_tokenizer_model_id,
+        "WAN_TOKENIZER_MODEL_ID",
+    )
+    parsed.magicbot_r0_action_dit_pretrained_path = _env_fallback(
+        parsed.magicbot_r0_action_dit_pretrained_path,
+        "ACTION_DIT_PRETRAINED_PATH",
+    )
+    parsed.magicbot_r0_future_3d_pretrained_path = _env_fallback(
+        parsed.magicbot_r0_future_3d_pretrained_path,
+        "FUTURE_3D_PRETRAINED_PATH",
+    )
+    parsed.magicbot_r0_load_text_encoder = _bool_env_fallback(
+        parsed.magicbot_r0_load_text_encoder,
+        "MAGICBOT_R0_LOAD_TEXT_ENCODER",
+    )
+    parsed.magicbot_r0_redirect_common_files = _bool_env_fallback(
+        parsed.magicbot_r0_redirect_common_files,
+        "MAGICBOT_R0_REDIRECT_COMMON_FILES",
+    )
+    parsed.magicbot_r0_skip_dit_load_from_pretrain = _bool_env_fallback(
+        parsed.magicbot_r0_skip_dit_load_from_pretrain,
+        "MAGICBOT_R0_SKIP_DIT_LOAD_FROM_PRETRAIN",
     )
     return parsed
 
@@ -232,6 +313,29 @@ def apply_runtime_config_overrides(config: PreTrainedConfig, args: ServeArgs) ->
         config.da3_code_root = args.da3_code_root
     if config.type == "cubev2" and args.disable_3d_teacher_for_eval and hasattr(config, "lambda_3d"):
         config.lambda_3d = 0.0
+    if config.type == "MagicBot_R0":
+        if args.magicbot_r0_model_id is not None and hasattr(config, "model_id"):
+            config.model_id = args.magicbot_r0_model_id
+        if args.magicbot_r0_tokenizer_model_id is not None and hasattr(config, "tokenizer_model_id"):
+            config.tokenizer_model_id = args.magicbot_r0_tokenizer_model_id
+        if (
+            args.magicbot_r0_action_dit_pretrained_path is not None
+            and hasattr(config, "action_dit_pretrained_path")
+        ):
+            config.action_dit_pretrained_path = args.magicbot_r0_action_dit_pretrained_path
+        if (
+            args.magicbot_r0_future_3d_pretrained_path is not None
+            and hasattr(config, "future_3d_pretrained_path")
+        ):
+            config.future_3d_pretrained_path = args.magicbot_r0_future_3d_pretrained_path
+        if hasattr(config, "load_text_encoder"):
+            config.load_text_encoder = bool(args.magicbot_r0_load_text_encoder)
+        if hasattr(config, "redirect_common_files"):
+            config.redirect_common_files = bool(args.magicbot_r0_redirect_common_files)
+        if hasattr(config, "skip_dit_load_from_pretrain"):
+            config.skip_dit_load_from_pretrain = bool(args.magicbot_r0_skip_dit_load_from_pretrain)
+        if args.disable_3d_teacher_for_eval and hasattr(config, "lambda_3d"):
+            config.lambda_3d = 0.0
     if args.num_inference_steps is not None and hasattr(config, "num_inference_steps"):
         config.num_inference_steps = int(args.num_inference_steps)
 
@@ -250,6 +354,11 @@ def resolve_policy_components(config: PreTrainedConfig, *, rtc_enabled: bool):
                 "Set RTC_ENABLED=false for InternVLA-A1."
             )
         return get_policy_class(config.type), QwenA1ProcessorTransformFn
+
+    if config.type == "MagicBot_R0":
+        if rtc_enabled:
+            raise NotImplementedError("MagicBot_R0 Real_Lift2 serving currently supports sync mode only.")
+        return get_policy_class(config.type), None
 
     policy_cls = CubeV2RTCPolicy if rtc_enabled else get_policy_class(config.type)
     return policy_cls, CubeV2ProcessorTransformFn
@@ -317,6 +426,226 @@ def coerce_history(image_value: Any) -> np.ndarray:
     return np.stack([frames[0], frames[-1]], axis=0)
 
 
+def magicbot_r0_shape_meta(config: PreTrainedConfig) -> dict[str, list[dict[str, object]]]:
+    action_dim = int(getattr(config, "action_dim", 14))
+    proprio_dim = int(getattr(config, "proprio_dim", action_dim))
+    return {
+        "action": [{"key": "default", "raw_shape": action_dim, "shape": action_dim}],
+        "state": [{"key": "default", "raw_shape": proprio_dim, "shape": proprio_dim}],
+    }
+
+
+def _select_magicbot_r0_stats_payload(
+    stats_root: dict[str, Any],
+    requested_key: str | None,
+) -> tuple[str, dict[str, Any]]:
+    if "magicbot_r0" in stats_root:
+        return requested_key or "real_lift2", stats_root
+
+    if requested_key is not None:
+        if requested_key in stats_root and isinstance(stats_root[requested_key], dict):
+            return requested_key, stats_root[requested_key]
+        return requested_key, stats_root
+
+    if "real_lift2" in stats_root and isinstance(stats_root["real_lift2"], dict):
+        return "real_lift2", stats_root["real_lift2"]
+
+    if len(stats_root) == 1:
+        key = next(iter(stats_root))
+        value = stats_root[key]
+        if isinstance(value, dict):
+            return key, value
+
+    return "real_lift2", stats_root
+
+
+def resolve_magicbot_r0_stats(
+    stats_path: Path,
+    requested_key: str | None,
+    config: PreTrainedConfig,
+) -> tuple[str, dict[str, Any]]:
+    raw_payload = load_dataset_stats_from_json(str(stats_path))
+    stats_key, selected_payload = _select_magicbot_r0_stats_payload(raw_payload, requested_key)
+    return stats_key, ensure_magicbot_r0_stats_format(
+        selected_payload,
+        shape_meta=magicbot_r0_shape_meta(config),
+        require_state=True,
+    )
+
+
+def _infer_magicbot_r0_action_dim(stats_payload: dict[str, Any], config: PreTrainedConfig) -> int:
+    action_stats = stats_payload.get("action", {})
+    if isinstance(action_stats, dict):
+        for key_stats in action_stats.values():
+            if not isinstance(key_stats, dict):
+                continue
+            for stat_name in ("global_mean", "mean", "global_min", "min"):
+                stat_value = key_stats.get(stat_name)
+                if stat_value is None:
+                    continue
+                array = np.asarray(stat_value)
+                if array.ndim == 0:
+                    return 1
+                return int(array.shape[-1])
+    return int(getattr(config, "action_dim", 14))
+
+
+def resize_magicbot_r0_video_view(video: torch.Tensor, size: tuple[int, int]) -> torch.Tensor:
+    try:
+        return F.interpolate(video, size=size, mode="bilinear", align_corners=False, antialias=True)
+    except TypeError:
+        return F.interpolate(video, size=size, mode="bilinear", align_corners=False)
+
+
+def concat_magicbot_r0_camera_views(
+    video: torch.Tensor,
+    target_video_size: tuple[int, int],
+    concat_layout: str,
+) -> torch.Tensor:
+    num_cameras = int(video.shape[0])
+    target_h, target_w = target_video_size
+    if concat_layout == "single":
+        if num_cameras != 1:
+            raise ValueError(f"`single` camera layout requires 1 camera, got {num_cameras}.")
+        return resize_magicbot_r0_video_view(video[0], target_video_size)
+
+    if concat_layout == "horizontal":
+        if target_w % num_cameras != 0:
+            raise ValueError(
+                "horizontal camera layout requires target width divisible by camera count: "
+                f"width={target_w}, num_cameras={num_cameras}."
+            )
+        tile_w = target_w // num_cameras
+        return torch.cat(
+            [resize_magicbot_r0_video_view(video[view_idx], (target_h, tile_w)) for view_idx in range(num_cameras)],
+            dim=-1,
+        )
+
+    if concat_layout == "vertical":
+        if target_h % num_cameras != 0:
+            raise ValueError(
+                "vertical camera layout requires target height divisible by camera count: "
+                f"height={target_h}, num_cameras={num_cameras}."
+            )
+        tile_h = target_h // num_cameras
+        return torch.cat(
+            [resize_magicbot_r0_video_view(video[view_idx], (tile_h, target_w)) for view_idx in range(num_cameras)],
+            dim=-2,
+        )
+
+    if concat_layout == "robotwin":
+        if num_cameras != 3:
+            raise ValueError(f"`robotwin` camera layout requires exactly 3 cameras, got {num_cameras}.")
+        if target_h % 3 != 0 or target_w % 2 != 0:
+            raise ValueError(
+                "robotwin camera layout requires target height divisible by 3 and width divisible by 2: "
+                f"height={target_h}, width={target_w}."
+            )
+        bottom_h = target_h // 3
+        top_h = target_h - bottom_h
+        half_w = target_w // 2
+        cam_top = resize_magicbot_r0_video_view(video[0], (top_h, target_w))
+        cam_left = resize_magicbot_r0_video_view(video[1], (bottom_h, half_w))
+        cam_right = resize_magicbot_r0_video_view(video[2], (bottom_h, half_w))
+        return torch.cat([cam_top, torch.cat([cam_left, cam_right], dim=-1)], dim=-2)
+
+    raise ValueError(
+        f"Invalid MagicBot_R0 concat layout: {concat_layout}. "
+        "Expected one of: single, horizontal, vertical, robotwin."
+    )
+
+
+class MagicBotR0RealLift2Adapter:
+    def __init__(
+        self,
+        args: ServeArgs,
+        config: PreTrainedConfig,
+        stats_payload: dict[str, Any],
+        device: str,
+        dtype: torch.dtype,
+    ):
+        self.args = args
+        self.config = config
+        self.device = device
+        self.dtype = dtype
+        self.target_proprio_dim = int(getattr(config, "proprio_dim", 14))
+        self.state_normalizer = self._build_state_normalizer(stats_payload)
+
+    @staticmethod
+    def _image_to_chw_float(image: np.ndarray) -> torch.Tensor:
+        tensor = torch.as_tensor(image)
+        if tensor.ndim != 3 or tensor.shape[-1] != 3:
+            raise ValueError(f"Expected HWC RGB image, got shape {tuple(tensor.shape)}")
+        return tensor.permute(2, 0, 1).contiguous().to(torch.float32) / 255.0
+
+    def _build_state_normalizer(self, stats_payload: dict[str, Any]) -> SingleFieldLinearNormalizer | None:
+        state_stats = stats_payload.get("state", {})
+        if not state_stats:
+            logging.warning("MagicBot_R0 stats contain no state section; proprio will be passed raw.")
+            return None
+
+        state_key = self.args.magicbot_r0_state_key
+        if state_key not in state_stats:
+            if len(state_stats) == 1:
+                state_key = next(iter(state_stats))
+            else:
+                raise KeyError(
+                    f"MagicBot_R0 state stats key {state_key!r} not found. Available keys: {list(state_stats.keys())}"
+                )
+
+        selected_stats = {
+            key.removeprefix("global_"): value
+            for key, value in state_stats[state_key].items()
+            if key.startswith("global_")
+        }
+        mode = str(getattr(self.config, "action_norm_default_mode", "z-score"))
+        exception_mode = getattr(self.config, "action_norm_exception_mode", None) or {}
+        mode = exception_mode.get("state", {}).get(state_key, mode)
+        return SingleFieldLinearNormalizer(stats=selected_stats, mode=mode)
+
+    def _normalize_proprio(self, state: np.ndarray) -> torch.Tensor:
+        proprio = torch.as_tensor(state, dtype=torch.float32).flatten()
+        if self.state_normalizer is not None:
+            proprio = self.state_normalizer.forward(proprio)
+        if proprio.numel() < self.target_proprio_dim:
+            proprio = F.pad(proprio, (0, self.target_proprio_dim - proprio.numel()))
+        elif proprio.numel() > self.target_proprio_dim:
+            proprio = proprio[: self.target_proprio_dim]
+        return proprio.unsqueeze(0).to(device=self.device, dtype=self.dtype)
+
+    def build_inputs(
+        self,
+        *,
+        head_history: np.ndarray,
+        left_history: np.ndarray,
+        right_history: np.ndarray,
+        state: np.ndarray,
+        task: str,
+    ) -> dict[str, Any]:
+        camera_images = [
+            self._image_to_chw_float(head_history[-1]),
+            self._image_to_chw_float(left_history[-1]),
+            self._image_to_chw_float(right_history[-1]),
+        ]
+        video = torch.stack(camera_images, dim=0).unsqueeze(1)
+        target_video_size = resolve_magicbot_r0_video_size(
+            len(camera_images),
+            (self.args.magicbot_r0_video_height, self.args.magicbot_r0_video_width),
+            bool(self.args.magicbot_r0_standardize_video_size_by_cameras),
+        )
+        concat_layout = resolve_magicbot_r0_concat_layout(
+            len(camera_images),
+            self.args.magicbot_r0_concat_multi_camera,
+        )
+        input_image = concat_magicbot_r0_camera_views(video, target_video_size, concat_layout)
+        input_image = (input_image - 0.5) / 0.5
+        return {
+            "input_image": input_image.to(device=self.device, dtype=self.dtype),
+            "proprio": self._normalize_proprio(state),
+            "prompt": [build_magicbot_r0_prompt(task)],
+        }
+
+
 class MagicBotRemotePolicy:
     def __init__(self, args: ServeArgs):
         self.args = args
@@ -326,6 +655,8 @@ class MagicBotRemotePolicy:
         config = PreTrainedConfig.from_pretrained(self.ckpt_dir)
         apply_runtime_config_overrides(config, args)
         policy_cls, processor_transform_cls = resolve_policy_components(config, rtc_enabled=args.rtc_enabled)
+        self.is_magicbot_r0 = config.type == "MagicBot_R0"
+        self.magicbot_r0_adapter: MagicBotR0RealLift2Adapter | None = None
         self.device = resolve_device(args.device)
         self.load_device = resolve_device(args.load_device) if args.load_device else ("cpu" if self.device != "cpu" else "cpu")
         self.cosmos_device = resolve_device(args.cosmos_device) if args.cosmos_device else self.device
@@ -348,9 +679,10 @@ class MagicBotRemotePolicy:
             self.runtime_dtype,
         )
 
+        action_horizon = int(getattr(config, "action_horizon", getattr(config, "chunk_size", 1)))
         if args.infer_horizon is not None:
-            config.n_action_steps = min(args.infer_horizon, config.chunk_size)
-        self.infer_horizon = int(args.infer_horizon or getattr(config, "n_action_steps", config.chunk_size))
+            config.n_action_steps = min(args.infer_horizon, action_horizon)
+        self.infer_horizon = int(args.infer_horizon or getattr(config, "n_action_steps", action_horizon))
 
         self.policy = policy_cls.from_pretrained(config=config, pretrained_name_or_path=self.ckpt_dir)
         if config.type == "cubev2" and hasattr(self.policy, "model"):
@@ -369,41 +701,59 @@ class MagicBotRemotePolicy:
             raise FileNotFoundError(
                 f"stats.json not found at {stats_path}. Pass --stats_path if it was saved elsewhere."
             )
-        self.stats_key, stats = resolve_stats(stats_path, args.stats_key)
-        stat_keys = ["min", "max", "mean", "std"]
-        self.state_stats = {
-            OBS_STATE: {key: np.asarray(stats[OBS_STATE][key]) for key in stat_keys}
-        }
-        self.action_stats = {
-            "action": {key: np.asarray(stats["action"][key]) for key in stat_keys}
-        }
-        self.action_mean = np.asarray(self.action_stats["action"]["mean"], dtype=np.float32)
-        self.action_std = np.asarray(self.action_stats["action"]["std"], dtype=np.float32)
-        self.target_action_dim = int(self.action_stats["action"]["mean"].shape[0])
+        if self.is_magicbot_r0:
+            self.stats_key, magicbot_r0_stats = resolve_magicbot_r0_stats(stats_path, args.stats_key, config)
+            self.policy.set_action_postprocess_from_stats(magicbot_r0_stats)
+            self.target_action_dim = _infer_magicbot_r0_action_dim(magicbot_r0_stats, config)
+            self.action_mean = np.zeros((self.target_action_dim,), dtype=np.float32)
+            self.action_std = np.ones((self.target_action_dim,), dtype=np.float32)
+            self.magicbot_r0_adapter = MagicBotR0RealLift2Adapter(
+                args=args,
+                config=config,
+                stats_payload=magicbot_r0_stats,
+                device=self.device,
+                dtype=self.runtime_dtype,
+            )
+            self.resize_fn = None
+            self.normalize_state_fn = None
+            self.unnormalize_action_fn = None
+            self.processor_fn = None
+        else:
+            self.stats_key, stats = resolve_stats(stats_path, args.stats_key)
+            stat_keys = ["min", "max", "mean", "std"]
+            self.state_stats = {
+                OBS_STATE: {key: np.asarray(stats[OBS_STATE][key]) for key in stat_keys}
+            }
+            self.action_stats = {
+                "action": {key: np.asarray(stats["action"][key]) for key in stat_keys}
+            }
+            self.action_mean = np.asarray(self.action_stats["action"]["mean"], dtype=np.float32)
+            self.action_std = np.asarray(self.action_stats["action"]["std"], dtype=np.float32)
+            self.target_action_dim = int(self.action_stats["action"]["mean"].shape[0])
 
-        self.resize_fn = ResizeImagesWithPadFn(height=args.resize_size, width=args.resize_size)
-        self.normalize_state_fn = NormalizeTransformFn(
-            selected_keys=[OBS_STATE],
-            mode="mean_std",
-            norm_stats=self.state_stats,
-        )
-        self.unnormalize_action_fn = UnNormalizeTransformFn(
-            selected_keys=["action"],
-            mode="mean_std",
-            norm_stats=self.action_stats,
-        )
+            self.resize_fn = ResizeImagesWithPadFn(height=args.resize_size, width=args.resize_size)
+            self.normalize_state_fn = NormalizeTransformFn(
+                selected_keys=[OBS_STATE],
+                mode="mean_std",
+                norm_stats=self.state_stats,
+            )
+            self.unnormalize_action_fn = UnNormalizeTransformFn(
+                selected_keys=["action"],
+                mode="mean_std",
+                norm_stats=self.action_stats,
+            )
 
-        processor_path = (
-            args.qwen3_vl_processor_path
-            or getattr(config, "qwen3_vl_processor_path", None)
-            or getattr(config, "qwen3_vl_pretrained_path", None)
-        )
-        if processor_path is None:
-            raise ValueError("Failed to resolve a Qwen3-VL processor path for MagicBot serving.")
-        self.processor_fn = processor_transform_cls(
-            pretrained_model_name_or_path=processor_path,
-            max_length=int(getattr(config, "tokenizer_max_length", 48)),
-        )
+            processor_path = (
+                args.qwen3_vl_processor_path
+                or getattr(config, "qwen3_vl_processor_path", None)
+                or getattr(config, "qwen3_vl_pretrained_path", None)
+            )
+            if processor_path is None:
+                raise ValueError("Failed to resolve a Qwen3-VL processor path for MagicBot serving.")
+            self.processor_fn = processor_transform_cls(
+                pretrained_model_name_or_path=processor_path,
+                max_length=int(getattr(config, "tokenizer_max_length", 48)),
+            )
 
         train_action_mode = None if self.train_cfg is None else getattr(self.train_cfg.dataset, "action_mode", None)
         if train_action_mode is not None:
@@ -437,7 +787,13 @@ class MagicBotRemotePolicy:
 
         self.delta_mask = None
         if self.action_mode == "delta":
-            self.delta_mask = get_mask_mapping(self.stats_key).detach().cpu().numpy().astype(np.float32)
+            try:
+                self.delta_mask = get_mask_mapping(self.stats_key).detach().cpu().numpy().astype(np.float32)
+            except KeyError:
+                if self.is_magicbot_r0:
+                    self.delta_mask = get_mask_mapping("real_lift2").detach().cpu().numpy().astype(np.float32)
+                else:
+                    raise
 
         self._metadata = {
             "model_type": config.type,
@@ -456,6 +812,7 @@ class MagicBotRemotePolicy:
             "omit_visual_tokens_in_causal_inference": bool(
                 getattr(getattr(self.policy, "model", None), "omit_visual_tokens_in_causal_inference", True)
             ),
+            "magicbot_r0_sync_only": bool(self.is_magicbot_r0),
         }
 
     @property
@@ -535,6 +892,26 @@ class MagicBotRemotePolicy:
 
         return inputs, state
 
+    def _prepare_magicbot_r0_inputs(self, obs: dict[str, Any]) -> tuple[dict[str, Any], np.ndarray]:
+        images = obs.get("images")
+        if not isinstance(images, dict):
+            raise KeyError("Request is missing `images` dictionary.")
+        if self.magicbot_r0_adapter is None:
+            raise RuntimeError("MagicBot_R0 adapter is not initialized.")
+
+        head_history, _ = self._resolve_image_history(images, f"{OBS_IMAGES}.image0")
+        left_history, _ = self._resolve_image_history(images, f"{OBS_IMAGES}.image1")
+        right_history, _ = self._resolve_image_history(images, f"{OBS_IMAGES}.image2")
+        state = self._resolve_state(obs)
+        prompt = self._resolve_prompt(obs)
+        return self.magicbot_r0_adapter.build_inputs(
+            head_history=head_history,
+            left_history=left_history,
+            right_history=right_history,
+            state=state,
+            task=prompt,
+        ), state
+
     def _coerce_prev_chunk_array(self, prev_chunk_value: Any) -> np.ndarray:
         prev_chunk_np = np.asarray(prev_chunk_value, dtype=np.float32)
         if prev_chunk_np.ndim == 2:
@@ -591,8 +968,14 @@ class MagicBotRemotePolicy:
         if obs.get("reset") or obs.get("timestep") == 0:
             self.policy.reset()
 
-        inputs, state = self._prepare_inputs(obs)
+        inputs, state = (
+            self._prepare_magicbot_r0_inputs(obs)
+            if self.is_magicbot_r0
+            else self._prepare_inputs(obs)
+        )
         if self.rtc_processor is not None:
+            if self.is_magicbot_r0:
+                raise NotImplementedError("MagicBot_R0 Real_Lift2 serving currently supports sync mode only.")
             inference_delay = None
             prev_chunk_left_over = None
             if obs.get("inference_delay") is not None:
@@ -610,15 +993,21 @@ class MagicBotRemotePolicy:
                 )
         else:
             with torch.no_grad():
-                action_pred, _ = self.policy.predict_action_chunk(
-                    inputs,
-                    decode_image=False,
-                )
+                if self.is_magicbot_r0:
+                    action_pred = self.policy.predict_action_chunk(inputs)
+                else:
+                    action_pred, _ = self.policy.predict_action_chunk(
+                        inputs,
+                        decode_image=False,
+                    )
 
         if action_pred.ndim != 3:
             raise RuntimeError(f"Unexpected action prediction shape: {tuple(action_pred.shape)}")
         model_action_pred = action_pred[0, : self.infer_horizon, : self.target_action_dim]
-        action_pred = self.unnormalize_action_fn({"action": model_action_pred})["action"]
+        if self.is_magicbot_r0:
+            action_pred = model_action_pred
+        else:
+            action_pred = self.unnormalize_action_fn({"action": model_action_pred})["action"]
         model_action_np = model_action_pred.detach().cpu().numpy().astype(np.float32)
         action_np = action_pred.detach().cpu().numpy().astype(np.float32)
 
