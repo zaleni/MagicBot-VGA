@@ -671,6 +671,15 @@ def build_policy_and_transforms(args: "InferenceArgs", dtype: torch.dtype):
     policy_cls, processor_transform_cls = resolve_policy_components(config)
     train_config = load_train_config_or_none(ckpt_dir) if config.type == "MagicBot_R0" else None
     policy = policy_cls.from_pretrained(config=config, pretrained_name_or_path=ckpt_dir)
+    if config.type == "cubev2" and hasattr(policy, "model"):
+        setattr(
+            policy.model,
+            "omit_visual_tokens_in_causal_inference",
+            resolve_bool_env(
+                args.omit_visual_tokens_in_causal_inference,
+                "OMIT_VISUAL_TOKENS_IN_CAUSAL_INFERENCE",
+            ),
+        )
     policy.to(device=config.device, dtype=dtype).eval()
 
     logging.info(f"Resolved policy type: {config.type}")
@@ -758,6 +767,7 @@ class InferenceArgs:
     da3_model_path_or_name: str | None = None
     da3_code_root: str | None = None
     disable_3d_teacher_for_eval: bool = False
+    omit_visual_tokens_in_causal_inference: bool = True
     magicbot_r0_model_id: str | None = None
     magicbot_r0_tokenizer_model_id: str | None = None
     magicbot_r0_action_dit_pretrained_path: str | None = None

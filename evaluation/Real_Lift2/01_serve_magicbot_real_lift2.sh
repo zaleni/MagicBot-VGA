@@ -24,6 +24,7 @@ RTC_EXECUTION_HORIZON="${RTC_EXECUTION_HORIZON:-10}"
 RTC_MAX_GUIDANCE_WEIGHT="${RTC_MAX_GUIDANCE_WEIGHT:-10.0}"
 RTC_PREFIX_ATTENTION_SCHEDULE="${RTC_PREFIX_ATTENTION_SCHEDULE:-exp}"
 DISABLE_3D_TEACHER_FOR_EVAL="${DISABLE_3D_TEACHER_FOR_EVAL:-true}"
+OMIT_VISUAL_TOKENS_IN_CAUSAL_INFERENCE="${OMIT_VISUAL_TOKENS_IN_CAUSAL_INFERENCE:-true}"
 
 if [[ -z "${CHECKPOINT_DIR}" ]]; then
   echo "Please set CHECKPOINT_DIR to a MagicBot checkpoint step dir or pretrained_model dir."
@@ -55,6 +56,20 @@ case "${DISABLE_3D_TEACHER_FOR_EVAL,,}" in
     ;;
   *)
     echo "Invalid DISABLE_3D_TEACHER_FOR_EVAL=${DISABLE_3D_TEACHER_FOR_EVAL}"
+    echo "Expected one of: true/false, 1/0, yes/no, on/off"
+    exit 1
+    ;;
+esac
+
+case "${OMIT_VISUAL_TOKENS_IN_CAUSAL_INFERENCE,,}" in
+  true|1|yes|y|on)
+    ARGS+=(--omit_visual_tokens_in_causal_inference)
+    ;;
+  false|0|no|n|off)
+    ARGS+=(--no-omit_visual_tokens_in_causal_inference)
+    ;;
+  *)
+    echo "Invalid OMIT_VISUAL_TOKENS_IN_CAUSAL_INFERENCE=${OMIT_VISUAL_TOKENS_IN_CAUSAL_INFERENCE}"
     echo "Expected one of: true/false, 1/0, yes/no, on/off"
     exit 1
     ;;

@@ -689,6 +689,7 @@ class CubeV2Model(nn.Module):
     def __init__(self, config: CubeV2Config):
         super().__init__()
         self.config = config
+        self.omit_visual_tokens_in_causal_inference = True
         self._frozen_eval_modules: list[nn.Module] = []
         self.lora_module_counts: dict[str, int] = {}
 
@@ -1568,6 +1569,99 @@ class CubeV2Model(nn.Module):
         embs, pad_masks, att_masks = self.append_future_query_tokens(embs, pad_masks, att_masks)
         return embs, pad_masks, att_masks
 
+    def infer_middle_visual_token_count(self, images: torch.Tensor) -> int:
+        """Infer how many visual middle tokens would be produced without running Cosmos."""
+        _, num_views, timesteps = images.shape[:3]
+        # embed_middle always resizes to 256 before the Cosmos CI8x8 tokenizer,
+        # then applies the stride=scale_factor downsample projection.
+        cosmos_latent_h = 256 // 8
+        cosmos_latent_w = 256 // 8
+        grid_h = cosmos_latent_h // int(self.config.scale_factor)
+        grid_w = cosmos_latent_w // int(self.config.scale_factor)
+        return int(num_views * timesteps * grid_h * grid_w)
+
+    def embed_middle_queries_only(
+        self,
+        batch_size: int,
+        device: torch.device,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if self.future_3d_queries is None:
+            raise RuntimeError("causal query-only inference requires enabled 3D query tokens")
+
+        query_tokens = self.future_3d_queries.expand(batch_size, -1, -1).to(device=device)
+        query_pad_masks = torch.ones(
+            batch_size,
+            query_tokens.shape[1],
+            dtype=torch.bool,
+            device=device,
+        )
+        query_att_masks = torch.zeros(
+            batch_size,
+            query_tokens.shape[1],
+            dtype=torch.bool,
+            device=device,
+        )
+        if query_tokens.shape[1] > 0:
+            query_att_masks[:, 0] = True
+
+        self.middle_visual_token_count = 0
+        self.middle_visual_tokens_per_view = 0
+        self.middle_query_token_count = query_tokens.shape[1]
+        self.middle_total_token_count = query_tokens.shape[1]
+        return query_tokens, query_pad_masks, query_att_masks
+
+    def get_position_ids_with_omitted_middle_visual_tokens(
+        self,
+        lang_tokens: torch.Tensor,
+        image_grid_thw: torch.Tensor,
+        prefix_pad_masks: torch.Tensor,
+        middle_pad_masks: torch.Tensor,
+        suffix_pad_masks: torch.Tensor,
+        virtual_visual_token_count: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if virtual_visual_token_count <= 0:
+            pad_masks = torch.cat([prefix_pad_masks, middle_pad_masks, suffix_pad_masks], dim=1)
+            return self.get_position_ids(lang_tokens, image_grid_thw, pad_masks)
+
+        batch_size = prefix_pad_masks.shape[0]
+        virtual_visual_pad_masks = torch.ones(
+            batch_size,
+            virtual_visual_token_count,
+            dtype=prefix_pad_masks.dtype,
+            device=prefix_pad_masks.device,
+        )
+        position_pad_masks = torch.cat(
+            [
+                prefix_pad_masks,
+                virtual_visual_pad_masks,
+                middle_pad_masks,
+                suffix_pad_masks,
+            ],
+            dim=1,
+        )
+        full_position_ids, rope_deltas = self.get_position_ids(lang_tokens, image_grid_thw, position_pad_masks)
+
+        prefix_len = prefix_pad_masks.shape[1]
+        middle_len = middle_pad_masks.shape[1]
+        suffix_len = suffix_pad_masks.shape[1]
+        keep_indices = torch.cat(
+            [
+                torch.arange(0, prefix_len, device=prefix_pad_masks.device),
+                torch.arange(
+                    prefix_len + virtual_visual_token_count,
+                    prefix_len + virtual_visual_token_count + middle_len,
+                    device=prefix_pad_masks.device,
+                ),
+                torch.arange(
+                    prefix_len + virtual_visual_token_count + middle_len,
+                    prefix_len + virtual_visual_token_count + middle_len + suffix_len,
+                    device=prefix_pad_masks.device,
+                ),
+            ],
+            dim=0,
+        )
+        return full_position_ids.index_select(-1, keep_indices), rope_deltas
+
     def embed_suffix(self, state, noisy_actions, timestep):
         """Embed state, noisy_actions, timestep to prepare for Expert Gemma processing."""
         embs = []
@@ -1907,9 +2001,22 @@ class CubeV2Model(nn.Module):
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
             pixel_values, image_grid_thw, lang_tokens, lang_masks
         )
-        middle_embs, middle_pad_masks, middle_att_masks = self.embed_middle(
-            images[:, :, :2], img_masks,
+        causal_action_only_fast_path = (
+            not decode_image
+            and bool(getattr(self, "omit_visual_tokens_in_causal_inference", True))
         )
+        middle_images = images[:, :, :2]
+        virtual_visual_token_count = 0
+        if causal_action_only_fast_path:
+            virtual_visual_token_count = self.infer_middle_visual_token_count(middle_images)
+            middle_embs, middle_pad_masks, middle_att_masks = self.embed_middle_queries_only(
+                batch_size=bsize,
+                device=device,
+            )
+        else:
+            middle_embs, middle_pad_masks, middle_att_masks = self.embed_middle(
+                middle_images, img_masks,
+            )
 
         zero_actions = torch.zeros(
             bsize,
@@ -1936,7 +2043,17 @@ class CubeV2Model(nn.Module):
             prefix_len=prefix_pad_masks.shape[1],
         )
         att_2d_masks_4d = self._prepare_attention_masks_4d(att_2d_masks)
-        position_ids, rope_deltas = self.get_position_ids(lang_tokens, image_grid_thw, pad_masks)
+        if causal_action_only_fast_path:
+            position_ids, rope_deltas = self.get_position_ids_with_omitted_middle_visual_tokens(
+                lang_tokens,
+                image_grid_thw,
+                prefix_pad_masks,
+                middle_pad_masks,
+                suffix_pad_masks,
+                virtual_visual_token_count,
+            )
+        else:
+            position_ids, rope_deltas = self.get_position_ids(lang_tokens, image_grid_thw, pad_masks)
         del rope_deltas
 
         dt = -1.0 / num_steps

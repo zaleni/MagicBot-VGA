@@ -86,10 +86,23 @@ class ServeArgs:
     rtc_max_guidance_weight: float = 10.0
     rtc_prefix_attention_schedule: str = "linear"
     disable_3d_teacher_for_eval: bool = True
+    omit_visual_tokens_in_causal_inference: bool = True
 
 
 def _env_fallback(value: str | None, env_name: str) -> str | None:
     return value if value is not None else os.environ.get(env_name)
+
+
+def _bool_env_fallback(value: bool, env_name: str) -> bool:
+    env_value = os.environ.get(env_name)
+    if env_value is None:
+        return value
+    normalized = env_value.strip().lower()
+    if normalized in {"1", "true", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "n", "off"}:
+        return False
+    raise ValueError(f"Environment variable {env_name} must be boolean-like, got {env_value!r}.")
 
 
 def parse_args() -> ServeArgs:
@@ -139,6 +152,13 @@ def parse_args() -> ServeArgs:
         action=argparse.BooleanOptionalAction,
         default=True,
     )
+    parser.add_argument(
+        "--omit_visual_tokens_in_causal_inference",
+        "--omit-visual-tokens-in-causal-inference",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Skip causal visual-generation middle tokens for action-only CubeV2 inference.",
+    )
     parsed = ServeArgs(**vars(parser.parse_args()))
     parsed.stats_key = _env_fallback(parsed.stats_key, "STATS_KEY")
     parsed.stats_path = _env_fallback(parsed.stats_path, "STATS_PATH")
@@ -152,6 +172,10 @@ def parse_args() -> ServeArgs:
     parsed.da3_model_path_or_name = _env_fallback(parsed.da3_model_path_or_name, "DA3_MODEL_PATH_OR_NAME")
     parsed.da3_code_root = _env_fallback(parsed.da3_code_root, "DA3_CODE_ROOT")
     parsed.action_mode = _env_fallback(parsed.action_mode, "ACTION_MODE")
+    parsed.omit_visual_tokens_in_causal_inference = _bool_env_fallback(
+        parsed.omit_visual_tokens_in_causal_inference,
+        "OMIT_VISUAL_TOKENS_IN_CAUSAL_INFERENCE",
+    )
     return parsed
 
 
@@ -329,6 +353,12 @@ class MagicBotRemotePolicy:
         self.infer_horizon = int(args.infer_horizon or getattr(config, "n_action_steps", config.chunk_size))
 
         self.policy = policy_cls.from_pretrained(config=config, pretrained_name_or_path=self.ckpt_dir)
+        if config.type == "cubev2" and hasattr(self.policy, "model"):
+            setattr(
+                self.policy.model,
+                "omit_visual_tokens_in_causal_inference",
+                bool(args.omit_visual_tokens_in_causal_inference),
+            )
         self.policy.config.device = self.device
         setattr(self.policy.config, "cosmos_device", self.cosmos_device)
         self.policy.to(device=self.device, dtype=self.runtime_dtype).eval()
@@ -423,6 +453,9 @@ class MagicBotRemotePolicy:
             "rtc_execution_horizon": int(args.rtc_execution_horizon),
             "rtc_max_guidance_weight": float(args.rtc_max_guidance_weight),
             "rtc_prefix_attention_schedule": args.rtc_prefix_attention_schedule,
+            "omit_visual_tokens_in_causal_inference": bool(
+                getattr(getattr(self.policy, "model", None), "omit_visual_tokens_in_causal_inference", True)
+            ),
         }
 
     @property
