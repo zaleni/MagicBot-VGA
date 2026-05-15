@@ -643,17 +643,23 @@ class MagicBotR0RealLift2Adapter:
     def build_inputs(
         self,
         *,
-        head_history: np.ndarray,
-        left_history: np.ndarray,
-        right_history: np.ndarray,
+        camera_histories: list[np.ndarray] | None = None,
+        head_history: np.ndarray | None = None,
+        left_history: np.ndarray | None = None,
+        right_history: np.ndarray | None = None,
         state: np.ndarray,
         task: str,
     ) -> dict[str, Any]:
-        camera_images = [
-            self._image_to_chw_float(head_history[-1]),
-            self._image_to_chw_float(left_history[-1]),
-            self._image_to_chw_float(right_history[-1]),
-        ]
+        if camera_histories is None:
+            camera_histories = [
+                history
+                for history in (head_history, left_history, right_history)
+                if history is not None
+            ]
+        if not camera_histories:
+            raise ValueError("MagicBot_R0 serving requires at least one valid camera view.")
+
+        camera_images = [self._image_to_chw_float(history[-1]) for history in camera_histories]
         video = torch.stack(camera_images, dim=0).unsqueeze(1)
         target_video_size = resolve_magicbot_r0_video_size(
             len(camera_images),
@@ -927,15 +933,22 @@ class MagicBotRemotePolicy:
         if self.magicbot_r0_adapter is None:
             raise RuntimeError("MagicBot_R0 adapter is not initialized.")
 
-        head_history, _ = self._resolve_image_history(images, f"{OBS_IMAGES}.image0")
-        left_history, _ = self._resolve_image_history(images, f"{OBS_IMAGES}.image1")
-        right_history, _ = self._resolve_image_history(images, f"{OBS_IMAGES}.image2")
+        head_history, head_mask = self._resolve_image_history(images, f"{OBS_IMAGES}.image0")
+        left_history, left_mask = self._resolve_image_history(images, f"{OBS_IMAGES}.image1")
+        right_history, right_mask = self._resolve_image_history(images, f"{OBS_IMAGES}.image2")
         state = self._resolve_state(obs)
         prompt = self._resolve_prompt(obs)
+        camera_histories = [
+            history
+            for history, mask in (
+                (head_history, head_mask),
+                (left_history, left_mask),
+                (right_history, right_mask),
+            )
+            if mask
+        ]
         return self.magicbot_r0_adapter.build_inputs(
-            head_history=head_history,
-            left_history=left_history,
-            right_history=right_history,
+            camera_histories=camera_histories,
             state=state,
             task=prompt,
         ), state
