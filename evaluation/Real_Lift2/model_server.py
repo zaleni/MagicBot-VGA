@@ -128,6 +128,20 @@ def _bool_env_fallback(value: bool, env_name: str) -> bool:
     raise ValueError(f"Environment variable {env_name} must be boolean-like, got {env_value!r}.")
 
 
+def add_bool_arg(
+    parser: argparse.ArgumentParser,
+    *flags: str,
+    dest: str,
+    default: bool,
+    help_text: str | None = None,
+) -> None:
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(*flags, dest=dest, action="store_true", help=help_text)
+    no_flags = [f"--no-{flag[2:]}" for flag in flags if flag.startswith("--")]
+    group.add_argument(*no_flags, dest=dest, action="store_false")
+    parser.set_defaults(**{dest: default})
+
+
 def parse_args() -> ServeArgs:
     parser = argparse.ArgumentParser(description="Serve a fine-tuned MagicBot policy for Real_Lift2.")
     parser.add_argument("--ckpt_path", required=True, help="Checkpoint step dir or pretrained_model dir.")
@@ -155,12 +169,13 @@ def parse_args() -> ServeArgs:
     parser.add_argument("--da3_model_path_or_name", default=None)
     parser.add_argument("--da3_code_root", default=None)
     parser.add_argument("--action_mode", choices=["abs", "delta"], default=None)
-    parser.add_argument(
+    add_bool_arg(
+        parser,
         "--rtc_enabled",
         "--rtc-enabled",
-        action=argparse.BooleanOptionalAction,
+        dest="rtc_enabled",
         default=False,
-        help="Enable runtime-only Real-Time Chunking guidance for CubeV2 inference.",
+        help_text="Enable runtime-only Real-Time Chunking guidance for CubeV2 inference.",
     )
     parser.add_argument("--rtc_execution_horizon", type=int, default=10)
     parser.add_argument("--rtc_max_guidance_weight", type=float, default=10.0)
@@ -169,45 +184,51 @@ def parse_args() -> ServeArgs:
         choices=["zeros", "ones", "linear", "exp"],
         default="linear",
     )
-    parser.add_argument(
+    add_bool_arg(
+        parser,
         "--disable_3d_teacher_for_eval",
         "--disable-3d-teacher-for-eval",
-        action=argparse.BooleanOptionalAction,
+        dest="disable_3d_teacher_for_eval",
         default=True,
     )
-    parser.add_argument(
+    add_bool_arg(
+        parser,
         "--omit_visual_tokens_in_causal_inference",
         "--omit-visual-tokens-in-causal-inference",
-        action=argparse.BooleanOptionalAction,
+        dest="omit_visual_tokens_in_causal_inference",
         default=True,
-        help="Skip causal visual-generation middle tokens for action-only CubeV2 inference.",
+        help_text="Skip causal visual-generation middle tokens for action-only CubeV2 inference.",
     )
     parser.add_argument("--magicbot_r0_model_id", default=None)
     parser.add_argument("--magicbot_r0_tokenizer_model_id", default=None)
     parser.add_argument("--magicbot_r0_action_dit_pretrained_path", default=None)
     parser.add_argument("--magicbot_r0_future_3d_pretrained_path", default=None)
-    parser.add_argument(
+    add_bool_arg(
+        parser,
         "--magicbot_r0_load_text_encoder",
-        action=argparse.BooleanOptionalAction,
+        dest="magicbot_r0_load_text_encoder",
         default=True,
-        help="Load MagicBot_R0 text encoder so sync requests can send plain text prompts.",
+        help_text="Load MagicBot_R0 text encoder so sync requests can send plain text prompts.",
     )
-    parser.add_argument(
+    add_bool_arg(
+        parser,
         "--magicbot_r0_redirect_common_files",
-        action=argparse.BooleanOptionalAction,
+        dest="magicbot_r0_redirect_common_files",
         default=True,
     )
-    parser.add_argument(
+    add_bool_arg(
+        parser,
         "--magicbot_r0_skip_dit_load_from_pretrain",
-        action=argparse.BooleanOptionalAction,
+        dest="magicbot_r0_skip_dit_load_from_pretrain",
         default=True,
     )
     parser.add_argument("--magicbot_r0_state_key", default="default")
     parser.add_argument("--magicbot_r0_video_height", type=int, default=384)
     parser.add_argument("--magicbot_r0_video_width", type=int, default=320)
-    parser.add_argument(
+    add_bool_arg(
+        parser,
         "--magicbot_r0_standardize_video_size_by_cameras",
-        action=argparse.BooleanOptionalAction,
+        dest="magicbot_r0_standardize_video_size_by_cameras",
         default=True,
     )
     parser.add_argument(
@@ -366,10 +387,16 @@ def resolve_policy_components(config: PreTrainedConfig, *, rtc_enabled: bool):
 
 def resolve_stats(stats_path: Path, requested_key: str | None) -> tuple[str, dict[str, Any]]:
     stats_root = load_json(stats_path)
+    is_flat_stats = OBS_STATE in stats_root and "action" in stats_root
     if requested_key is not None:
         if requested_key not in stats_root:
+            if is_flat_stats:
+                return requested_key, stats_root
             raise KeyError(f"stats_key={requested_key!r} not found in {stats_path}")
         return requested_key, stats_root[requested_key]
+
+    if is_flat_stats:
+        return "default", stats_root
 
     if len(stats_root) == 1:
         key = next(iter(stats_root))
@@ -800,6 +827,7 @@ class MagicBotRemotePolicy:
             "checkpoint_dir": str(self.ckpt_dir),
             "stats_key": self.stats_key,
             "action_mode": self.action_mode,
+            "target_action_dim": int(self.target_action_dim),
             "device": self.device,
             "dtype": str(self.runtime_dtype),
             "infer_horizon": self.infer_horizon,

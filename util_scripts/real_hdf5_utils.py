@@ -53,7 +53,7 @@ def build_camera_source_keys(
     *,
     head_key: str,
     left_key: str,
-    right_key: str,
+    right_key: str | None,
 ) -> OrderedDict[str, str]:
     camera_keys = OrderedDict([("head", head_key), ("left", left_key)])
     if image_layout == "head_left_right":
@@ -119,6 +119,48 @@ def load_h5_array(h5_file: h5py.File, key: str) -> np.ndarray:
     if key not in h5_file:
         raise KeyError(f"HDF5 key not found: {key}")
     return np.asarray(h5_file[key])
+
+
+def build_arm_gripper_vector(
+    h5_file: h5py.File,
+    *,
+    arm_key: str,
+    gripper_key: str,
+) -> np.ndarray:
+    """Build a [joint_0..joint_5, gripper] vector from separate HDF5 datasets."""
+    arm = load_h5_array(h5_file, arm_key)
+    gripper = load_h5_array(h5_file, gripper_key)
+
+    if arm.ndim != 2:
+        raise ValueError(f"Expected 2D arm array at {arm_key}, got {arm.shape}")
+    if arm.shape[1] != 6:
+        raise ValueError(f"Expected 6 arm joints at {arm_key}, got shape {arm.shape}")
+
+    if gripper.ndim == 1:
+        gripper = gripper[:, None]
+    elif gripper.ndim != 2 or gripper.shape[1] != 1:
+        raise ValueError(f"Expected 1D or Nx1 gripper array at {gripper_key}, got {gripper.shape}")
+
+    if arm.shape[0] != gripper.shape[0]:
+        raise ValueError(
+            f"Mismatched arm/gripper frame counts: {arm_key}={arm.shape[0]}, "
+            f"{gripper_key}={gripper.shape[0]}"
+        )
+
+    return np.concatenate([arm, gripper], axis=1)
+
+
+def build_piper_left_vector(
+    h5_file: h5py.File,
+    *,
+    left_arm_key: str,
+    left_gripper_key: str,
+) -> np.ndarray:
+    return build_arm_gripper_vector(
+        h5_file,
+        arm_key=left_arm_key,
+        gripper_key=left_gripper_key,
+    )
 
 
 def decode_image_frame(raw_frame, raw_image_shape: tuple[int, int, int] | None) -> np.ndarray:
@@ -210,7 +252,7 @@ def infer_episode_spec(
         image_shapes: OrderedDict[str, tuple[int, int, int]] = OrderedDict()
         for camera_name, source_key in camera_source_keys.items():
             image_array = load_h5_array(h5_file, source_key)
-            if image_array.ndim < 2:
+            if image_array.ndim < 1:
                 raise ValueError(f"Expected image dataset with time dimension at {source_key}, got {image_array.shape}")
             decoded = decode_image_frame(image_array[0], raw_image_shape)
             image_shapes[camera_name] = tuple(int(v) for v in decoded.shape)

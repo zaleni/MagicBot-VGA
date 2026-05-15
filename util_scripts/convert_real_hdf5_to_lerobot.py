@@ -13,6 +13,12 @@ The current defaults target the user-provided schema:
 - action from ``action``
 - images from ``observations/images/{head,left_wrist,right_wrist}``
 
+For Piper single-arm data, pass ``--input-schema real_piper``. That schema reads
+``joint_action/left_arm`` + ``joint_action/left_gripper`` as a 7D state/action
+vector and uses ``observation/head_camera/rgb`` plus
+``observation/left_camera/rgb`` as the two camera streams. The zero-filled
+right-arm/right-camera fields in some source files are intentionally ignored.
+
 Example:
 
 python util_scripts/convert_real_hdf5_to_lerobot.py ^
@@ -21,6 +27,13 @@ python util_scripts/convert_real_hdf5_to_lerobot.py ^
   --task "pick up the object" ^
   --frame-stride 2 ^
   --fps 15
+
+python util_scripts/convert_real_hdf5_to_lerobot.py ^
+  --input-root /path/to/Rank_Block_RGB_HDF5_30 ^
+  --output-dir /path/to/output/real_piper_lerobot ^
+  --input-schema real_piper ^
+  --task "rank the block" ^
+  --fps 30
 """
 
 from __future__ import annotations
@@ -47,6 +60,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from real_hdf5_utils import (
     DEFAULT_INSTRUCTION,
     IMAGE_LAYOUTS,
+    build_piper_left_vector,
     build_camera_source_keys,
     decode_image_frame,
     derive_instruction,
@@ -105,21 +119,34 @@ def parse_args() -> argparse.Namespace:
         help="Keep one frame every N frames. Example: source 60Hz -> target 30Hz uses --frame-stride 2 --fps 30.",
     )
     parser.add_argument(
+        "--input-schema",
+        type=str,
+        choices=["generic", "real_piper"],
+        default="generic",
+        help=(
+            "Source HDF5 schema. generic reads --state-key/--action-key directly. "
+            "real_piper reads only joint_action/left_arm + joint_action/left_gripper and "
+            "the observation/{head,left}_camera/rgb camera streams by default."
+        ),
+    )
+    parser.add_argument(
         "--robot-type",
         type=str,
-        default="real_lift2",
+        default=None,
         help=(
-            "robot_type written into meta/info.json. "
-            "For the current 14D real dual-arm setup (left arm + left gripper + right arm + right gripper), "
-            "real_lift2 is the recommended default."
+            "robot_type written into meta/info.json. Defaults to real_lift2 for generic input "
+            "and must be real_piper for --input-schema real_piper."
         ),
     )
     parser.add_argument(
         "--image-layout",
         type=str,
         choices=sorted(IMAGE_LAYOUTS.keys()),
-        default="head_left_right",
-        help="Output image-key layout used in the LeRobot dataset.",
+        default=None,
+        help=(
+            "Output image-key layout used in the LeRobot dataset. Defaults to head_left_right "
+            "for generic input and head_left for --input-schema real_piper."
+        ),
     )
     parser.add_argument(
         "--state-key",
@@ -136,20 +163,32 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--head-key",
         type=str,
-        default="observations/images/head",
+        default=None,
         help="HDF5 dataset path used as the head camera stream.",
     )
     parser.add_argument(
         "--left-key",
         type=str,
-        default="observations/images/left_wrist",
+        default=None,
         help="HDF5 dataset path used as the left/wrist camera stream.",
     )
     parser.add_argument(
         "--right-key",
         type=str,
-        default="observations/images/right_wrist",
-        help="HDF5 dataset path used as the right camera stream.",
+        default=None,
+        help="HDF5 dataset path used as the right camera stream for generic head_left_right layouts.",
+    )
+    parser.add_argument(
+        "--piper-left-arm-key",
+        type=str,
+        default="joint_action/left_arm",
+        help="HDF5 left-arm joint dataset used by --input-schema real_piper.",
+    )
+    parser.add_argument(
+        "--piper-left-gripper-key",
+        type=str,
+        default="joint_action/left_gripper",
+        help="HDF5 left-gripper dataset used by --input-schema real_piper.",
     )
     parser.add_argument(
         "--task",
@@ -213,7 +252,31 @@ def parse_args() -> argparse.Namespace:
         default=True,
         help="Load the converted dataset back through LeRobotDataset and validate a sample after conversion.",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    apply_schema_defaults(args, parser)
+    return args
+
+
+def apply_schema_defaults(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    if args.input_schema == "real_piper":
+        if args.robot_type is not None and args.robot_type != "real_piper":
+            parser.error("--input-schema real_piper only supports --robot-type real_piper")
+        if args.image_layout is not None and args.image_layout != "head_left":
+            parser.error("--input-schema real_piper only supports --image-layout head_left")
+
+        args.robot_type = "real_piper"
+        args.image_layout = "head_left"
+
+        args.head_key = args.head_key or "observation/head_camera/rgb"
+        args.left_key = args.left_key or "observation/left_camera/rgb"
+        args.right_key = None
+        return
+
+    args.robot_type = args.robot_type or "real_lift2"
+    args.image_layout = args.image_layout or "head_left_right"
+    args.head_key = args.head_key or "observations/images/head"
+    args.left_key = args.left_key or "observations/images/left_wrist"
+    args.right_key = args.right_key or "observations/images/right_wrist"
 
 
 def iter_progress(items: Iterable, **kwargs):
@@ -286,6 +349,64 @@ def create_dataset(
     )
 
 
+def load_state_action_arrays(
+    h5_file: h5py.File,
+    args: argparse.Namespace,
+) -> tuple[np.ndarray, np.ndarray]:
+    if args.input_schema == "real_piper":
+        vector = build_piper_left_vector(
+            h5_file,
+            left_arm_key=args.piper_left_arm_key,
+            left_gripper_key=args.piper_left_gripper_key,
+        )
+        vector = vector.astype(np.float32, copy=False)
+        return vector, vector
+
+    state_array = load_h5_array(h5_file, args.state_key).astype(np.float32, copy=False)
+    action_array = load_h5_array(h5_file, args.action_key).astype(np.float32, copy=False)
+    return state_array, action_array
+
+
+def infer_episode_spec_for_args(
+    episode_path: Path,
+    args: argparse.Namespace,
+) -> tuple[int, int, OrderedDict[str, tuple[int, int, int]]]:
+    camera_source_keys = build_camera_source_keys(
+        args.image_layout,
+        head_key=args.head_key,
+        left_key=args.left_key,
+        right_key=args.right_key,
+    )
+    raw_image_shape = tuple(args.raw_image_shape) if args.raw_image_shape else None
+
+    if args.input_schema == "generic":
+        spec = infer_episode_spec(
+            episode_path,
+            state_key=args.state_key,
+            action_key=args.action_key,
+            camera_source_keys=camera_source_keys,
+            raw_image_shape=raw_image_shape,
+        )
+        return spec.state_dim, spec.action_dim, spec.image_shapes
+
+    with h5py.File(episode_path, "r") as h5_file:
+        state_array, action_array = load_state_action_arrays(h5_file, args)
+        if state_array.ndim != 2:
+            raise ValueError(f"Expected 2D state array, got {state_array.shape}")
+        if action_array.ndim != 2:
+            raise ValueError(f"Expected 2D action array, got {action_array.shape}")
+
+        image_shapes: OrderedDict[str, tuple[int, int, int]] = OrderedDict()
+        for camera_name, source_key in camera_source_keys.items():
+            image_array = load_h5_array(h5_file, source_key)
+            if image_array.ndim < 1:
+                raise ValueError(f"Expected image dataset with time dimension at {source_key}, got {image_array.shape}")
+            decoded = decode_image_frame(image_array[0], raw_image_shape)
+            image_shapes[camera_name] = tuple(int(v) for v in decoded.shape)
+
+    return int(state_array.shape[1]), int(action_array.shape[1]), image_shapes
+
+
 def convert_episode(
     dataset: LeRobotDataset,
     episode_path: Path,
@@ -301,8 +422,7 @@ def convert_episode(
     raw_image_shape = tuple(args.raw_image_shape) if args.raw_image_shape else None
 
     with h5py.File(episode_path, "r") as h5_file:
-        state_array = load_h5_array(h5_file, args.state_key).astype(np.float32, copy=False)
-        action_array = load_h5_array(h5_file, args.action_key).astype(np.float32, copy=False)
+        state_array, action_array = load_state_action_arrays(h5_file, args)
         image_arrays = OrderedDict(
             (camera_name, load_h5_array(h5_file, source_key))
             for camera_name, source_key in camera_source_keys.items()
@@ -387,22 +507,11 @@ def main() -> None:
         )
 
     repo_id = args.repo_id or args.output_dir.name
-    spec = infer_episode_spec(
-        episode_paths[0],
-        state_key=args.state_key,
-        action_key=args.action_key,
-        camera_source_keys=build_camera_source_keys(
-            args.image_layout,
-            head_key=args.head_key,
-            left_key=args.left_key,
-            right_key=args.right_key,
-        ),
-        raw_image_shape=tuple(args.raw_image_shape) if args.raw_image_shape else None,
-    )
+    state_dim, action_dim, image_shapes = infer_episode_spec_for_args(episode_paths[0], args)
     features = build_features(
-        spec.state_dim,
-        spec.action_dim,
-        spec.image_shapes,
+        state_dim,
+        action_dim,
+        image_shapes,
         args.image_layout,
         args.use_videos,
     )
@@ -412,9 +521,9 @@ def main() -> None:
     logging.info("frame_stride=%s", args.frame_stride)
     logging.info(
         "state_dim=%s action_dim=%s image_shapes=%s",
-        spec.state_dim,
-        spec.action_dim,
-        dict(spec.image_shapes),
+        state_dim,
+        action_dim,
+        dict(image_shapes),
     )
 
     dataset = create_dataset(

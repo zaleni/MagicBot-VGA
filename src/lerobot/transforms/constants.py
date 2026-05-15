@@ -32,6 +32,7 @@ MASK_MAPPING = {
     "DOS-W1": make_bool_mask(6, -1, 6, -1),
     # custom real robot
     "real_lift2": make_bool_mask(6, -1, 6, -1),
+    "real_piper": make_bool_mask(6, -1),
 }
 
 LIBERO_FRANKA_MASK = make_bool_mask(7, -1)
@@ -255,6 +256,14 @@ FEATURE_MAPPING["real_lift2"] = {
         "action",
     ],
 }
+FEATURE_MAPPING["real_piper"] = {
+    OBS_STATE: [
+        "observation.state",
+    ],
+    ACTION: [
+        "action",
+    ],
+}
 FEATURE_MAPPING["DOS-W1"] = {
     OBS_STATE: [
         "observation.state",
@@ -378,6 +387,10 @@ IMAGE_MAPPING["real_lift2"] = {
     "observation.images.head": f"{OBS_IMAGES}.image0",
     "observation.images.left": f"{OBS_IMAGES}.image1",
     "observation.images.right": f"{OBS_IMAGES}.image2",
+}
+IMAGE_MAPPING["real_piper"] = {
+    "observation.images.head": f"{OBS_IMAGES}.image0",
+    "observation.images.left": f"{OBS_IMAGES}.image1",
 }
 
 
