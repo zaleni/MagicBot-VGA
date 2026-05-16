@@ -70,7 +70,7 @@ if [[ -z "${USE_EXTERNAL_STATS+x}" ]]; then
   fi
 fi
 
-NORM_STATS_ROOT="${NORM_STATS_ROOT:-/inspire/qb-ilm/project/embodied-basic-model/zhangjianing-253108140206/zhenji/norm_stats}"
+NORM_STATS_ROOT="${NORM_STATS_ROOT:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/zhenji/norm_stats}"
 DATASET_EXTERNAL_STATS_PATH="${DATASET_EXTERNAL_STATS_PATH:-${NORM_STATS_ROOT}/${ACTION_TYPE}/${DATASET_NAME}/stats.json}"
 
 # Enable an image augmentation preset for real-robot finetuning.
