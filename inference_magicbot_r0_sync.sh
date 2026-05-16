@@ -6,6 +6,17 @@ cd ~/research/MagicBot-VGA
 
 conda activate magicbot
 
+### Optional one-time text cache for deployment without loading the T5 text encoder.
+### Reuse the training TEXT_EMBED_CACHE_DIR if it already contains this task prompt.
+# python src/lerobot/scripts/magicbot_r0_precompute_text_embeds.py \
+#   --text-embedding-cache-dir /path/to/MagicBot_R0/text_embeds \
+#   --model-cache-dir /path/to/MagicBot_R0/model_cache \
+#   --override-instruction "Sweep the trash into the dustpan using a broom." \
+#   --context-len 128 \
+#   --device cuda
+### Optional: set DIFFSYNTH_MODEL_BASE_PATH=/path/to/MagicBot_R0/model_cache
+### to keep Wan/T5/VAE files off the default ./checkpoints directory.
+
 CHECKPOINT_DIR=/path/to/MagicBot_R0/real_lift2/checkpoints/30000/pretrained_model \
 STATS_KEY=real_lift2 \
 ACTION_MODE=abs \
@@ -16,7 +27,9 @@ PORT=8102 \
 INFER_HORIZON=24 \
 DEFAULT_PROMPT="Sweep the trash into the dustpan using a broom." \
 RTC_ENABLED=false \
-MAGICBOT_R0_LOAD_TEXT_ENCODER=true \
+MAGICBOT_R0_LOAD_TEXT_ENCODER=false \
+MAGICBOT_R0_TEXT_EMBED_CACHE_DIR=/path/to/MagicBot_R0/text_embeds \
+MAGICBOT_R0_CONTEXT_LEN=128 \
 MAGICBOT_R0_SKIP_DIT_LOAD_FROM_PRETRAIN=true \
 bash evaluation/Real_Lift2/01_serve_magicbot_r0_real_lift2.sh
 

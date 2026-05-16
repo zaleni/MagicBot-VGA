@@ -223,6 +223,20 @@ def main() -> None:
     parser.add_argument("--context-len", type=int, default=DEFAULT_CONTEXT_LEN)
     parser.add_argument("--model-id", default=DEFAULT_MODEL_ID)
     parser.add_argument("--tokenizer-model-id", default=DEFAULT_TOKENIZER_MODEL_ID)
+    parser.add_argument(
+        "--model-cache-dir",
+        default=None,
+        help=(
+            "Directory for Wan/T5/tokenizer model files. If files are missing, they are downloaded here. "
+            "Equivalent to DIFFSYNTH_MODEL_BASE_PATH. Defaults to ./checkpoints when unset."
+        ),
+    )
+    parser.add_argument(
+        "--download-source",
+        choices=["modelscope", "huggingface"],
+        default="modelscope",
+        help="Where to download missing model files from.",
+    )
     parser.add_argument("--redirect-common-files", default="true")
     parser.add_argument("--device", default=None, help="Optional explicit device such as cuda, cuda:0, or cpu.")
     parser.add_argument("--dtype", default="bfloat16", choices=["float32", "float16", "bfloat16"])
@@ -262,7 +276,8 @@ def main() -> None:
                 torch.cuda.device_count(),
             )
 
-    dataset_dirs = _resolve_dataset_dirs(args.dataset_dir, args.repo_id_file)
+    has_override_instruction = args.override_instruction is not None and str(args.override_instruction).strip()
+    dataset_dirs = [] if has_override_instruction else _resolve_dataset_dirs(args.dataset_dir, args.repo_id_file)
     cache_dir = Path(args.text_embedding_cache_dir).expanduser()
     if verify_cache_only:
         if not cache_dir.is_dir():
@@ -272,7 +287,7 @@ def main() -> None:
     overwrite = _parse_bool(args.overwrite)
     context_len = int(args.context_len)
 
-    if args.override_instruction is not None and str(args.override_instruction).strip():
+    if has_override_instruction:
         prompts = [build_magicbot_r0_prompt(str(args.override_instruction).strip())]
         logging.info("Using override_instruction; skipping dataset scan and encoding exactly 1 prompt.")
     else:
@@ -293,10 +308,18 @@ def main() -> None:
     device = _resolve_device(args.device, local_rank)
     torch_dtype = _parse_dtype(args.dtype)
     redirect_common_files = _parse_bool(args.redirect_common_files)
+    if args.model_cache_dir is not None and str(args.model_cache_dir).strip():
+        model_cache_dir = Path(args.model_cache_dir).expanduser()
+        model_cache_dir.mkdir(parents=True, exist_ok=True)
+        os.environ["DIFFSYNTH_MODEL_BASE_PATH"] = str(model_cache_dir)
+    os.environ["DIFFSYNTH_DOWNLOAD_SOURCE"] = str(args.download_source)
     logging.info(
-        "Preparing text encoder with model_id=%s tokenizer_model_id=%s device=%s dtype=%s context_len=%d overwrite=%s",
+        "Preparing text encoder with model_id=%s tokenizer_model_id=%s model_cache_dir=%s "
+        "download_source=%s device=%s dtype=%s context_len=%d overwrite=%s",
         args.model_id,
         args.tokenizer_model_id,
+        os.environ.get("DIFFSYNTH_MODEL_BASE_PATH", "./checkpoints/"),
+        args.download_source,
         device,
         torch_dtype,
         context_len,

@@ -49,6 +49,7 @@ from lerobot.policies.MagicBot_R0.dataset_magicbot_r0 import (
 )
 from lerobot.policies.MagicBot_R0.stats_adapter import ensure_magicbot_r0_stats_format
 from lerobot.policies.MagicBot_R0.text_cache import build_magicbot_r0_prompt
+from lerobot.policies.MagicBot_R0.text_cache import build_text_embedding_cache_path
 from lerobot.policies.rtc import RTCConfig, RTCProcessor
 from lerobot.transforms.constants import get_mask_mapping
 from lerobot.transforms.core import NormalizeTransformFn, ResizeImagesWithPadFn, UnNormalizeTransformFn
@@ -110,6 +111,8 @@ class ServeArgs:
     magicbot_r0_video_width: int = 320
     magicbot_r0_standardize_video_size_by_cameras: bool = True
     magicbot_r0_concat_multi_camera: str = "robotwin"
+    magicbot_r0_text_embedding_cache_dir: str | None = None
+    magicbot_r0_context_len: int | None = None
 
 
 def _env_fallback(value: str | None, env_name: str) -> str | None:
@@ -236,6 +239,8 @@ def parse_args() -> ServeArgs:
         choices=["single", "horizontal", "vertical", "robotwin"],
         default="robotwin",
     )
+    parser.add_argument("--magicbot_r0_text_embedding_cache_dir", default=None)
+    parser.add_argument("--magicbot_r0_context_len", type=int, default=None)
     parsed = ServeArgs(**vars(parser.parse_args()))
     parsed.stats_key = _env_fallback(parsed.stats_key, "STATS_KEY")
     parsed.stats_path = _env_fallback(parsed.stats_path, "STATS_PATH")
@@ -278,6 +283,17 @@ def parse_args() -> ServeArgs:
         parsed.magicbot_r0_skip_dit_load_from_pretrain,
         "MAGICBOT_R0_SKIP_DIT_LOAD_FROM_PRETRAIN",
     )
+    parsed.magicbot_r0_text_embedding_cache_dir = _env_fallback(
+        parsed.magicbot_r0_text_embedding_cache_dir,
+        "MAGICBOT_R0_TEXT_EMBED_CACHE_DIR",
+    )
+    parsed.magicbot_r0_text_embedding_cache_dir = _env_fallback(
+        parsed.magicbot_r0_text_embedding_cache_dir,
+        "TEXT_EMBED_CACHE_DIR",
+    )
+    context_len_env = os.environ.get("MAGICBOT_R0_CONTEXT_LEN")
+    if parsed.magicbot_r0_context_len is None and context_len_env is not None:
+        parsed.magicbot_r0_context_len = int(context_len_env)
     return parsed
 
 
@@ -597,6 +613,25 @@ class MagicBotR0RealLift2Adapter:
         self.dtype = dtype
         self.target_proprio_dim = int(getattr(config, "proprio_dim", 14))
         self.state_normalizer = self._build_state_normalizer(stats_payload)
+        self.text_embedding_cache_dir = (
+            Path(args.magicbot_r0_text_embedding_cache_dir).expanduser()
+            if args.magicbot_r0_text_embedding_cache_dir
+            else None
+        )
+        self.context_len = int(
+            args.magicbot_r0_context_len
+            if args.magicbot_r0_context_len is not None
+            else getattr(config, "tokenizer_max_len", 128)
+        )
+        if self.text_embedding_cache_dir is not None and not self.text_embedding_cache_dir.is_dir():
+            raise FileNotFoundError(
+                f"MagicBot_R0 text embedding cache dir does not exist: {self.text_embedding_cache_dir}"
+            )
+        if self.text_embedding_cache_dir is None and not bool(args.magicbot_r0_load_text_encoder):
+            raise ValueError(
+                "MAGICBOT_R0_LOAD_TEXT_ENCODER=false requires MAGICBOT_R0_TEXT_EMBED_CACHE_DIR. "
+                "Precompute the prompt embedding first, or enable the text encoder."
+            )
 
     @staticmethod
     def _image_to_chw_float(image: np.ndarray) -> torch.Tensor:
@@ -640,6 +675,39 @@ class MagicBotR0RealLift2Adapter:
             proprio = proprio[: self.target_proprio_dim]
         return proprio.unsqueeze(0).to(device=self.device, dtype=self.dtype)
 
+    def _load_cached_text_context(self, prompt: str) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.text_embedding_cache_dir is None:
+            raise ValueError("MagicBot_R0 text embedding cache dir is not set.")
+        cache_path = build_text_embedding_cache_path(
+            self.text_embedding_cache_dir,
+            prompt,
+            self.context_len,
+        )
+        if not cache_path.exists():
+            raise FileNotFoundError(
+                f"Missing MagicBot_R0 text embedding cache: {cache_path}. "
+                "Run src/lerobot/scripts/magicbot_r0_precompute_text_embeds.py with the same task prompt, "
+                "or set MAGICBOT_R0_LOAD_TEXT_ENCODER=true."
+            )
+        payload = torch.load(cache_path, map_location="cpu")
+        context = payload["context"]
+        context_mask = payload["mask"].bool()
+        if context.ndim != 2:
+            raise ValueError(f"Cached `context` must be 2D [L,D], got {tuple(context.shape)} in {cache_path}")
+        if context_mask.ndim != 1:
+            raise ValueError(f"Cached `mask` must be 1D [L], got {tuple(context_mask.shape)} in {cache_path}")
+        if context.shape[0] != self.context_len or context_mask.shape[0] != self.context_len:
+            raise ValueError(
+                f"Cached context len mismatch: expected {self.context_len}, "
+                f"got {context.shape[0]} and {context_mask.shape[0]} in {cache_path}"
+            )
+        context = context.clone()
+        context[~context_mask] = 0.0
+        return (
+            context.unsqueeze(0).to(device=self.device, dtype=self.dtype),
+            context_mask.unsqueeze(0).to(device=self.device, dtype=torch.bool),
+        )
+
     def build_inputs(
         self,
         *,
@@ -672,11 +740,18 @@ class MagicBotR0RealLift2Adapter:
         )
         input_image = concat_magicbot_r0_camera_views(video, target_video_size, concat_layout)
         input_image = (input_image - 0.5) / 0.5
-        return {
+        inputs = {
             "input_image": input_image.to(device=self.device, dtype=self.dtype),
             "proprio": self._normalize_proprio(state),
-            "prompt": [build_magicbot_r0_prompt(task)],
         }
+        prompt = build_magicbot_r0_prompt(task)
+        if self.text_embedding_cache_dir is not None:
+            context, context_mask = self._load_cached_text_context(prompt)
+            inputs["context"] = context
+            inputs["context_mask"] = context_mask
+        else:
+            inputs["prompt"] = [prompt]
+        return inputs
 
 
 class MagicBotRemotePolicy:
