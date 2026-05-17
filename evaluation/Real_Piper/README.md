@@ -63,3 +63,9 @@ WS_HOST=<server-ip> \
 WS_PORT=8102 \
 bash evaluation/Real_Piper/02_infer_magicbot_r0_real_piper_sync.sh
 ```
+
+For MagicBot_R0 serving, the simplest runtime path is
+`MAGICBOT_R0_LOAD_TEXT_ENCODER=true`, which lets the server consume plain text
+prompts. If you set `MAGICBOT_R0_LOAD_TEXT_ENCODER=false`, also set
+`MAGICBOT_R0_TEXT_EMBED_CACHE_DIR` and precompute the exact deployment prompt
+first.
