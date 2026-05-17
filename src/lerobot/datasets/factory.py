@@ -866,7 +866,11 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
             cfg.dataset.dataset_dirs = original_dataset_dirs
             cfg.dataset.repo_id_file = original_repo_id_file
             cfg.dataset.dataset_sampling_weights = original_dataset_sampling_weights
-        data_stats = {stats_key: dataset.dataset_stats} if dataset.dataset_stats is not None else {}
+        checkpoint_stats = getattr(dataset, "checkpoint_stats", None)
+        if isinstance(cfg.dataset, MagicBotR0DatasetConfig) and checkpoint_stats is not None:
+            data_stats = checkpoint_stats
+        else:
+            data_stats = {stats_key: dataset.dataset_stats} if dataset.dataset_stats is not None else {}
         return dataset, data_stats
 
     cubev2_pipeline_image_aug = (

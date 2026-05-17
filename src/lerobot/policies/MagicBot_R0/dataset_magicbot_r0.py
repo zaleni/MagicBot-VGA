@@ -436,6 +436,7 @@ class MagicBotR0BaseLerobotDatasetV3(Dataset):
         self.action_mode = str(action_mode)
         self.image_resize_shape = image_resize_shape
         self.post_image_transforms = post_image_transforms
+        self.checkpoint_stats: dict[str, Any] | None = None
         self._multi_embodiment_stats_cache: dict[tuple[str, str], tuple[Path, dict[str, Any]]] = {}
 
         metas = [LeRobotDatasetMetadata(repo_id=str(Path(ds_dir)), root=Path(ds_dir)) for ds_dir in dataset_dirs]
@@ -455,6 +456,7 @@ class MagicBotR0BaseLerobotDatasetV3(Dataset):
             if self.max_action_dim is None or self.max_state_dim is None:
                 raise ValueError("pretrain_multi_embodiment requires max_action_dim and max_state_dim.")
             self.embodiment_adapters = self._build_multi_embodiment_adapters(metas)
+            self.checkpoint_stats = self._build_multi_embodiment_checkpoint_stats()
             delta_timestamps_by_dataset = {}
             for dataset_dir, adapter, meta in zip(dataset_dirs, self.embodiment_adapters, metas, strict=True):
                 delta_timestamps_by_dataset[str(Path(dataset_dir))] = self._build_multi_embodiment_delta_timestamps(
@@ -585,6 +587,30 @@ class MagicBotR0BaseLerobotDatasetV3(Dataset):
             )
         self._log_multi_embodiment_adapter_summary(log_records)
         return adapters
+
+    def _build_multi_embodiment_checkpoint_stats(self) -> dict[str, Any]:
+        stats_by_key: dict[str, Any] = {}
+        stats_source_by_key: dict[str, str] = {}
+        for adapter in self.embodiment_adapters:
+            stats_payload = _to_plain_dict(adapter["stats"])
+            stats_source = str(adapter["stats_path"])
+            for key in (adapter["resolved_robot_type"], adapter["robot_type"]):
+                key = str(key)
+                if not key:
+                    continue
+                if key in stats_by_key:
+                    if stats_source_by_key[key] != stats_source:
+                        logger.warning(
+                            "MagicBot_R0 checkpoint stats key %s already came from %s; "
+                            "keeping it and ignoring duplicate source %s.",
+                            key,
+                            stats_source_by_key[key],
+                            stats_source,
+                        )
+                    continue
+                stats_by_key[key] = stats_payload
+                stats_source_by_key[key] = stats_source
+        return stats_by_key
 
     def _log_multi_embodiment_adapter_summary(self, records: list[dict[str, Any]]) -> None:
         mode = os.environ.get("LEROBOT_MAGICBOT_R0_ADAPTER_LOG_MODE", "summary").strip().lower()
@@ -1272,6 +1298,7 @@ class MagicBotR0RobotVideoDatasetV3(Dataset):
         self.normalize_transform = Normalize(args={"mean": 0.5, "std": 0.5})
 
         self.dataset_stats = None
+        self.checkpoint_stats = getattr(self.lerobot_dataset, "checkpoint_stats", None)
         if processor is not None and not pretrain_multi_embodiment:
             stats_path = Path(normalization_stats_path) if normalization_stats_path is not None else None
             if stats_path is not None and stats_path.is_file():
