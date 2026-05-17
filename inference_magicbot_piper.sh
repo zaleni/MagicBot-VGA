@@ -26,12 +26,12 @@ bash evaluation/Real_Piper/01_serve_cubev2_real_piper_sync.sh
 cd /home/arx/MagicBot-VGA
 
 source ~/.bashrc
-conda activate act
+conda activate deploy
 
 WS_HOST=10.60.43.33 \
 WS_PORT=8202 \
 TASK_PROMPT="Position red block, green block, and blue block from left to right in the specified sequence." \
-PUBLISH_RATE=15 \
+PUBLISH_RATE=20 \
 ACTION_HORIZON=50 \
 IMAGE_HISTORY_INTERVAL=15 \
 MAX_STEPS=10000 \
