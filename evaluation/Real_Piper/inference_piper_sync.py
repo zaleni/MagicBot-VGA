@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import argparse
+import select
 import signal
 import sys
+import time
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -141,6 +143,100 @@ def validate_server_metadata(metadata: dict[str, Any], args: argparse.Namespace)
 
     if bool(metadata.get("rtc_enabled", False)):
         raise RuntimeError("Connected server reports rtc_enabled=true, but Piper deployment is sync-only.")
+
+
+def print_manual_reset_help(args: argparse.Namespace) -> None:
+    if not args.manual_reset:
+        return
+    if args.init_joint_position is None:
+        print(f"[{args.log_tag}] Manual Enter reset is disabled because INIT_JOINT_POSITION is not set.")
+        return
+    if not sys.stdin or not sys.stdin.isatty():
+        print(f"[{args.log_tag}] Manual Enter reset is disabled because stdin is not interactive.")
+        return
+    print(
+        f"[{args.log_tag}] Manual reset controls:\n"
+        "  - Press Enter during execution: move to INIT_POS and pause the current rollout.\n"
+        "  - Press Enter again while paused: start fresh inference from timestep 0."
+    )
+
+
+def poll_manual_reset_command(manual_reset_active: bool) -> str | None:
+    if not sys.stdin or not sys.stdin.isatty():
+        return None
+
+    try:
+        ready, _, _ = select.select([sys.stdin], [], [], 0.0)
+    except Exception:
+        return None
+    if not ready:
+        return None
+
+    try:
+        line = sys.stdin.readline()
+    except Exception:
+        return None
+    if line == "":
+        return None
+
+    command = line.strip().lower()
+    if command == "":
+        return "resume" if manual_reset_active else "reset"
+    if command in {"r", "reset", "home"}:
+        return "resume" if manual_reset_active else "reset"
+    return command
+
+
+def hold_init_position(args: argparse.Namespace, ros_operator: "PiperRosOperator", rate: rospy.Rate, steps: int) -> None:
+    if args.init_joint_position is None:
+        return
+    target = np.asarray(args.init_joint_position, dtype=np.float32)
+    for _ in range(max(0, steps)):
+        if rospy.is_shutdown():
+            break
+        ros_operator.publish_joint_command(target)
+        rate.sleep()
+
+
+def maybe_handle_manual_reset(
+    args: argparse.Namespace,
+    ros_operator: "PiperRosOperator",
+    rate: rospy.Rate,
+) -> bool:
+    if not args.manual_reset or args.init_joint_position is None:
+        return False
+
+    command = poll_manual_reset_command(manual_reset_active=False)
+    if command != "reset":
+        return False
+
+    print(
+        "\n"
+        + "=" * 72
+        + f"\n[{args.log_tag}] Enter detected. Moving Piper to INIT_POS and pausing this rollout.\n"
+        f"[{args.log_tag}] Press Enter again after resetting the scene to start fresh inference from timestep 0.\n"
+        + "=" * 72
+        + "\n"
+    )
+    ros_operator.move_to_initial_position(args.init_joint_position, timeout=args.init_timeout)
+
+    last_reminder_time = 0.0
+    while not rospy.is_shutdown():
+        hold_init_position(args, ros_operator, rate, steps=1)
+        now = time.monotonic()
+        if now - last_reminder_time >= args.manual_reset_reminder_interval:
+            print(f"[{args.log_tag}] Paused at INIT_POS. Press Enter again to restart inference.")
+            last_reminder_time = now
+
+        resume_command = poll_manual_reset_command(manual_reset_active=True)
+        if resume_command == "resume":
+            print(f"[{args.log_tag}] Second Enter detected. Resetting rollout state before fresh inference.")
+            hold_init_position(args, ros_operator, rate, steps=args.manual_reset_resume_hold_steps)
+            return True
+        if resume_command is not None:
+            print(f"[{args.log_tag}] Still paused at INIT_POS. Press Enter again to restart inference.")
+
+    return True
 
 
 class PiperRequestBuilder:
@@ -308,6 +404,12 @@ def parse_args() -> argparse.Namespace:
     add_bool_arg(parser, "jpeg_roundtrip", default=True, help_text="JPEG roundtrip camera frames before sending.")
     add_bool_arg(parser, "start_prompt", default=True, help_text="Wait for Enter before starting inference.")
     add_bool_arg(parser, "gripper_postprocess", default=True, help_text="Apply Piper gripper postprocess heuristic.")
+    add_bool_arg(
+        parser,
+        "manual_reset",
+        default=True,
+        help_text="Enable Enter-triggered INIT_POS reset and fresh inference restart.",
+    )
     parser.add_argument("--expected_stats_key", default="real_piper")
     parser.add_argument("--allow_stats_key_mismatch", action="store_true")
     parser.add_argument("--allow_action_dim_mismatch", action="store_true")
@@ -321,6 +423,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--init_wait", action="store_true")
     parser.add_argument("--init_timeout", type=float, default=10.0)
     parser.add_argument("--init_position_threshold", type=float, default=500.0)
+    parser.add_argument("--manual_reset_resume_hold_steps", type=int, default=5)
+    parser.add_argument("--manual_reset_reminder_interval", type=float, default=1.5)
     parser.add_argument("--log_tag", default="CubeV2-Piper")
     return parser.parse_args()
 
@@ -340,6 +444,7 @@ def main() -> None:
     print(f"[{args.log_tag}] Prompt: {args.task_prompt}")
     print(f"[{args.log_tag}] State/action: 7D single arm")
     print(f"[{args.log_tag}] Cameras: cam_high + cam_left_wrist")
+    print_manual_reset_help(args)
 
     ros_operator = PiperRosOperator(args)
     ws_client = WebsocketClientPolicy(host=args.ws_host, port=args.ws_port)
@@ -362,8 +467,22 @@ def main() -> None:
         action_buffer: list[np.ndarray] = []
         timestep = 0
         inference_count = 0
+        auto_confirm_next_first_chunk = False
 
         while not rospy.is_shutdown() and timestep < args.max_steps:
+            if maybe_handle_manual_reset(args, ros_operator, rate):
+                action_buffer.clear()
+                request_builder.reset()
+                try:
+                    ws_client.reset()
+                except Exception:
+                    pass
+                timestep = 0
+                inference_count = 0
+                auto_confirm_next_first_chunk = True
+                print(f"[{args.log_tag}] Rollout state reset. Next request will start from timestep 0.")
+                continue
+
             obs = ros_operator.get_observation()
             if obs is None:
                 rate.sleep()
@@ -387,10 +506,16 @@ def main() -> None:
                 print(f"[{args.log_tag}] Received {len(action_buffer)} actions; first={action_buffer[0]}")
                 if args.first_inference_check and inference_count == 0:
                     print(f"[{args.log_tag}] Current qpos: {coerce_state_7d(obs['qpos'], log_tag=args.log_tag)}")
-                    user_input = input(f"[{args.log_tag}] Type 'y' to execute the first action chunk: ").strip()
-                    if user_input.lower() != "y":
-                        print(f"[{args.log_tag}] Stopped before execution.")
-                        return
+                    if auto_confirm_next_first_chunk:
+                        print(
+                            f"[{args.log_tag}] Reusing the second manual-reset Enter as first-chunk confirmation."
+                        )
+                        auto_confirm_next_first_chunk = False
+                    else:
+                        user_input = input(f"[{args.log_tag}] Type 'y' to execute the first action chunk: ").strip()
+                        if user_input.lower() != "y":
+                            print(f"[{args.log_tag}] Stopped before execution.")
+                            return
 
                 inference_count += 1
 

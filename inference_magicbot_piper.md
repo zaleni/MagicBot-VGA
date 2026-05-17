@@ -1,7 +1,6 @@
 # MagicBot/CubeV2 Real_Piper startup note
 
-This note is aligned with `CMD_YZH.md`, `pi05_piper_run_yzh.sh`, and
-`pi05_piper_infer_yzh.py`.
+This note is the CubeV2 Real_Piper deployment checklist.
 
 ## 1. GPU server: start CubeV2 Real_Piper serve
 
@@ -62,8 +61,6 @@ roslaunch piper start_single_piper.launch can_port:=can0 auto_enable:=true
 
 ## 5. Robot: start MagicBot/CubeV2 Piper inference
 
-This part mirrors the PI05 working client most closely.
-
 ```bash
 source /home/admin1/deploy/piper_ros/devel/setup.bash
 cd /home/admin1/MagicBot-VGA
@@ -80,11 +77,12 @@ IMAGE_HISTORY_INTERVAL=15 \
 MAX_STEPS=10000 \
 INIT_JOINT_POSITION="${INIT_POS}" \
 INIT_WAIT=true \
+MANUAL_RESET=true \
 FRONT_CAM_TOPIC=/ob_camera_02/color/image_raw \
 WRIST_CAM_TOPIC=/ob_camera_01/color/image_raw \
 JOINT_STATE_TOPIC=joint_states_single \
 JOINT_CMD_TOPIC=js_cmd \
-FIRST_INFERENCE_CHECK=true \
+FIRST_INFERENCE_CHECK=false \
 START_PROMPT=true \
 JPEG_ROUNDTRIP=true \
 GRIPPER_POSTPROCESS=true \
@@ -105,7 +103,7 @@ rostopic echo -n 1 /ob_camera_02/color/image_raw/encoding
 rostopic echo -n 1 /ob_camera_01/color/image_raw/encoding
 ```
 
-Manual Piper command from `CMD_YZH.md`:
+Manual Piper command:
 
 ```bash
 rostopic pub -1 /js_cmd sensor_msgs/JointState "{name: ['joint0','joint1','joint2','joint3','joint4','joint5','joint6'], position: [-90346,36605,-46908,831,66802,1428,100000]}"
@@ -113,16 +111,19 @@ rostopic pub -1 /js_cmd sensor_msgs/JointState "{name: ['joint0','joint1','joint
 
 ## Notes
 
-- PI05 sends a 14D state because its server was trained that way. This
-  MagicBot/CubeV2 `real_piper` path should stay 7D; the server checks
+- Some older Piper clients send a 14D state because their servers were trained
+  that way. This MagicBot/CubeV2 `real_piper` path should stay 7D; the server checks
   `target_action_dim=7` and `stats_key=real_piper`.
 - The model-side image convention is RGB. `IMAGE_COLOR_MODE=auto` reads the ROS
   message encoding: `rgb8` is kept as RGB, `bgr8` is converted to RGB, and
-  unknown encodings fall back to the PI05-style BGR-to-RGB path. Only force
+  unknown encodings fall back to the legacy BGR-to-RGB path. Only force
   `IMAGE_COLOR_MODE=bgr` if the Orbbec topic encoding is wrong or missing but
   the array is known to be BGR.
-- `INIT_POS` is the PI05 `rank_block_rgb` initial position.
-- The inference window intentionally sources
-  `/home/admin1/deploy/piper_ros/devel/setup.bash`, exactly like
-  `pi05_piper_run_yzh.sh`. The Piper control-node window still follows
-  `CMD_YZH.md` and sources `/home/admin1/MagicBot/Deploy/Piper_ros/devel/setup.bash`.
+- `INIT_POS` is the `rank_block_rgb` initial position.
+- With `MANUAL_RESET=true` and `INIT_JOINT_POSITION` set, press Enter during
+  inference to move back to `INIT_POS` and pause the current rollout. Press
+  Enter again after resetting the scene to clear stale actions and start fresh
+  inference from timestep 0.
+- The inference window sources `/home/admin1/deploy/piper_ros/devel/setup.bash`.
+  The Piper control-node window sources
+  `/home/admin1/MagicBot/Deploy/Piper_ros/devel/setup.bash`.

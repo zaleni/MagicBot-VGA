@@ -33,6 +33,11 @@ IMAGE_COLOR_MODE="${IMAGE_COLOR_MODE:-auto}"
 EXPECTED_STATS_KEY="${EXPECTED_STATS_KEY:-real_piper}"
 ALLOW_STATS_KEY_MISMATCH="${ALLOW_STATS_KEY_MISMATCH:-false}"
 ALLOW_ACTION_DIM_MISMATCH="${ALLOW_ACTION_DIM_MISMATCH:-false}"
+MANUAL_RESET="${MANUAL_RESET:-true}"
+MANUAL_RESET_RESUME_HOLD_STEPS="${MANUAL_RESET_RESUME_HOLD_STEPS:-5}"
+MANUAL_RESET_REMINDER_INTERVAL="${MANUAL_RESET_REMINDER_INTERVAL:-1.5}"
+INIT_TIMEOUT="${INIT_TIMEOUT:-10.0}"
+INIT_POSITION_THRESHOLD="${INIT_POSITION_THRESHOLD:-500.0}"
 
 ARGS=(
   python evaluation/Real_Piper/inference_piper_sync.py
@@ -50,6 +55,10 @@ ARGS=(
   --joint_cmd_topic="${JOINT_CMD_TOPIC}"
   --image_color_mode="${IMAGE_COLOR_MODE}"
   --expected_stats_key="${EXPECTED_STATS_KEY}"
+  --manual_reset_resume_hold_steps="${MANUAL_RESET_RESUME_HOLD_STEPS}"
+  --manual_reset_reminder_interval="${MANUAL_RESET_REMINDER_INTERVAL}"
+  --init_timeout="${INIT_TIMEOUT}"
+  --init_position_threshold="${INIT_POSITION_THRESHOLD}"
 )
 
 if [[ -n "${SEND_IMAGE_HEIGHT}" ]]; then
@@ -107,6 +116,19 @@ case "${JPEG_ROUNDTRIP,,}" in
     ;;
   *)
     echo "Invalid JPEG_ROUNDTRIP=${JPEG_ROUNDTRIP}"
+    exit 1
+    ;;
+esac
+
+case "${MANUAL_RESET,,}" in
+  true|1|yes|y|on)
+    ARGS+=(--manual_reset)
+    ;;
+  false|0|no|n|off)
+    ARGS+=(--no-manual_reset)
+    ;;
+  *)
+    echo "Invalid MANUAL_RESET=${MANUAL_RESET}"
     exit 1
     ;;
 esac

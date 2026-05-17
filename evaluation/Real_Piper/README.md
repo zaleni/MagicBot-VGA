@@ -29,6 +29,11 @@ camera.
 By default the ROS client does one JPEG roundtrip on camera frames to match the
 Piper reference script. Set `JPEG_ROUNDTRIP=false` to disable it.
 
+If `INIT_JOINT_POSITION` is set, `MANUAL_RESET=true` enables Enter controls in
+the inference terminal: press Enter once to move back to the init pose and pause
+the rollout, then press Enter again to clear stale actions and restart inference
+from timestep 0.
+
 For MagicBot_R0, train with:
 
 ```bash
