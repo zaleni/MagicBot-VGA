@@ -122,9 +122,10 @@ def parse_args() -> argparse.Namespace:
         "--input-schema",
         type=str,
         choices=["generic", "real_piper"],
-        default="generic",
+        default=None,
         help=(
-            "Source HDF5 schema. generic reads --state-key/--action-key directly. "
+            "Source HDF5 schema. Defaults to real_piper when --robot-type real_piper is set, "
+            "otherwise generic. generic reads --state-key/--action-key directly. "
             "real_piper reads only joint_action/left_arm + joint_action/left_gripper and "
             "the observation/{head,left}_camera/rgb camera streams by default."
         ),
@@ -258,6 +259,9 @@ def parse_args() -> argparse.Namespace:
 
 
 def apply_schema_defaults(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    if args.input_schema is None:
+        args.input_schema = "real_piper" if args.robot_type == "real_piper" else "generic"
+
     if args.input_schema == "real_piper":
         if args.robot_type is not None and args.robot_type != "real_piper":
             parser.error("--input-schema real_piper only supports --robot-type real_piper")
