@@ -43,11 +43,11 @@ DA3_VARIANT="${DA3_VARIANT:-auto}"
 DA3_ALIGNMENT_MODE="${DA3_ALIGNMENT_MODE:-query_decoder}"
 DA3_CODE_ROOT="${DA3_CODE_ROOT:-}"
 
-DATASET_DIR="${DATASET_DIR:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/zhenji/lerobot_v30/real_piper_lerobot30}"
+DATASET_DIR="${DATASET_DIR:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/zhenji/lerobot_v30/Rank_Block_RGB_lerobot_v30}"
 DATASET_NAME="${DATASET_NAME:-$(basename "${DATASET_DIR}")}"
 DATASET_REPO_ID="${DATASET_REPO_ID:-${DATASET_DIR}}"
 
-ACTION_TYPE="${ACTION_TYPE:-abs}"
+ACTION_TYPE="${ACTION_TYPE:-delta}"
 CHUNK_SIZE="${CHUNK_SIZE:-50}"
 N_ACTION_STEPS="${N_ACTION_STEPS:-${CHUNK_SIZE}}"
 ENABLE_3D_QUERIES="${ENABLE_3D_QUERIES:-true}"
@@ -70,7 +70,7 @@ if [[ -z "${USE_EXTERNAL_STATS+x}" ]]; then
   fi
 fi
 
-NORM_STATS_ROOT="${NORM_STATS_ROOT:-/inspire/qb-ilm/project/embodied-basic-model/zhangjianing-253108140206/zhenji/norm_stats}"
+NORM_STATS_ROOT="${NORM_STATS_ROOT:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/zhenji/norm_stats}"
 DATASET_EXTERNAL_STATS_PATH="${DATASET_EXTERNAL_STATS_PATH:-${NORM_STATS_ROOT}/${ACTION_TYPE}/${DATASET_NAME}/stats.json}"
 
 # Enable an image augmentation preset for real-robot finetuning.
