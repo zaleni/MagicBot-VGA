@@ -58,8 +58,9 @@ class DatasetConfig(draccus.ChoiceRegistry, abc.ABC):
 @dataclass
 class WandBConfig:
     enable: bool = False
-    # Set to true to disable saving an artifact despite training.save_checkpoint=True
-    disable_artifact: bool = False
+    # Set to true to disable saving a model artifact despite training.save_checkpoint=True.
+    # Checkpoints are still saved locally; only W&B artifact upload is disabled.
+    disable_artifact: bool = True
     project: str = "lerobot"
     entity: str | None = None
     notes: str | None = None

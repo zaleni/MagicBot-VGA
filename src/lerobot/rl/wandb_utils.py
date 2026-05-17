@@ -26,6 +26,9 @@ from lerobot.configs.train import TrainPipelineConfig
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR
 
 
+DEFAULT_ARTIFACT_DISABLED_POLICY_TYPES = {"cubev2", "MagicBot_R0"}
+
+
 def cfg_to_group(cfg: TrainPipelineConfig, return_list: bool = False) -> list[str] | str:
     """Return a group name for logging. Optionally returns group name as list."""
 
@@ -73,6 +76,7 @@ class WandBLogger:
 
     def __init__(self, cfg: TrainPipelineConfig):
         self.cfg = cfg.wandb
+        self.policy_type = cfg.policy.type if cfg.policy is not None else None
         self.log_dir = cfg.output_dir
         self.job_name = cfg.job_name
         self.env_fps = cfg.env.fps if cfg.env else None
@@ -121,7 +125,7 @@ class WandBLogger:
 
     def log_policy(self, checkpoint_dir: Path):
         """Checkpoints the policy to wandb."""
-        if self.cfg.disable_artifact:
+        if self.cfg.disable_artifact or self.policy_type in DEFAULT_ARTIFACT_DISABLED_POLICY_TYPES:
             return
 
         step_id = checkpoint_dir.name
