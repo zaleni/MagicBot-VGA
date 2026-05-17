@@ -1,243 +1,68 @@
-# MagicBot-VGA
+# MagicBot-VGA / CubeV2
 
-This repository documents how to evaluate our RoboTwin model
-[`zaleni/MagicBot-VGA-Robotwin`](https://huggingface.co/zaleni/MagicBot-VGA-Robotwin)
-with the MagicBot-VGA codebase.
+MagicBot-VGA is a robot learning codebase for VLA policy training, simulation
+evaluation, and real-robot deployment. This repository contains the CubeV2
+policy family, MagicBot_R0 experiments, RoboTwin/Libero evaluation helpers, and
+real-robot serving clients for Lift2 and Piper.
 
 [![Repository](https://img.shields.io/badge/Repository-GitHub-181717?logo=github)](https://github.com/zaleni/MagicBot-VGA)
-[![Model](https://img.shields.io/badge/Model-HuggingFace-FFD21E?logo=huggingface&logoColor=000000)](https://huggingface.co/zaleni/MagicBot-VGA-Robotwin)
+[![RoboTwin Model](https://img.shields.io/badge/RoboTwin%20Model-HuggingFace-FFD21E?logo=huggingface&logoColor=000000)](https://huggingface.co/zaleni/MagicBot-VGA-Robotwin)
 
-This README focuses on RoboTwin 2.0 environment preparation and evaluation.
+## What Is Here
 
-It covers:
+- `src/lerobot/policies/cubev2`: CubeV2 policy, transforms, and model code.
+- `src/lerobot/policies/MagicBot_R0`: MagicBot_R0 policy and dataset pipeline.
+- `launch/`: training and finetuning entrypoints.
+- `evaluation/RoboTwin`: RoboTwin 2.0 evaluation workflow.
+- `evaluation/Real_Piper`: sync real-robot Piper serving and ROS1 client.
+- `evaluation/Real_Lift2`: Lift2 real-robot serving and inference runtime.
+- `evaluation/Libero`: Libero evaluation helpers.
+- `util_scripts/`: dataset conversion, norm-stat computation, checkpoint
+  repacking, and submission packaging utilities.
 
-- MagicBot environment installation
-- RoboTwin evaluation setup
-- required external model assets
-- single-task evaluation
-- 50-task randomized evaluation
-- CVPR 2026 RoboTwin Track 11-task evaluation
-- submission package generation for the leaderboard workflow
+## Quick Setup
 
-## 1. Requirements
-
-The codebase is built and tested with:
-
-- Python 3.10
-- CUDA 12.8
-- PyTorch 2.7.1
-
-We recommend using a Linux machine with NVIDIA GPUs.
-
-## 2. Install the MagicBot Base Environment
-
-Clone the repository:
-
-```bash
-git clone https://github.com/zaleni/MagicBot-VGA.git
-cd MagicBot-VGA
-```
-
-Create a conda environment:
+The core environment is tested with Python 3.10, CUDA 12.8, and PyTorch 2.7.1.
 
 ```bash
 conda create -y -n magicbot python=3.10
 conda activate magicbot
 pip install --upgrade pip
-```
 
-Install the basic system dependencies used by the codebase:
-
-```bash
 conda install -c conda-forge ffmpeg=7.1.1 svt-av1 -y
-```
 
-Install PyTorch for CUDA 12.8:
-
-```bash
 pip install torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1 \
   --index-url https://download.pytorch.org/whl/cu128
-```
 
-Install Python dependencies:
-
-```bash
-pip install torchcodec numpy scipy transformers==4.57.1 mediapy loguru pytest omegaconf
+pip install torchcodec numpy scipy transformers==4.57.1 mediapy loguru pytest omegaconf h5py
 pip install -e .
 ```
 
-### Optional: install real-robot serving dependencies
-
-If you want to run real-robot evaluation with the serve interface, install the
-extra serving and visualization dependencies:
+For real-robot serving, also install:
 
 ```bash
 pip install tyro matplotlib mediapy websockets msgpack
 ```
 
-## 3. Patch Qwen3-VL in Transformers
+## Qwen3-VL Patch
 
-For `CubeV2`, install `transformers==4.57.1` first, then patch the installed
-Qwen3-VL implementation with the repository copy:
+CubeV2 uses a patched Qwen3-VL implementation for cached inference. After
+installing `transformers==4.57.1`, copy the repository patch into the installed
+package:
 
 ```bash
 TRANSFORMERS_DIR=${CONDA_PREFIX}/lib/python3.10/site-packages/transformers/
-
-cp -r src/lerobot/policies/cubev2/transformers_replace/models  ${TRANSFORMERS_DIR}
+cp -r src/lerobot/policies/cubev2/transformers_replace/models ${TRANSFORMERS_DIR}
 ```
 
-`CubeV2` imports Qwen3-VL directly from the installed `transformers` package:
+## Main Workflows
 
-```python
-from transformers.models.qwen3_vl import modeling_qwen3_vl
-from transformers.models.qwen3_vl import Qwen3VLForConditionalGeneration, Qwen3VLTextModel
-```
+### RoboTwin Evaluation
 
-The repository patch lives under:
+The detailed RoboTwin guide now lives in
+[evaluation/RoboTwin/README.md](evaluation/RoboTwin/README.md).
 
-```text
-src/lerobot/policies/cubev2/transformers_replace/models/qwen3_vl/modeling_qwen3_vl.py
-```
-
-Training mostly runs the model without KV cache, but inference uses cached decoding
-with `past_key_values`. The patched file keeps that inference path compatible with
-the custom `CubeV2` attention flow, so it should be copied during installation.
-
-## 4. Prepare RoboTwin for Evaluation
-
-This section is specifically for RoboTwin evaluation. If you only want to load the
-model or run other parts of the codebase, the extra RoboTwin setup below is not required.
-
-### Option A: initialize the bundled RoboTwin submodule
-
-```bash
-git submodule update --init third_party/RoboTwin
-```
-
-### Option B: copy an existing RoboTwin checkout
-
-You do not have to download RoboTwin from scratch if you already have a prepared copy.
-You can copy it into this repository instead.
-
-The evaluation code assumes RoboTwin is located exactly at:
-
-```text
-<repo_root>/third_party/RoboTwin
-```
-
-So a valid layout looks like:
-
-```text
-MagicBot-VGA/
-  evaluation/
-  launch/
-  src/
-  third_party/
-    RoboTwin/
-```
-
-If your RoboTwin directory already exists elsewhere, either:
-
-- copy it to `third_party/RoboTwin`, or
-- create a symlink at `third_party/RoboTwin` pointing to your existing RoboTwin directory
-
-This path requirement comes from the evaluation code, which imports RoboTwin modules
-and task configs from `third_party/RoboTwin` directly.
-
-### Install RoboTwin-specific system dependency
-
-RoboTwin rendering requires Vulkan:
-
-```bash
-sudo apt install -y libvulkan1 mesa-vulkan-drivers vulkan-tools
-```
-
-### Install RoboTwin Python dependencies and assets
-
-```bash
-cp evaluation/RoboTwin/requirements.txt third_party/RoboTwin/script/requirements.txt
-cd third_party/RoboTwin
-bash script/_install.sh
-bash script/_download_assets.sh
-cd ../../
-```
-
-For more RoboTwin installation details, you can also refer to the official documentation:
-https://robotwin-platform.github.io/doc/usage/robotwin-install.html
-
-## 5. Prepare External Model Assets
-
-The released checkpoint `zaleni/MagicBot-VGA-Robotwin` is intended to be lightweight.
-For RoboTwin action evaluation, you should provide the external backbone/tokenizer assets explicitly.
-
-Recommended values:
-
-- Qwen3-VL backbone and processor: `Qwen/Qwen3-VL-2B-Instruct`
-- Cosmos tokenizer: `nvidia/Cosmos-Tokenizer-CI8x8`
-
-You can use either:
-
-- public Hugging Face repo ids
-- local directories downloaded in advance
-
-Example for offline/local usage:
-
-```bash
-QWEN3_VL_PATH=/path/to/Qwen3-VL-2B-Instruct
-COSMOS_TOKENIZER_PATH=/path/to/Cosmos-Tokenizer-CI8x8
-```
-
-For standard RoboTwin action evaluation, we recommend disabling DA3 teacher instantiation:
-
-```bash
-DISABLE_DA3_TEACHER_FOR_EVAL=true
-```
-
-This avoids loading the frozen DA3 teacher during evaluation while keeping the policy architecture compatible.
-
-## 6. Single-Task Evaluation
-
-The most direct way is to call `evaluation/RoboTwin/inference.py` on a single RoboTwin task.
-
-Example: evaluate task `0` (`adjust_bottle`) on `demo_clean`:
-
-```bash
-cd third_party/RoboTwin
-
-python ../../evaluation/RoboTwin/inference.py \
-  --args.ckpt_path zaleni/MagicBot-VGA-Robotwin \
-  --args.video_dir ../../evaluation/RoboTwin/output_magicbot/demo_clean/task_00 \
-  --args.task_config demo_clean \
-  --args.task_idx 0 \
-  --args.action_mode delta \
-  --args.stats_key aloha \
-  --args.dtype bfloat16 \
-  --args.qwen3_vl_pretrained_path Qwen/Qwen3-VL-2B-Instruct \
-  --args.qwen3_vl_processor_path Qwen/Qwen3-VL-2B-Instruct \
-  --args.cosmos_tokenizer_path_or_name nvidia/Cosmos-Tokenizer-CI8x8 \
-  --args.disable_3d_teacher_for_eval
-```
-
-If you use local asset directories, replace the public repo ids with your local paths.
-
-Important arguments:
-
-- `--args.ckpt_path`: model repo id or local `pretrained_model` directory
-- `--args.task_config`: `demo_clean` or `demo_randomized`
-- `--args.task_idx`: task index in `evaluation/RoboTwin/inference.py`
-- `--args.action_mode`: usually `delta` for this model
-- `--args.stats_key`: usually `aloha` for RoboTwin
-- `--args.dtype`: `bfloat16` is recommended on modern GPUs
-
-Outputs are written to `--args.video_dir`, including:
-
-- replay videos
-- `summary.json`
-- `summary.txt`
-
-## 7. 50-Task Randomized Evaluation
-
-For batch evaluation on RoboTwin randomized tasks, use:
+Typical batch evaluation:
 
 ```bash
 PRETRAINED_CKPT=zaleni/MagicBot-VGA-Robotwin \
@@ -250,169 +75,81 @@ MAX_JOBS_PER_GPU=2 \
 bash evaluation/RoboTwin/eval_randomized_50.sh
 ```
 
-Useful environment variables:
+### Real Piper Deployment
 
-- `PRETRAINED_CKPT`: model repo id or local checkpoint directory
-- `GPU_IDS`: comma-separated GPU ids, for example `0,1,2,3`
-- `MAX_JOBS_PER_GPU`: parallel RoboTwin jobs per GPU
-- `TASK_CONFIG`: defaults to `demo_randomized`
-- `TEST_NUM`: number of episodes per task
-- `DTYPE`: `bfloat16` or `float32`
-- `BASE_OUTPUT_PATH`: output root directory
+Piper deployment is documented in
+[evaluation/Real_Piper/README.md](evaluation/Real_Piper/README.md).
 
-This script writes:
+Useful launch notes:
 
-- per-task logs and videos under `tasks/`
-- aggregated `summary.json`
-- aggregated `summary.txt`
+- [CubeV2 Piper startup note](inference_magicbot_piper.md)
+- [MagicBot_R0 Piper startup reference](inference_magicbot_r0_piper.sh)
 
-## 8. Evaluate a Continuous Task Range
+The Piper client supports sync inference, 7D `real_piper` state/action checks,
+and Enter-triggered return-to-init/restart when `INIT_JOINT_POSITION` and
+`MANUAL_RESET=true` are set.
 
-`eval_randomized_50.sh` supports continuous ranges through:
+### Real Lift2 Deployment
 
-- `START_TASK_IDX`
-- `TASK_COUNT`
+Lift2 deployment docs live in
+[evaluation/Real_Lift2/README.md](evaluation/Real_Lift2/README.md).
 
-Example: evaluate tasks `10` to `19`:
+The real-robot server code is shared by Lift2 and Piper where possible, while
+robot-side clients stay platform-specific.
 
-```bash
-PRETRAINED_CKPT=zaleni/MagicBot-VGA-Robotwin \
-QWEN3_VL_PRETRAINED_PATH=Qwen/Qwen3-VL-2B-Instruct \
-QWEN3_VL_PROCESSOR_PATH=Qwen/Qwen3-VL-2B-Instruct \
-COSMOS_TOKENIZER_PATH_OR_NAME=nvidia/Cosmos-Tokenizer-CI8x8 \
-DISABLE_DA3_TEACHER_FOR_EVAL=true \
-START_TASK_IDX=10 \
-TASK_COUNT=10 \
-bash evaluation/RoboTwin/eval_randomized_50.sh
-```
+### Libero Evaluation
 
-## 9. Evaluate the CVPR 2026 RoboTwin Track 11-Task Subset
+See [evaluation/Libero/README.md](evaluation/Libero/README.md).
 
-For the Hugging Face leaderboard
-[`open-gigaai/CVPR-2026-RoboTwin-Track-LeaderBoard`](https://huggingface.co/spaces/open-gigaai/CVPR-2026-RoboTwin-Track-LeaderBoard),
-we use the following 11-task subset:
+## Training Entrypoints
 
-```text
-[2, 3, 9, 10, 12, 15, 17, 25, 28, 30, 44]
-```
+Common CubeV2 launch scripts:
 
-The exact task names in `evaluation/RoboTwin/inference.py` are:
+- `launch/cubev2/cubev2_pretrain.sh`
+- `launch/cubev2/cubev2_finetune.sh`
+- `launch/cubev2/cubev2_finetune_robotwin.sh`
+- `launch/cubev2/cubev2_finetune_real_piper.sh`
+- `launch/cubev2/cubev2_finetune_real_lift2.sh`
 
-- `blocks_ranking_rgb`
-- `blocks_ranking_size`
-- `handover_mic`
-- `hanging_mug`
-- `move_can_pot`
-- `move_stapler_pad`
-- `open_microwave`
-- `place_can_basket`
-- `place_dual_shoes`
-- `place_fan`
-- `stack_blocks_three`
+MagicBot_R0 launch scripts:
 
-The current batch script does not take a sparse task list directly, so the recommended approach is to run a shell loop:
+- `launch/magicbot_r0/magicbot_r0_pretrain.sh`
+- `launch/magicbot_r0/magicbot_r0_finetune_robotwin.sh`
+- `launch/magicbot_r0/magicbot_r0_finetune_real_piper.sh`
+- `launch/magicbot_r0/magicbot_r0_finetune_real_lift2.sh`
 
-```bash
-cd third_party/RoboTwin
+Norm-stat utilities for real-robot delta-action models are under
+`launch/compute_norm/`.
 
-TASKS=(2 3 9 10 12 15 17 25 28 30 44)
-for t in "${TASKS[@]}"; do
-  python ../../evaluation/RoboTwin/inference.py \
-    --args.ckpt_path zaleni/MagicBot-VGA-Robotwin \
-    --args.video_dir ../../evaluation/RoboTwin/output_magicbot/custom_subset/task_${t} \
-    --args.task_config demo_randomized \
-    --args.task_idx "${t}" \
-    --args.action_mode delta \
-    --args.stats_key aloha \
-    --args.dtype bfloat16 \
-    --args.qwen3_vl_pretrained_path Qwen/Qwen3-VL-2B-Instruct \
-    --args.qwen3_vl_processor_path Qwen/Qwen3-VL-2B-Instruct \
-    --args.cosmos_tokenizer_path_or_name nvidia/Cosmos-Tokenizer-CI8x8 \
-    --args.disable_3d_teacher_for_eval
-done
-```
+## Tutorials
 
-This produces one output directory per task, each containing replay videos plus `summary.json` and `summary.txt`.
+- [Installation](tutorials/installation.md)
+- [Finetune on LeRobot v2.1 dataset](tutorials/finetune_on_lerobot_v21_dataset.md)
+- [Finetune InternVLA-A1 with RoboTwin](tutorials/finetune_internvla_a1_with_robotwin.md)
+- [Pretrain InternVLA-A1 with InterData A1](tutorials/pretrain_internvla_a1_with_interndata_a1.md)
 
-## 10. Package the 11-Task Submission and Export Success Rates
+## External Assets
 
-After you finish the randomized evaluation run, you can convert those 11 tasks into a submission-style folder with:
+Depending on the model path, you may need local copies or Hugging Face repo ids
+for:
 
-```bash
-python util_scripts/package_robotwin_submission.py \
-  --run /path/to/output_randomized_50/<run_name>/summary.txt \
-  --dst /path/to/output_randomized_50/<run_name>/submission_package \
-  --overwrite
-```
+- Qwen3-VL backbone/processor, for example `Qwen/Qwen3-VL-2B-Instruct`
+- Cosmos tokenizer, for example `nvidia/Cosmos-Tokenizer-CI8x8`
+- DA3 teacher assets when training or when evaluation explicitly enables them
+- MagicBot_R0 Wan/T5/VAE and ActionDiT/Future3D assets
 
-If you also want to bundle a policy folder, add:
+For standard RoboTwin action evaluation with the released lightweight checkpoint,
+passing `DISABLE_DA3_TEACHER_FOR_EVAL=true` is recommended.
 
-```bash
-  --policy-dir /path/to/policy/Your_Policy
-```
+## Acknowledgments
 
-The packaging script will:
+MagicBot-VGA started from the excellent
+[InternVLA](https://github.com/InternRobotics/InternVLA-A1) framework and has
+since been extended for CubeV2, MagicBot_R0, real-robot deployment, and multiple
+evaluation workflows.
 
-- create `submission_package/<task_name>/episode0.mp4`, `episode1.mp4`, ...
-- preserve the 11-task ordering by task index
-- write `package_manifest.txt`
-- write `selected_task_summary.json`
-- write `selected_task_summary.txt`
+We also thank these open-source projects:
 
-The selected-task summary files include:
-
-- per-task `success_rate`
-- per-task `success_count` and `test_num`
-- `avg_task_success_rate` across the 11 tasks
-- `overall_episode_success_rate` across all episodes in the 11-task subset
-
-This is useful when you want a leaderboard-facing summary for the competition subset rather than the full randomized-50 report.
-
-## 11. Task Index Reference
-
-Task indices are defined in [`evaluation/RoboTwin/inference.py`](evaluation/RoboTwin/inference.py).
-
-For example:
-
-- `0`: `adjust_bottle`
-- `2`: `blocks_ranking_rgb`
-- `3`: `blocks_ranking_size`
-- `9`: `handover_mic`
-- `10`: `hanging_mug`
-- `12`: `move_can_pot`
-- `15`: `move_stapler_pad`
-- `17`: `open_microwave`
-- `25`: `place_can_basket`
-- `28`: `place_dual_shoes`
-- `30`: `place_fan`
-- `44`: `stack_blocks_three`
-
-## 12. Common Notes
-
-- `inference.py` can load checkpoints from either a local directory or a Hugging Face repo id.
-- If your server cannot access Hugging Face online, download the external assets in advance and pass local paths.
-- If you use the lightweight checkpoint release for action evaluation, keeping `--args.disable_3d_teacher_for_eval` enabled is recommended.
-- If you want to inspect reconstructed future images during inference, enable `--args.decode_image_flag`, though this is not required for standard RoboTwin scoring.
-
-## 13. Model Link
-
-Released RoboTwin checkpoint:
-
-- https://huggingface.co/zaleni/MagicBot-VGA-Robotwin
-
-## 14. Acknowledgments
-
-MagicBot-VGA is developed on top of the excellent InternVLA framework. Our codebase
-started from that foundation and has since been substantially modified and extended
-for our own model architecture, training pipeline, and evaluation workflow.
-
-We sincerely thank the [InternVLA](https://github.com/InternRobotics/InternVLA-A1)
-authors and contributors for open-sourcing their framework and making follow-up
-research and development much easier.
-
-We also thank the following open-source projects:
-
-- [InternVLA](https://github.com/InternRobotics/InternVLA-A1)
 - [LeRobot](https://github.com/huggingface/lerobot)
 - [RoboTwin](https://github.com/RoboTwin-Platform/RoboTwin)
 - [Qwen3-VL](https://github.com/QwenLM/Qwen3-VL)
