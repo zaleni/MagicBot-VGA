@@ -316,7 +316,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gripper_close_offset", type=float, default=10000.0)
     parser.add_argument("--gripper_open_offset", type=float, default=5000.0)
     parser.add_argument("--gripper_min", type=float, default=-100000.0)
-    parser.add_argument("--gripper_max", type=float, default=80000.0)
+    parser.add_argument("--gripper_max", type=float, default=90000.0)
     parser.add_argument("--init_joint_position", type=float, nargs=7, default=None)
     parser.add_argument("--init_wait", action="store_true")
     parser.add_argument("--init_timeout", type=float, default=10.0)
