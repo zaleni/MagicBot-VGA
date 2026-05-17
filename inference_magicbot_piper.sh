@@ -6,19 +6,19 @@ cd ~/research/MagicBot-VGA
 
 conda activate magicbot
 
-CHECKPOINT_DIR=/home/jiangjiahao/data/zhenji/cubev2_real_piper/pretrained_model \
+CHECKPOINT_DIR=/home/jjhao/data/model/zaleni/3B-Rank_RGB-delta \
 QWEN3_VL_PRETRAINED_PATH=/home/jiangjiahao/data/model/Qwen3-VL-2B-Instruct \
 QWEN3_VL_PROCESSOR_PATH=/home/jiangjiahao/data/model/Qwen3-VL-2B-Instruct \
 COSMOS_TOKENIZER_PATH_OR_NAME=/home/jiangjiahao/data/model/Cosmos-Tokenizer-CI8x8 \
 STATS_KEY=real_piper \
-ACTION_MODE=abs \
+ACTION_MODE=delta \
 DEVICE=cuda \
 LOAD_DEVICE=cuda \
 COSMOS_DEVICE=cuda \
 HOST=0.0.0.0 \
-PORT=8102 \
+PORT=8202 \
 INFER_HORIZON=50 \
-DEFAULT_PROMPT="Sort desktop objects and place them in designated locations." \
+DEFAULT_PROMPT="Position red block, green block, and blue block from left to right in the specified sequence." \
 bash evaluation/Real_Piper/01_serve_cubev2_real_piper_sync.sh
 
 
@@ -29,8 +29,8 @@ source ~/.bashrc
 conda activate act
 
 WS_HOST=10.60.43.33 \
-WS_PORT=8102 \
-TASK_PROMPT="Sort desktop objects and place them in designated locations." \
+WS_PORT=8202 \
+TASK_PROMPT="Position red block, green block, and blue block from left to right in the specified sequence." \
 PUBLISH_RATE=15 \
 ACTION_HORIZON=50 \
 IMAGE_HISTORY_INTERVAL=15 \

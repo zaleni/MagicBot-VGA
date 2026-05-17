@@ -8,27 +8,27 @@ conda activate magicbot
 
 ### Optional one-time text cache for deployment without loading the T5 text encoder.
 ### Reuse the training TEXT_EMBED_CACHE_DIR if it already contains this task prompt.
-# python src/lerobot/scripts/magicbot_r0_precompute_text_embeds.py \
-#   --text-embedding-cache-dir /path/to/MagicBot_R0/text_embeds \
-#   --model-cache-dir /path/to/MagicBot_R0/model_cache \
-#   --override-instruction "Sweep the trash into the dustpan using a broom." \
-#   --context-len 128 \
-#   --device cuda
+python src/lerobot/scripts/magicbot_r0_precompute_text_embeds.py \
+  --text-embedding-cache-dir /home/jjhao/data/text_embeds \
+  --model-cache-dir /home/jjhao/data/model \
+  --override-instruction "Unzip the fabric pencil case." \
+  --context-len 128 \
+  --device cuda
 ### Optional: set DIFFSYNTH_MODEL_BASE_PATH=/path/to/MagicBot_R0/model_cache
 ### to keep Wan/T5/VAE files off the default ./checkpoints directory.
 
-CHECKPOINT_DIR=/path/to/MagicBot_R0/real_lift2/checkpoints/30000/pretrained_model \
+CHECKPOINT_DIR=/home/jjhao/data/model/zaleni/6B-zip-bag-abs \
 STATS_KEY=real_lift2 \
 ACTION_MODE=abs \
 DEVICE=cuda \
 LOAD_DEVICE=cuda \
 HOST=0.0.0.0 \
-PORT=8102 \
+PORT=9102 \
 INFER_HORIZON=24 \
-DEFAULT_PROMPT="Sweep the trash into the dustpan using a broom." \
+DEFAULT_PROMPT="Unzip the fabric pencil case." \
 RTC_ENABLED=false \
 MAGICBOT_R0_LOAD_TEXT_ENCODER=false \
-MAGICBOT_R0_TEXT_EMBED_CACHE_DIR=/path/to/MagicBot_R0/text_embeds \
+MAGICBOT_R0_TEXT_EMBED_CACHE_DIR=/home/jjhao/data/text_embeds \
 MAGICBOT_R0_CONTEXT_LEN=128 \
 MAGICBOT_R0_SKIP_DIT_LOAD_FROM_PRETRAIN=true \
 bash evaluation/Real_Lift2/01_serve_magicbot_r0_real_lift2.sh
@@ -38,8 +38,8 @@ bash evaluation/Real_Lift2/01_serve_magicbot_r0_real_lift2.sh
 cd /home/arx/MagicBot-VGA
 
 RUN_ENV=act \
-WS_URL=ws://10.60.43.33:8102 \
-PROMPT="Sweep the trash into the dustpan using a broom." \
+WS_URL=ws://10.60.43.33:9102 \
+PROMPT="Unzip the fabric pencil case." \
 FRAME_RATE=24 \
 IMAGE_HISTORY_INTERVAL=15 \
 INFERENCE_MODE=sync \
@@ -53,8 +53,8 @@ source ~/.bashrc
 conda activate act
 
 REAL_LIFT2_RUNTIME_ROOT=/home/arx/ROS2_LIFT_Play/act \
-WS_URL=ws://10.60.43.33:8102 \
-PROMPT="Sweep the trash into the dustpan using a broom." \
+WS_URL=ws://10.60.43.33:9102 \
+PROMPT="Unzip the fabric pencil case." \
 FRAME_RATE=24 \
 IMAGE_HISTORY_INTERVAL=15 \
 MAX_PUBLISH_STEP=10000 \
