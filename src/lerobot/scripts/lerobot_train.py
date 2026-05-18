@@ -266,9 +266,13 @@ def _format_train_status_line(
     if "loss_action" in train_tracker.metrics:
         loss_action = loss_overrides.get("loss_action", _meter_avg_or_val(train_tracker.loss_action))
         loss_parts.append(f"action:{loss_action:.3f}")
+        if "loss_action_w" in loss_overrides:
+            loss_parts.append(f"action_w:{loss_overrides['loss_action_w']:.3f}")
     if "loss_video" in train_tracker.metrics:
         loss_video = loss_overrides.get("loss_video", _meter_avg_or_val(train_tracker.loss_video))
         loss_parts.append(f"video:{loss_video:.3f}")
+        if "loss_video_w" in loss_overrides:
+            loss_parts.append(f"video_w:{loss_overrides['loss_video_w']:.3f}")
     if "loss_gen" in train_tracker.metrics:
         loss_gen = loss_overrides.get("loss_gen", _meter_avg_or_val(train_tracker.loss_gen))
         lambda_gen = float(getattr(cfg.policy, "lambda_gen", 1.0))
@@ -278,7 +282,8 @@ def _format_train_status_line(
         loss_3d = loss_overrides.get("loss_3d", _meter_avg_or_val(train_tracker.loss_3d))
         lambda_3d = float(getattr(cfg.policy, "lambda_3d", 1.0))
         loss_parts.append(f"3d:{loss_3d:.3f}")
-        loss_parts.append(f"3d_w:{lambda_3d * loss_3d:.3f}")
+        loss_3d_w = loss_overrides.get("loss_3d_w", lambda_3d * loss_3d)
+        loss_parts.append(f"3d_w:{loss_3d_w:.3f}")
 
     optim_parts = []
     if "grad_norm" in train_tracker.metrics:
@@ -737,6 +742,16 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                 }.items()
                 if value is not None
             }
+            if cfg.policy.type == "MagicBot_R0":
+                lambda_action = float(getattr(cfg.policy, "lambda_action", 1.0))
+                lambda_video = float(getattr(cfg.policy, "lambda_video", 1.0))
+                lambda_3d = float(getattr(cfg.policy, "lambda_3d", 1.0))
+                if "loss_action" in log_scalar_metrics:
+                    log_scalar_metrics["loss_action_w"] = lambda_action * log_scalar_metrics["loss_action"]
+                if "loss_video" in log_scalar_metrics:
+                    log_scalar_metrics["loss_video_w"] = lambda_video * log_scalar_metrics["loss_video"]
+                if "loss_3d" in log_scalar_metrics:
+                    log_scalar_metrics["loss_3d_w"] = lambda_3d * log_scalar_metrics["loss_3d"]
             log_scalar_metrics.update(
                 {
                     key: value

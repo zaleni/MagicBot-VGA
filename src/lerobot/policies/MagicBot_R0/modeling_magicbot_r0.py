@@ -505,6 +505,7 @@ class MagicBotR0Policy(PreTrainedPolicy):
             if (
                 key.startswith("loss_action_dim")
                 or key.startswith("loss_3d_q")
+                or key in {"loss_video_w", "loss_action_w", "loss_3d_w"}
                 or key in {"time_3d_teacher_forward_s", "future_3d_query_sigma"}
             ):
                 output[key] = float(value)

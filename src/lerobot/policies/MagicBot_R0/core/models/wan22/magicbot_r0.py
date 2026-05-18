@@ -1131,25 +1131,30 @@ class MagicBotR0(torch.nn.Module):
             collect_logs=collect_loss_dict and collect_detailed_loss_dict,
         )
 
-        loss_total = (
-            self.loss_lambda_video * loss_video
-            + self.loss_lambda_action * loss_action
-            + self.loss_lambda_3d * loss_3d
-        )
+        loss_video_w = self.loss_lambda_video * loss_video
+        loss_action_w = self.loss_lambda_action * loss_action
+        loss_3d_w = self.loss_lambda_3d * loss_3d
+        loss_total = loss_video_w + loss_action_w + loss_3d_w
         if not collect_loss_dict:
             return loss_total, {}
 
         if loss_dict_as_tensors:
             loss_dict = {
-                "loss_video": (self.loss_lambda_video * loss_video).detach(),
-                "loss_action": (self.loss_lambda_action * loss_action).detach(),
+                "loss_video": loss_video.detach(),
+                "loss_action": loss_action.detach(),
                 "loss_3d": loss_3d.detach(),
+                "loss_video_w": loss_video_w.detach(),
+                "loss_action_w": loss_action_w.detach(),
+                "loss_3d_w": loss_3d_w.detach(),
             }
         else:
             loss_dict = {
-                "loss_video": self.loss_lambda_video * float(loss_video.detach().item()),
-                "loss_action": self.loss_lambda_action * float(loss_action.detach().item()),
+                "loss_video": float(loss_video.detach().item()),
+                "loss_action": float(loss_action.detach().item()),
                 "loss_3d": float(loss_3d.detach().item()),
+                "loss_video_w": float(loss_video_w.detach().item()),
+                "loss_action_w": float(loss_action_w.detach().item()),
+                "loss_3d_w": float(loss_3d_w.detach().item()),
             }
         if not collect_detailed_loss_dict:
             return loss_total, loss_dict
