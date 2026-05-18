@@ -60,7 +60,7 @@ DA3_VARIANT="${DA3_VARIANT:-auto}"
 DA3_ALIGNMENT_MODE="${DA3_ALIGNMENT_MODE:-query_decoder}"
 DA3_CODE_ROOT="${DA3_CODE_ROOT:-}"
 ROBOTWIN_ROOT="${ROBOTWIN_ROOT:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/RoboTwin-LeRobot-v30}"
-ACTION_TYPE="${ACTION_TYPE:-delta}"
+ACTION_TYPE="${ACTION_TYPE:-abs}"
 CHUNK_SIZE="${CHUNK_SIZE:-50}"
 N_ACTION_STEPS="${N_ACTION_STEPS:-${CHUNK_SIZE}}"
 ENABLE_3D_QUERIES="${ENABLE_3D_QUERIES:-true}"
@@ -85,8 +85,8 @@ SAVE_FREQ="${SAVE_FREQ:-25000}"
 LOG_FREQ="${LOG_FREQ:-100}"
 NUM_WORKERS="${NUM_WORKERS:-12}"
 
-if [[ "${CUBEV2_ATTENTION_MASK_MODE}" == "casual" ]]; then
-  echo "CUBEV2_ATTENTION_MASK_MODE=casual detected; using causal."
+if [[ "${CUBEV2_ATTENTION_MASK_MODE}" == "causal" ]]; then
+  echo "CUBEV2_ATTENTION_MASK_MODE=causal detected; using causal."
   CUBEV2_ATTENTION_MASK_MODE="causal"
 fi
 
