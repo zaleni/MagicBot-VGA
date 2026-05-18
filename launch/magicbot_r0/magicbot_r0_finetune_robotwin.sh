@@ -320,9 +320,9 @@ fi
 echo "Discovered ${#DATASET_REPO_IDS[@]} RoboTwin datasets under ${ROBOTWIN_ROOT}"
 printf '  %s\n' "${DATASET_REPO_IDS[@]}"
 
-BASE_OUTPUT_DIR="${BASE_OUTPUT_DIR:-outputs/${POLICY}}"
+BASE_OUTPUT_DIR="${BASE_OUTPUT_DIR:-/inspire/qb-ilm/project/embodied-basic-model/zhangjianing-253108140206/outputs/${POLICY}}"
 BOOTSTRAP_TAG="${BOOTSTRAP_TAG:-pretrained300k}"
-JOB_NAME="${JOB_NAME:-${POLICY}-${MAGICBOT_R0_VARIANT}-robotwin-3d-${ACTION_TYPE}-${BOOTSTRAP_TAG}-finetune-$(date +'%Y_%m_%d_%H_%M_%S')}"
+JOB_NAME="${JOB_NAME:-${MAGICBOT_R0_VARIANT}-robotwin-3d-${ACTION_TYPE}-${BOOTSTRAP_TAG}-finetune-$(date +'%Y_%m_%d_%H_%M_%S')}"
 OUTPUT_DIR="${BASE_OUTPUT_DIR}/${JOB_NAME}"
 REPO_ID_FILE_DIR="${BASE_OUTPUT_DIR}/_repo_id_files"
 mkdir -p "${REPO_ID_FILE_DIR}"
