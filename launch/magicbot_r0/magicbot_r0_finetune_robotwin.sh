@@ -5,7 +5,7 @@ set -euo pipefail
 ################################# ENV config ##################################
 
 export MASTER_ADDR=${MASTER_ADDR:-"127.0.0.1"}
-export MASTER_PORT=${MASTER_PORT:-6390}
+export MASTER_PORT=${MASTER_PORT:-7390}
 echo "MASTER_ADDR=${MASTER_ADDR}, MASTER_PORT=${MASTER_PORT}"
 
 PROC_PER_NODE="${PROC_PER_NODE:-8}"
@@ -50,6 +50,9 @@ MAGICBOT_R0_REDIRECT_COMMON_FILES="${MAGICBOT_R0_REDIRECT_COMMON_FILES:-true}"
 MAGICBOT_R0_ASSET_ROOT="${MAGICBOT_R0_ASSET_ROOT:-${PROJ_ROOT}/checkpoints/magicbot_r0}"
 ACTION_DIT_PRETRAINED_PATH="${ACTION_DIT_PRETRAINED_PATH:-${MAGICBOT_R0_ASSET_ROOT}/ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt}"
 FUTURE_3D_PRETRAINED_PATH="${FUTURE_3D_PRETRAINED_PATH:-${MAGICBOT_R0_ASSET_ROOT}/Future3DExpert_linear_interp_Wan22_alphascale_768hdim.pt}"
+DEFAULT_POLICY_INIT_PATH="/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/MagicBot-VGA/outputs/MagicBot_R0/MagicBot_R0-magicbot_r0-multidata-delta-pretrain-2026_05_07_15_59_20/checkpoints/300000/pretrained_model"
+POLICY_INIT_PATH="${POLICY_INIT_PATH:-${PRETRAINED_PATH:-${PRETRAINED_MODEL_DIR:-${DEFAULT_POLICY_INIT_PATH}}}}"
+SKIP_DIT_LOAD_FROM_PRETRAIN="${SKIP_DIT_LOAD_FROM_PRETRAIN:-true}"
 NATIVE_MAGICBOT_R0_CHECKPOINT_PATH="${NATIVE_MAGICBOT_R0_CHECKPOINT_PATH:-}"
 LOAD_TEXT_ENCODER="${LOAD_TEXT_ENCODER:-false}"
 
@@ -69,9 +72,9 @@ VALIDATE_DATASETS="${VALIDATE_DATASETS:-true}"
 VIDEO_BACKEND="${VIDEO_BACKEND:-}"
 USE_DIST_LOADING="${USE_DIST_LOADING:-false}"
 
-ACTION_TYPE="${ACTION_TYPE:-abs}"
-ACTION_DIM="${ACTION_DIM:-14}"
-PROPRIO_DIM="${PROPRIO_DIM:-14}"
+ACTION_TYPE="${ACTION_TYPE:-delta}"
+ACTION_DIM="${ACTION_DIM:-24}"
+PROPRIO_DIM="${PROPRIO_DIM:-24}"
 ACTION_HORIZON="${ACTION_HORIZON:-32}"
 N_ACTION_STEPS="${N_ACTION_STEPS:-24}"
 NUM_INFERENCE_STEPS="${NUM_INFERENCE_STEPS:-10}"
@@ -85,18 +88,18 @@ NORM_DEFAULT_MODE="${NORM_DEFAULT_MODE:-z-score}"
 ENABLE_IMAGE_AUG="${ENABLE_IMAGE_AUG:-false}"
 IMAGE_AUG_PRESET="${IMAGE_AUG_PRESET:-pi05}"
 
-BATCH_SIZE="${BATCH_SIZE:-12}"
+BATCH_SIZE="${BATCH_SIZE:-10}"
 GRAD_ACCUM_STEPS="${GRAD_ACCUM_STEPS:-1}"
-STEPS="${STEPS:-200000}"
+STEPS="${STEPS:-220000}"
 NUM_EPOCHS="${NUM_EPOCHS:-}"
-TRAIN_MAX_STEPS="${TRAIN_MAX_STEPS-200000}"
+TRAIN_MAX_STEPS="${TRAIN_MAX_STEPS-220000}"
 SAVE_FREQ="${SAVE_FREQ:-20000}"
 LOG_FREQ="${LOG_FREQ:-50}"
-NUM_WORKERS="${NUM_WORKERS:-12}"
+NUM_WORKERS="${NUM_WORKERS:-16}"
 
-LR="${LR:-1.0e-4}"
+LR="${LR:-5.0e-5}"
 WEIGHT_DECAY="${WEIGHT_DECAY:-1.0e-2}"
-WARMUP_STEPS="${WARMUP_STEPS:-5000}"
+WARMUP_STEPS="${WARMUP_STEPS:-2000}"
 DECAY_LR="${DECAY_LR:-1.0e-6}"
 LAMBDA_VIDEO="${LAMBDA_VIDEO:-1.0}"
 LAMBDA_ACTION="${LAMBDA_ACTION:-1.0}"
@@ -158,6 +161,15 @@ case "${USE_EXTERNAL_STATS}" in
     ;;
 esac
 
+case "${SKIP_DIT_LOAD_FROM_PRETRAIN}" in
+  true|false)
+    ;;
+  *)
+    echo "Unsupported SKIP_DIT_LOAD_FROM_PRETRAIN=${SKIP_DIT_LOAD_FROM_PRETRAIN}. Expected true or false."
+    exit 1
+    ;;
+esac
+
 if [[ "${USE_EXTERNAL_STATS}" == "true" ]]; then
   if [[ -z "${NORMALIZATION_STATS_PATH}" ]]; then
     if [[ -n "${DATASET_EXTERNAL_STATS_PATH}" ]]; then
@@ -174,6 +186,11 @@ if [[ "${USE_EXTERNAL_STATS}" == "true" ]]; then
   fi
 else
   NORMALIZATION_STATS_PATH=""
+fi
+
+ACTION_STATS_PATH="${ACTION_STATS_PATH:-${POLICY_ACTION_STATS_PATH:-}}"
+if [[ -z "${ACTION_STATS_PATH}" && -n "${NORMALIZATION_STATS_PATH}" ]]; then
+  ACTION_STATS_PATH="${NORMALIZATION_STATS_PATH}"
 fi
 
 case "${DTYPE}" in
@@ -230,18 +247,34 @@ if [[ ${#DATASET_REPO_IDS[@]} -eq 0 ]]; then
   exit 1
 fi
 
-if [[ ! -f "${ACTION_DIT_PRETRAINED_PATH}" ]]; then
+if [[ "${SKIP_DIT_LOAD_FROM_PRETRAIN}" != "true" && ! -f "${ACTION_DIT_PRETRAINED_PATH}" ]]; then
     echo "Missing ActionDiT backbone: ${ACTION_DIT_PRETRAINED_PATH}"
     echo "Generate MagicBot_R0 expert backbones with:"
     echo "  python src/lerobot/scripts/magicbot_r0_preprocess_expert_backbones.py --expert both --action-output \"${ACTION_DIT_PRETRAINED_PATH}\" --future-3d-output \"${FUTURE_3D_PRETRAINED_PATH}\" --action-dim ${ACTION_DIM} --da3-num-views ${DA3_NUM_VIEWS} --future-3d-tokens-per-view ${FUTURE_3D_TOKENS_PER_VIEW} --device cuda --dtype bfloat16"
     exit 1
 fi
 
-if [[ ! -f "${FUTURE_3D_PRETRAINED_PATH}" ]]; then
+if [[ "${SKIP_DIT_LOAD_FROM_PRETRAIN}" != "true" && ! -f "${FUTURE_3D_PRETRAINED_PATH}" ]]; then
     echo "Missing Future3DExpert backbone: ${FUTURE_3D_PRETRAINED_PATH}"
     echo "Generate MagicBot_R0 expert backbones with:"
     echo "  python src/lerobot/scripts/magicbot_r0_preprocess_expert_backbones.py --expert both --action-output \"${ACTION_DIT_PRETRAINED_PATH}\" --future-3d-output \"${FUTURE_3D_PRETRAINED_PATH}\" --action-dim ${ACTION_DIM} --da3-num-views ${DA3_NUM_VIEWS} --future-3d-tokens-per-view ${FUTURE_3D_TOKENS_PER_VIEW} --device cuda --dtype bfloat16"
     exit 1
+fi
+
+if [[ -n "${POLICY_INIT_PATH}" ]]; then
+  if [[ ! -d "${POLICY_INIT_PATH}" ]]; then
+    echo "POLICY_INIT_PATH does not exist or is not a directory: ${POLICY_INIT_PATH}"
+    echo "Set POLICY_INIT_PATH/PRETRAINED_PATH/PRETRAINED_MODEL_DIR to a MagicBot_R0 pretrained_model directory."
+    exit 1
+  fi
+  if [[ ! -f "${POLICY_INIT_PATH}/config.json" ]]; then
+    echo "Missing policy config: ${POLICY_INIT_PATH}/config.json"
+    exit 1
+  fi
+  if [[ ! -f "${POLICY_INIT_PATH}/model.safetensors" ]]; then
+    echo "Missing policy weights: ${POLICY_INIT_PATH}/model.safetensors"
+    exit 1
+  fi
 fi
 
 if [[ "${LOAD_TEXT_ENCODER}" != "true" && ! -d "${TEXT_EMBED_CACHE_DIR}" ]]; then
@@ -256,6 +289,11 @@ fi
 
 if [[ -n "${NORMALIZATION_STATS_PATH}" && ! -f "${NORMALIZATION_STATS_PATH}" ]]; then
   echo "NORMALIZATION_STATS_PATH does not exist: ${NORMALIZATION_STATS_PATH}"
+  exit 1
+fi
+
+if [[ -n "${ACTION_STATS_PATH}" && ! -f "${ACTION_STATS_PATH}" ]]; then
+  echo "ACTION_STATS_PATH does not exist: ${ACTION_STATS_PATH}"
   exit 1
 fi
 
@@ -283,7 +321,7 @@ echo "Discovered ${#DATASET_REPO_IDS[@]} RoboTwin datasets under ${ROBOTWIN_ROOT
 printf '  %s\n' "${DATASET_REPO_IDS[@]}"
 
 BASE_OUTPUT_DIR="${BASE_OUTPUT_DIR:-outputs/${POLICY}}"
-BOOTSTRAP_TAG="${BOOTSTRAP_TAG:-magicbot_r0_backbone}"
+BOOTSTRAP_TAG="${BOOTSTRAP_TAG:-pretrained300k}"
 JOB_NAME="${JOB_NAME:-${POLICY}-${MAGICBOT_R0_VARIANT}-robotwin-3d-${ACTION_TYPE}-${BOOTSTRAP_TAG}-finetune-$(date +'%Y_%m_%d_%H_%M_%S')}"
 OUTPUT_DIR="${BASE_OUTPUT_DIR}/${JOB_NAME}"
 REPO_ID_FILE_DIR="${BASE_OUTPUT_DIR}/_repo_id_files"
@@ -297,7 +335,10 @@ echo "ACTION_DIM=${ACTION_DIM}, PROPRIO_DIM=${PROPRIO_DIM}"
 echo "NORM_DEFAULT_MODE=${NORM_DEFAULT_MODE}"
 echo "USE_EXTERNAL_STATS=${USE_EXTERNAL_STATS}"
 echo "NORMALIZATION_STATS_PATH=${NORMALIZATION_STATS_PATH:-<auto-compute>}"
+echo "ACTION_STATS_PATH=${ACTION_STATS_PATH:-<none>}"
 echo "ENABLE_IMAGE_AUG=${ENABLE_IMAGE_AUG}, IMAGE_AUG_PRESET=${IMAGE_AUG_PRESET}"
+echo "POLICY_INIT_PATH=${POLICY_INIT_PATH}"
+echo "SKIP_DIT_LOAD_FROM_PRETRAIN=${SKIP_DIT_LOAD_FROM_PRETRAIN}"
 echo "ACTION_DIT_PRETRAINED_PATH=${ACTION_DIT_PRETRAINED_PATH}"
 echo "FUTURE_3D_PRETRAINED_PATH=${FUTURE_3D_PRETRAINED_PATH}"
 echo "NUM_FRAMES=${NUM_FRAMES}, ACTION_HORIZON=${ACTION_HORIZON}, ACTION_VIDEO_FREQ_RATIO=${ACTION_VIDEO_FREQ_RATIO}"
@@ -333,6 +374,7 @@ ARGS=(
     --policy.redirect_common_files="${MAGICBOT_R0_REDIRECT_COMMON_FILES}"
     --policy.action_dit_pretrained_path="${ACTION_DIT_PRETRAINED_PATH}"
     --policy.future_3d_pretrained_path="${FUTURE_3D_PRETRAINED_PATH}"
+    --policy.skip_dit_load_from_pretrain="${SKIP_DIT_LOAD_FROM_PRETRAIN}"
     --policy.load_text_encoder="${LOAD_TEXT_ENCODER}"
     --policy.dtype="${DTYPE}"
     --policy.mot_checkpoint_mixed_attn="${MAGICBOT_R0_CHECKPOINT_MIXED_ATTN}"
@@ -407,6 +449,10 @@ if [[ -n "${TEXT_EMBED_CACHE_DIR}" ]]; then
     ARGS+=(--dataset.text_embedding_cache_dir="${TEXT_EMBED_CACHE_DIR}")
 fi
 
+if [[ -n "${POLICY_INIT_PATH}" ]]; then
+    ARGS+=(--policy.pretrained_path="${POLICY_INIT_PATH}")
+fi
+
 if [[ -n "${WARMUP_STEPS}" ]]; then
     ARGS+=(--policy.scheduler_warmup_steps="${WARMUP_STEPS}")
 fi
@@ -425,6 +471,10 @@ fi
 
 if [[ -n "${NORMALIZATION_STATS_PATH}" ]]; then
     ARGS+=(--dataset.normalization_stats_path="${NORMALIZATION_STATS_PATH}")
+fi
+
+if [[ -n "${ACTION_STATS_PATH}" ]]; then
+    ARGS+=(--policy.action_stats_path="${ACTION_STATS_PATH}")
 fi
 
 if [[ -n "${NATIVE_MAGICBOT_R0_CHECKPOINT_PATH}" ]]; then
