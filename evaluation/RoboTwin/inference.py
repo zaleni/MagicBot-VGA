@@ -30,6 +30,9 @@ from lerobot.policies.factory import get_policy_class
 from lerobot.policies.InternVLA_A1_3B.transform_internvla_a1 import (
     Qwen3_VLProcessorTransformFn as QwenA1ProcessorTransformFn,
 )
+from lerobot.policies.qwenaction.transform_qwenaction import (
+    QwenActionProcessorTransformFn,
+)
 from lerobot.policies.cubev2.transform_cubev2 import (
     Qwen3_VLProcessorTransformFn as CubeV2ProcessorTransformFn,
 )
@@ -135,13 +138,15 @@ def resolve_policy_components(config: PreTrainedConfig):
     policy_cls = get_policy_class(config.type)
     if config.type in {"qwena1", "internvla_a1_3b"}:
         processor_transform_cls = QwenA1ProcessorTransformFn
+    elif config.type == "qwenaction":
+        processor_transform_cls = QwenActionProcessorTransformFn
     elif config.type == "cubev2":
         processor_transform_cls = CubeV2ProcessorTransformFn
     elif config.type == "MagicBot_R0":
         processor_transform_cls = None
     else:
         raise ValueError(
-            "RoboTwin inference currently supports qwena1/internvla_a1_3b/cubev2/"
+            "RoboTwin inference currently supports qwena1/internvla_a1_3b/qwenaction/cubev2/"
             f"MagicBot_R0 checkpoints, got {config.type!r}."
         )
     return policy_cls, processor_transform_cls

@@ -618,6 +618,15 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             train_metrics["loss_3d"] = AverageMeter("loss_3d", ":.3f")
             if getattr(cfg.policy, "log_da3_teacher_timing", False):
                 train_metrics["time_3d_teacher_forward_s"] = AverageMeter("da3_s", ":.3f")
+    elif cfg.policy.type == "qwenaction":
+        train_metrics = {
+            "loss": AverageMeter("loss", ":.3f"),
+            "loss_action": AverageMeter("loss_action", ":.3f"),
+            "grad_norm": AverageMeter("grdn", ":.3f"),
+            "lr": AverageMeter("lr", ":0.1e"),
+            "update_s": AverageMeter("updt_s", ":.3f"),
+            "dataloading_s": AverageMeter("data_s", ":.3f"),
+        }
     elif cfg.policy.type in ["a1", "qwena1", "cubev2"]:
         train_metrics = {
             "loss": AverageMeter("loss", ":.3f"),

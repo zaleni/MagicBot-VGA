@@ -23,6 +23,7 @@ import torch
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.InternVLA_A1_3B.configuration_internvla_a1 import QwenA1Config
 from lerobot.policies.InternVLA_A1_2B.configuration_internvla_a1 import InternA1Config
+from lerobot.policies.qwenaction.configuration_qwenaction import QwenActionConfig
 from lerobot.policies.cubev2.configuration_cubev2 import CubeV2Config
 from lerobot.policies.fastwam.configuration_fastwam import FastWAMConfig
 from lerobot.policies.MagicBot_R0.configuration_magicbot_r0 import MagicBotR0Config
@@ -52,6 +53,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.policies.InternVLA_A1_3B.modeling_internvla_a1 import QwenA1Policy
 
         return QwenA1Policy
+    elif name == "qwenaction":
+        from lerobot.policies.qwenaction.modeling_qwenaction import QwenActionPolicy
+
+        return QwenActionPolicy
     elif name == "cubev2":
         from lerobot.policies.cubev2.modeling_cubev2 import CubeV2Policy
 
@@ -108,6 +113,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
     """
     if policy_type == "qwena1":
         return QwenA1Config(**kwargs)
+    elif policy_type == "qwenaction":
+        return QwenActionConfig(**kwargs)
     elif policy_type == "cubev2":
         return CubeV2Config(**kwargs)
     elif policy_type == "fastwam":

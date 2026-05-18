@@ -14,6 +14,7 @@
 
 from .InternVLA_A1_3B.configuration_internvla_a1 import QwenA1Config as QwenA1Config
 from .InternVLA_A1_2B.configuration_internvla_a1 import InternA1Config as InternA1Config
+from .qwenaction.configuration_qwenaction import QwenActionConfig as QwenActionConfig
 from .cubev2.configuration_cubev2 import CubeV2Config as CubeV2Config
 from .fastwam.configuration_fastwam import FastWAMConfig as FastWAMConfig
 from .MagicBot_R0.configuration_magicbot_r0 import MagicBotR0Config as MagicBotR0Config
@@ -23,6 +24,7 @@ from .pi05.configuration_pi05 import PI05Config as PI05Config
 __all__ = [
     "QwenA1Config", 
     "InternA1Config", 
+    "QwenActionConfig",
     "CubeV2Config",
     "FastWAMConfig",
     "MagicBotR0Config",
