@@ -49,10 +49,16 @@ RESUME_OUTPUT_DIR="${RESUME_OUTPUT_DIR:-${OUTPUT_DIR:-}}"
 
 NUM_WORKERS="${NUM_WORKERS:-12}"
 STEPS="${STEPS:-}"
+WARMUP_STEPS="${WARMUP_STEPS:-}"
+SCHEDULER_DECAY_STEPS="${SCHEDULER_DECAY_STEPS:-${DECAY_STEPS:-}}"
 SAVE_FREQ="${SAVE_FREQ:-}"
 LOG_FREQ="${LOG_FREQ:-}"
 BATCH_SIZE="${BATCH_SIZE:-}"
 GRADIENT_ACCUMULATION_STEPS="${GRADIENT_ACCUMULATION_STEPS:-}"
+
+if [[ -z "${SCHEDULER_DECAY_STEPS}" && -n "${STEPS}" ]]; then
+  SCHEDULER_DECAY_STEPS="${STEPS}"
+fi
 
 if [[ -n "${RESUME_RUN_DIR}" && -z "${RESUME_CHECKPOINT_DIR}" ]]; then
   if [[ -n "${RESUME_STEP}" ]]; then
@@ -122,6 +128,14 @@ CONFIG_GRADIENT_ACCUMULATION_STEPS="$(
   python -c 'import json,sys; cfg=json.load(open(sys.argv[1], encoding="utf-8")); print(cfg.get("gradient_accumulation_steps") or "")' \
     "${RESUME_CONFIG_PATH}"
 )"
+CONFIG_SCHEDULER_WARMUP_STEPS="$(
+  python -c 'import json,sys; cfg=json.load(open(sys.argv[1], encoding="utf-8")); print((cfg.get("policy") or {}).get("scheduler_warmup_steps") or "")' \
+    "${RESUME_CONFIG_PATH}"
+)"
+CONFIG_SCHEDULER_DECAY_STEPS="$(
+  python -c 'import json,sys; cfg=json.load(open(sys.argv[1], encoding="utf-8")); print((cfg.get("policy") or {}).get("scheduler_decay_steps") or "")' \
+    "${RESUME_CONFIG_PATH}"
+)"
 CONFIG_DATASET_REPO_ID="$(
   python -c 'import json,sys; cfg=json.load(open(sys.argv[1], encoding="utf-8")); print((cfg.get("dataset") or {}).get("repo_id") or "")' \
     "${RESUME_CONFIG_PATH}"
@@ -176,6 +190,11 @@ echo "JOB_NAME=${JOB_NAME:-<unset>}"
 echo "CONFIG_STEPS=${CONFIG_STEPS:-<unset>}"
 echo "CONFIG_BATCH_SIZE(per_device)=${CONFIG_BATCH_SIZE:-<unset>}"
 echo "CONFIG_GRADIENT_ACCUMULATION_STEPS=${CONFIG_GRADIENT_ACCUMULATION_STEPS:-<unset>}"
+echo "CONFIG_POLICY_SCHEDULER_WARMUP_STEPS=${CONFIG_SCHEDULER_WARMUP_STEPS:-<unset>}"
+echo "CONFIG_POLICY_SCHEDULER_DECAY_STEPS=${CONFIG_SCHEDULER_DECAY_STEPS:-<unset>}"
+echo "OVERRIDE_STEPS=${STEPS:-<config default>}"
+echo "OVERRIDE_POLICY_SCHEDULER_WARMUP_STEPS=${WARMUP_STEPS:-<config default>}"
+echo "OVERRIDE_POLICY_SCHEDULER_DECAY_STEPS=${SCHEDULER_DECAY_STEPS:-<config default>}"
 echo "CONFIG_DATASET_REPO_ID=${CONFIG_DATASET_REPO_ID:-<unset>}"
 echo "RESUME_REPO_ID_FILE=${RESUME_REPO_ID_FILE:-<config default>}"
 echo "NUM_PROCESSES=${NUM_PROCESSES}"
@@ -202,6 +221,14 @@ fi
 
 if [[ -n "${STEPS}" ]]; then
     ARGS+=(--steps="${STEPS}")
+fi
+
+if [[ -n "${WARMUP_STEPS}" ]]; then
+    ARGS+=(--policy.scheduler_warmup_steps="${WARMUP_STEPS}")
+fi
+
+if [[ -n "${SCHEDULER_DECAY_STEPS}" ]]; then
+    ARGS+=(--policy.scheduler_decay_steps="${SCHEDULER_DECAY_STEPS}")
 fi
 
 if [[ -n "${SAVE_FREQ}" ]]; then
