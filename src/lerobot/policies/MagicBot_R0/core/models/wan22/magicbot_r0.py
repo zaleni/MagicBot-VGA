@@ -504,8 +504,13 @@ class MagicBotR0(torch.nn.Module):
             if sample_action_loss_mask.ndim == 0:
                 sample_action_loss_mask = sample_action_loss_mask.expand(batch_size)
             if sample_action_loss_mask.ndim == 2:
+                if sample_action_loss_mask.shape[1] != 1:
+                    raise ValueError(
+                        f"`sample['{SAMPLE_ACTION_LOSS_MASK}']` must be scalar, [B], or [B,1], "
+                        f"got shape {tuple(sample_action_loss_mask.shape)}"
+                    )
                 sample_action_loss_mask = sample_action_loss_mask.squeeze(-1)
-            if sample_action_loss_mask.shape[0] != batch_size:
+            if sample_action_loss_mask.ndim != 1 or sample_action_loss_mask.shape[0] != batch_size:
                 raise ValueError(
                     f"`sample['{SAMPLE_ACTION_LOSS_MASK}']` batch mismatch: "
                     f"got {tuple(sample_action_loss_mask.shape)}, expected ({batch_size},)."
