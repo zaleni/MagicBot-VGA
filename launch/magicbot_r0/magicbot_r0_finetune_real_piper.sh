@@ -90,7 +90,7 @@ if [[ -z "${USE_EXTERNAL_STATS+x}" ]]; then
 fi
 NORMALIZATION_STATS_PATH="${NORMALIZATION_STATS_PATH:-}"
 DATASET_EXTERNAL_STATS_PATH="${DATASET_EXTERNAL_STATS_PATH:-}"
-NORM_STATS_ROOT="${NORM_STATS_ROOT:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/zhenji/norm_stats}"
+NORM_STATS_ROOT="${NORM_STATS_ROOT:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/zhenji/norm_stats_32}"
 
 BATCH_SIZE="${BATCH_SIZE:-8}"
 GRAD_ACCUM_STEPS="${GRAD_ACCUM_STEPS:-1}"
