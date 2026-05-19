@@ -262,7 +262,7 @@ else
   echo "Skipping per-dataset validation (VALIDATE_DATASETS=${VALIDATE_DATASETS})."
 fi
 
-BASE_OUTPUT_DIR="${BASE_OUTPUT_DIR:-outputs_real/${POLICY}}"
+BASE_OUTPUT_DIR="${BASE_OUTPUT_DIR:-/inspire/qb-ilm/project/embodied-basic-model/zhangjianing-253108140206/outputs/${POLICY}}"
 BOOTSTRAP_TAG="${BOOTSTRAP_TAG:-pretrained300k}"
 JOB_NAME="${JOB_NAME:-${MAGICBOT_R0_VARIANT}-real_piper-${DATASET_NAME}-${ACTION_TYPE}-${BOOTSTRAP_TAG}-finetune-$(date +'%Y_%m_%d_%H_%M_%S')}"
 OUTPUT_DIR="${BASE_OUTPUT_DIR}/${JOB_NAME}"
