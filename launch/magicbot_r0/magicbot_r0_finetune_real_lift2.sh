@@ -50,21 +50,26 @@ MAGICBOT_R0_REDIRECT_COMMON_FILES="${MAGICBOT_R0_REDIRECT_COMMON_FILES:-true}"
 MAGICBOT_R0_ASSET_ROOT="${MAGICBOT_R0_ASSET_ROOT:-${PROJ_ROOT}/checkpoints/magicbot_r0}"
 ACTION_DIT_PRETRAINED_PATH="${ACTION_DIT_PRETRAINED_PATH:-${MAGICBOT_R0_ASSET_ROOT}/ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt}"
 FUTURE_3D_PRETRAINED_PATH="${FUTURE_3D_PRETRAINED_PATH:-${MAGICBOT_R0_ASSET_ROOT}/Future3DExpert_linear_interp_Wan22_alphascale_768hdim.pt}"
+DEFAULT_POLICY_INIT_PATH="/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/MagicBot-VGA/outputs/MagicBot_R0/MagicBot_R0-magicbot_r0-multidata-delta-pretrain-2026_05_07_15_59_20/checkpoints/300000/pretrained_model"
+POLICY_INIT_PATH="${POLICY_INIT_PATH:-${PRETRAINED_PATH:-${PRETRAINED_MODEL_DIR:-${DEFAULT_POLICY_INIT_PATH}}}}"
+SKIP_DIT_LOAD_FROM_PRETRAIN="${SKIP_DIT_LOAD_FROM_PRETRAIN:-true}"
 NATIVE_MAGICBOT_R0_CHECKPOINT_PATH="${NATIVE_MAGICBOT_R0_CHECKPOINT_PATH:-}"
 LOAD_TEXT_ENCODER="${LOAD_TEXT_ENCODER:-false}"
 
-DATASET_DIR="${DATASET_DIR:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/zhenji/lerobot_v30/zip_bag_30_lerobot30}"
+DATASET_DIR="${DATASET_DIR:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/zhenji/lerobot_v30/plasticbottle_v30}"
 DATASET_NAME="${DATASET_NAME:-$(basename "${DATASET_DIR}")}"
 DATASET_REPO_ID="${DATASET_REPO_ID:-${DATASET_DIR}}"
 VALIDATE_DATASETS="${VALIDATE_DATASETS:-true}"
 VIDEO_BACKEND="${VIDEO_BACKEND:-}"
 USE_DIST_LOADING="${USE_DIST_LOADING:-false}"
 
-ACTION_TYPE="${ACTION_TYPE:-abs}"
-ACTION_DIM="${ACTION_DIM:-14}"
-PROPRIO_DIM="${PROPRIO_DIM:-14}"
+ACTION_TYPE="${ACTION_TYPE:-delta}"
+ACTION_DIM="${ACTION_DIM:-24}"
+PROPRIO_DIM="${PROPRIO_DIM:-24}"
+RAW_ACTION_DIM="${RAW_ACTION_DIM:-14}"
+RAW_PROPRIO_DIM="${RAW_PROPRIO_DIM:-14}"
 ACTION_HORIZON="${ACTION_HORIZON:-32}"
-N_ACTION_STEPS="${N_ACTION_STEPS:-24}"
+N_ACTION_STEPS="${N_ACTION_STEPS:-32}"
 NUM_INFERENCE_STEPS="${NUM_INFERENCE_STEPS:-10}"
 NUM_FRAMES="${NUM_FRAMES:-33}"
 ACTION_VIDEO_FREQ_RATIO="${ACTION_VIDEO_FREQ_RATIO:-4}"
@@ -85,7 +90,7 @@ if [[ -z "${USE_EXTERNAL_STATS+x}" ]]; then
 fi
 NORMALIZATION_STATS_PATH="${NORMALIZATION_STATS_PATH:-}"
 DATASET_EXTERNAL_STATS_PATH="${DATASET_EXTERNAL_STATS_PATH:-}"
-NORM_STATS_ROOT="${NORM_STATS_ROOT:-/inspire/qb-ilm/project/embodied-basic-model/zhangjianing-253108140206/zhenji/norm_stats}"
+NORM_STATS_ROOT="${NORM_STATS_ROOT:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/zhenji/norm_stats}"
 
 BATCH_SIZE="${BATCH_SIZE:-8}"
 GRAD_ACCUM_STEPS="${GRAD_ACCUM_STEPS:-1}"
@@ -96,13 +101,13 @@ SAVE_FREQ="${SAVE_FREQ:-${STEPS}}"
 LOG_FREQ="${LOG_FREQ:-50}"
 NUM_WORKERS="${NUM_WORKERS:-12}"
 
-LR="${LR:-1.0e-4}"
+LR="${LR:-5.0e-5}"
 WEIGHT_DECAY="${WEIGHT_DECAY:-1.0e-2}"
 WARMUP_STEPS="${WARMUP_STEPS:-600}"
-DECAY_LR="${DECAY_LR:-1.0e-6}"
-LAMBDA_VIDEO="${LAMBDA_VIDEO:-1.0}"
+DECAY_LR="${DECAY_LR:-2.0e-6}"
+LAMBDA_VIDEO="${LAMBDA_VIDEO:-0.1}"
 LAMBDA_ACTION="${LAMBDA_ACTION:-1.0}"
-LAMBDA_3D="${LAMBDA_3D:-0.05}"
+LAMBDA_3D="${LAMBDA_3D:-0.1}"
 DA3_NUM_VIEWS="${DA3_NUM_VIEWS:-3}"
 PROCESSOR_NUM_OUTPUT_CAMERAS="${PROCESSOR_NUM_OUTPUT_CAMERAS:-${DA3_NUM_VIEWS}}"
 FUTURE_3D_TOKENS_PER_VIEW="${FUTURE_3D_TOKENS_PER_VIEW:-144}"
@@ -126,11 +131,11 @@ IMAGE_KEYS="${IMAGE_KEYS:-[\"head\",\"left\",\"right\"]}"
 IMAGE_RAW_SHAPES="${IMAGE_RAW_SHAPES:-[[3,480,640],[3,480,640],[3,480,640]]}"
 IMAGE_SHAPES="${IMAGE_SHAPES:-[[3,240,320],[3,240,320],[3,240,320]]}"
 ACTION_KEYS="${ACTION_KEYS:-[\"default\"]}"
-ACTION_RAW_SHAPES="${ACTION_RAW_SHAPES:-[${ACTION_DIM}]}"
-ACTION_SHAPES="${ACTION_SHAPES:-[${ACTION_DIM}]}"
+ACTION_RAW_SHAPES="${ACTION_RAW_SHAPES:-[${RAW_ACTION_DIM}]}"
+ACTION_SHAPES="${ACTION_SHAPES:-[${RAW_ACTION_DIM}]}"
 STATE_KEYS="${STATE_KEYS:-[\"default\"]}"
-STATE_RAW_SHAPES="${STATE_RAW_SHAPES:-[${PROPRIO_DIM}]}"
-STATE_SHAPES="${STATE_SHAPES:-[${PROPRIO_DIM}]}"
+STATE_RAW_SHAPES="${STATE_RAW_SHAPES:-[${RAW_PROPRIO_DIM}]}"
+STATE_SHAPES="${STATE_SHAPES:-[${RAW_PROPRIO_DIM}]}"
 PROCESSOR_DELTA_ACTION_DIM_MASK="${PROCESSOR_DELTA_ACTION_DIM_MASK:-{\"default\":[true,true,true,true,true,true,false,true,true,true,true,true,true,false]}}"
 
 case "${ACTION_TYPE}" in
@@ -147,6 +152,15 @@ case "${USE_EXTERNAL_STATS}" in
     ;;
   *)
     echo "Unsupported USE_EXTERNAL_STATS=${USE_EXTERNAL_STATS}. Expected true or false."
+    exit 1
+    ;;
+esac
+
+case "${SKIP_DIT_LOAD_FROM_PRETRAIN}" in
+  true|false)
+    ;;
+  *)
+    echo "Unsupported SKIP_DIT_LOAD_FROM_PRETRAIN=${SKIP_DIT_LOAD_FROM_PRETRAIN}. Expected true or false."
     exit 1
     ;;
 esac
@@ -196,16 +210,32 @@ if [[ "${robot_type}" != "real_lift2" ]]; then
   exit 1
 fi
 
-if [[ ! -f "${ACTION_DIT_PRETRAINED_PATH}" ]]; then
+if [[ "${SKIP_DIT_LOAD_FROM_PRETRAIN}" != "true" && ! -f "${ACTION_DIT_PRETRAINED_PATH}" ]]; then
   echo "Missing ActionDiT backbone: ${ACTION_DIT_PRETRAINED_PATH}"
   echo "Generate MagicBot_R0 expert backbones first, or set ACTION_DIT_PRETRAINED_PATH."
   exit 1
 fi
 
-if [[ ! -f "${FUTURE_3D_PRETRAINED_PATH}" ]]; then
+if [[ "${SKIP_DIT_LOAD_FROM_PRETRAIN}" != "true" && ! -f "${FUTURE_3D_PRETRAINED_PATH}" ]]; then
   echo "Missing Future3DExpert backbone: ${FUTURE_3D_PRETRAINED_PATH}"
   echo "Generate MagicBot_R0 expert backbones first, or set FUTURE_3D_PRETRAINED_PATH."
   exit 1
+fi
+
+if [[ -n "${POLICY_INIT_PATH}" ]]; then
+  if [[ ! -d "${POLICY_INIT_PATH}" ]]; then
+    echo "POLICY_INIT_PATH does not exist or is not a directory: ${POLICY_INIT_PATH}"
+    echo "Set POLICY_INIT_PATH/PRETRAINED_PATH/PRETRAINED_MODEL_DIR to a MagicBot_R0 pretrained_model directory."
+    exit 1
+  fi
+  if [[ ! -f "${POLICY_INIT_PATH}/config.json" ]]; then
+    echo "Missing policy config: ${POLICY_INIT_PATH}/config.json"
+    exit 1
+  fi
+  if [[ ! -f "${POLICY_INIT_PATH}/model.safetensors" ]]; then
+    echo "Missing policy weights: ${POLICY_INIT_PATH}/model.safetensors"
+    exit 1
+  fi
 fi
 
 if [[ "${USE_EXTERNAL_STATS}" == "true" && ! -f "${NORMALIZATION_STATS_PATH}" ]]; then
@@ -233,8 +263,8 @@ else
 fi
 
 BASE_OUTPUT_DIR="${BASE_OUTPUT_DIR:-outputs_real/${POLICY}}"
-BOOTSTRAP_TAG="${BOOTSTRAP_TAG:-magicbot_r0_backbone}"
-JOB_NAME="${JOB_NAME:-${POLICY}-${MAGICBOT_R0_VARIANT}-real_lift2-${DATASET_NAME}-${ACTION_TYPE}-${BOOTSTRAP_TAG}-finetune-$(date +'%Y_%m_%d_%H_%M_%S')}"
+BOOTSTRAP_TAG="${BOOTSTRAP_TAG:-pretrained300k}"
+JOB_NAME="${JOB_NAME:-${MAGICBOT_R0_VARIANT}-real_lift2-${DATASET_NAME}-${ACTION_TYPE}-${BOOTSTRAP_TAG}-finetune-$(date +'%Y_%m_%d_%H_%M_%S')}"
 OUTPUT_DIR="${BASE_OUTPUT_DIR}/${JOB_NAME}"
 REPO_ID_FILE_DIR="${BASE_OUTPUT_DIR}/_repo_id_files"
 mkdir -p "${REPO_ID_FILE_DIR}"
@@ -261,10 +291,13 @@ echo "DATASET_NAME=${DATASET_NAME}"
 echo "robot_type=${robot_type}"
 echo "ACTION_TYPE=${ACTION_TYPE}"
 echo "ACTION_DIM=${ACTION_DIM}, PROPRIO_DIM=${PROPRIO_DIM}"
+echo "RAW_ACTION_DIM=${RAW_ACTION_DIM}, RAW_PROPRIO_DIM=${RAW_PROPRIO_DIM}"
 echo "ACTION_HORIZON=${ACTION_HORIZON}, N_ACTION_STEPS=${N_ACTION_STEPS}"
 echo "USE_EXTERNAL_STATS=${USE_EXTERNAL_STATS}"
 echo "NORMALIZATION_STATS_PATH=${NORMALIZATION_STATS_PATH:-<metadata-or-auto>}"
 echo "TEXT_EMBED_CACHE_DIR=${TEXT_EMBED_CACHE_DIR:-<text-encoder-runtime>}"
+echo "POLICY_INIT_PATH=${POLICY_INIT_PATH:-<none>}"
+echo "SKIP_DIT_LOAD_FROM_PRETRAIN=${SKIP_DIT_LOAD_FROM_PRETRAIN}"
 echo "VIDEO_SIZE=[${VIDEO_HEIGHT},${VIDEO_WIDTH}], CONCAT_MULTI_CAMERA=${CONCAT_MULTI_CAMERA}"
 echo "ENABLE_IMAGE_AUG=${ENABLE_IMAGE_AUG}, IMAGE_AUG_PRESET=${IMAGE_AUG_PRESET}"
 echo "Future3D: LAMBDA_3D=${LAMBDA_3D}, DA3_NUM_VIEWS=${DA3_NUM_VIEWS}, TOKENS_PER_VIEW=${FUTURE_3D_TOKENS_PER_VIEW}, VIEW_LAYOUT=${FUTURE_3D_VIEW_ATTENTION_LAYOUT}"
@@ -293,6 +326,7 @@ ARGS=(
     --policy.redirect_common_files="${MAGICBOT_R0_REDIRECT_COMMON_FILES}"
     --policy.action_dit_pretrained_path="${ACTION_DIT_PRETRAINED_PATH}"
     --policy.future_3d_pretrained_path="${FUTURE_3D_PRETRAINED_PATH}"
+    --policy.skip_dit_load_from_pretrain="${SKIP_DIT_LOAD_FROM_PRETRAIN}"
     --policy.load_text_encoder="${LOAD_TEXT_ENCODER}"
     --policy.dtype="${DTYPE}"
     --policy.mot_checkpoint_mixed_attn="${MAGICBOT_R0_CHECKPOINT_MIXED_ATTN}"
@@ -365,6 +399,10 @@ ARGS=(
 
 if [[ -n "${TEXT_EMBED_CACHE_DIR}" ]]; then
     ARGS+=(--dataset.text_embedding_cache_dir="${TEXT_EMBED_CACHE_DIR}")
+fi
+
+if [[ -n "${POLICY_INIT_PATH}" ]]; then
+    ARGS+=(--policy.pretrained_path="${POLICY_INIT_PATH}")
 fi
 
 if [[ -n "${WARMUP_STEPS}" ]]; then
