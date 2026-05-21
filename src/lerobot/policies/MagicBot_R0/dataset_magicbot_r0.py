@@ -1630,6 +1630,7 @@ def build_magicbot_r0_processor(
 def build_magicbot_r0_dataset(
     cfg: MagicBotR0DatasetConfig,
     stats_cache_path: str | None = None,
+    is_training_set: bool = True,
 ) -> MagicBotR0RobotVideoDatasetV3:
     image_transforms = ImageTransforms(cfg.image_transforms) if cfg.image_transforms.enable else None
     processor = None if cfg.pretrain_multi_embodiment else build_magicbot_r0_processor(
@@ -1659,7 +1660,7 @@ def build_magicbot_r0_dataset(
         normalization_stats_path=normalization_stats_path,
         use_lerobot_meta_stats=use_lerobot_meta_stats,
         val_set_proportion=cfg.val_set_proportion,
-        is_training_set=True,
+        is_training_set=is_training_set,
         global_sample_stride=cfg.global_sample_stride,
         action_video_freq_ratio=cfg.action_video_freq_ratio,
         skip_padding_as_possible=cfg.skip_padding_as_possible,

@@ -92,6 +92,10 @@ def _fastwam_family_trainer_state_file(policy_type: str | None) -> str:
     return "magicbot_r0_trainer_state.json" if policy_type == "MagicBot_R0" else FASTWAM_TRAINER_STATE_FILE
 
 
+def _fastwam_family_stats_filename(policy_type: str | None) -> str:
+    return "magicbot_r0_dataset_stats.json" if policy_type == "MagicBot_R0" else "fastwam_dataset_stats.json"
+
+
 def _env_flag(name: str, default: bool = False) -> bool:
     value = os.environ.get(name)
     if value is None:
@@ -117,6 +121,83 @@ def _format_policy_summary(policy: torch.nn.Module) -> str:
         f"device={device}, dtype={dtype}"
         ")"
     )
+
+
+def _infer_batch_size(batch: Any) -> int:
+    if isinstance(batch, dict):
+        for key in ("action", "pixel_values", "proprio", "input_ids"):
+            value = batch.get(key)
+            if isinstance(value, torch.Tensor):
+                return int(value.shape[0])
+        for value in batch.values():
+            if isinstance(value, torch.Tensor):
+                return int(value.shape[0])
+            if isinstance(value, dict):
+                try:
+                    return _infer_batch_size(value)
+                except ValueError:
+                    continue
+    elif isinstance(batch, (list, tuple)) and len(batch) > 0:
+        return _infer_batch_size(batch[0])
+    raise ValueError(f"Unable to infer batch size from batch type {type(batch)}")
+
+
+@torch.no_grad()
+def evaluate_offline_policy(
+    policy: torch.nn.Module,
+    dataloader,
+    accelerator: Accelerator,
+    *,
+    max_batches: int = 2,
+) -> dict[str, float]:
+    """Run a small validation pass and average scalar losses over a few batches."""
+    was_training = policy.training
+    policy.eval()
+
+    metric_sums: dict[str, float] = {}
+    metric_counts: dict[str, int] = {}
+    num_batches = 0
+    num_samples = 0
+
+    try:
+        for batch_idx, batch in enumerate(dataloader):
+            if batch_idx >= max_batches:
+                break
+            if batch is None:
+                continue
+
+            batch = send_to_device(batch, accelerator.device, non_blocking=True)
+            batch_size = _infer_batch_size(batch)
+            loss, output_dict = policy.forward(batch, collect_metrics=True)
+
+            num_batches += 1
+            num_samples += batch_size
+
+            def _accumulate(key: str, value: Any) -> None:
+                if not isinstance(value, (int, float, torch.Tensor)):
+                    return
+                metric_sums[key] = metric_sums.get(key, 0.0) + _metric_to_float(value) * batch_size
+                metric_counts[key] = metric_counts.get(key, 0) + batch_size
+
+            _accumulate("loss", loss)
+            for key, value in output_dict.items():
+                if key == "loss":
+                    continue
+                _accumulate(key, value)
+    finally:
+        if was_training:
+            policy.train()
+        else:
+            policy.eval()
+
+    eval_metrics = {
+        key: metric_sums[key] / metric_counts[key]
+        for key in metric_sums
+        if metric_counts.get(key, 0) > 0
+    }
+    eval_metrics["num_batches"] = float(num_batches)
+    eval_metrics["num_samples"] = float(num_samples)
+    return eval_metrics
 
 
 def update_policy(
@@ -577,6 +658,41 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         policy, optimizer, dataloader, lr_scheduler = accelerator.prepare(
             policy, optimizer, dataloader, lr_scheduler
         )
+
+    eval_dataloader = None
+    if cfg.policy.type == "MagicBot_R0" and cfg.eval_freq > 0:
+        if is_main_process:
+            from lerobot.policies.MagicBot_R0.dataset_magicbot_r0 import build_magicbot_r0_dataset
+
+            stats_cache_path = cfg.dataset.normalization_stats_path
+            if stats_cache_path is None and cfg.output_dir is not None:
+                stats_cache_path = str(Path(cfg.output_dir) / _fastwam_family_stats_filename(cfg.policy.type))
+
+            eval_dataset = build_magicbot_r0_dataset(
+                cfg.dataset,
+                stats_cache_path=stats_cache_path,
+                is_training_set=False,
+            )
+            eval_dataloader = torch.utils.data.DataLoader(
+                eval_dataset,
+                num_workers=cfg.num_workers,
+                batch_size=cfg.batch_size,
+                shuffle=False,
+                sampler=None,
+                pin_memory=device.type == "cuda",
+                drop_last=False,
+                prefetch_factor=2 if cfg.num_workers > 0 else None,
+                worker_init_fn=None,
+            )
+            logging.info(
+                "Created MagicBot_R0 eval dataloader for periodic validation: "
+                "eval_freq=%d, eval_batches=%d, batch_size=%d",
+                cfg.eval_freq,
+                2,
+                cfg.batch_size,
+            )
+        accelerator.wait_for_everyone()
+
     fastwam_epoch = 0
     fastwam_batch_in_epoch = 0
     fastwam_epoch_offset = 0
@@ -797,6 +913,25 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                         wandb_log_dict[key] = value
                 wandb_logger.log_dict(wandb_log_dict, step)
             train_tracker.reset_averages()
+
+        should_eval = cfg.policy.type == "MagicBot_R0" and cfg.eval_freq > 0 and step % cfg.eval_freq == 0
+        if should_eval:
+            accelerator.wait_for_everyone()
+            if is_main_process and eval_dataloader is not None:
+                eval_policy = accelerator.unwrap_model(policy)
+                eval_metrics = evaluate_offline_policy(eval_policy, eval_dataloader, accelerator)
+                summary_keys = ["loss", "loss_action", "loss_video", "loss_3d"]
+                summary_parts = [
+                    f"{key}={eval_metrics[key]:.4f}"
+                    for key in summary_keys
+                    if key in eval_metrics
+                ]
+                summary_parts.append(f"batches={int(eval_metrics['num_batches'])}")
+                summary_parts.append(f"samples={int(eval_metrics['num_samples'])}")
+                logging.info("MagicBot_R0 eval @ step %d: %s", step, ", ".join(summary_parts))
+                if wandb_logger:
+                    wandb_logger.log_dict(eval_metrics, step, mode="eval")
+            accelerator.wait_for_everyone()
 
         if cfg.save_checkpoint and is_saving_step:
             if is_main_process:
