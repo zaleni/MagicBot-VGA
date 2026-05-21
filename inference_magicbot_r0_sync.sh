@@ -38,7 +38,7 @@ bash evaluation/Real_Lift2/01_serve_magicbot_r0_real_lift2.sh
 cd /home/arx/MagicBot-VGA
 
 RUN_ENV=act \
-WS_URL=ws://10.60.43.33:9102 \
+WS_URL=ws://10.60.45.31:9102 \
 PROMPT="Put the plastic bottle into the trash bin." \
 FRAME_RATE=24 \
 IMAGE_HISTORY_INTERVAL=15 \
@@ -53,7 +53,7 @@ source ~/.bashrc
 conda activate act
 
 REAL_LIFT2_RUNTIME_ROOT=/home/arx/ROS2_LIFT_Play/act \
-WS_URL=ws://10.60.43.33:9102 \
+WS_URL=ws://10.60.45.31:9102 \
 PROMPT="Put the plastic bottle into the trash bin." \
 FRAME_RATE=24 \
 IMAGE_HISTORY_INTERVAL=15 \

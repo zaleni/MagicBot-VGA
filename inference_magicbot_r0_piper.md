@@ -18,27 +18,27 @@ conda activate magicbot
 # For lower memory / faster startup, precompute the exact prompt first and switch
 # MAGICBOT_R0_LOAD_TEXT_ENCODER=false with MAGICBOT_R0_TEXT_EMBED_CACHE_DIR set.
 #
-# python src/lerobot/scripts/magicbot_r0_precompute_text_embeds.py \
-#   --text-embedding-cache-dir /path/to/MagicBot_R0/text_embeds \
-#   --model-cache-dir /path/to/MagicBot_R0/model_cache \
-#   --override-instruction "Sort desktop objects and place them in designated locations." \
-#   --context-len 128 \
-#   --device cuda
-#
+python src/lerobot/scripts/magicbot_r0_precompute_text_embeds.py \
+  --text-embedding-cache-dir /home/jjhao/data/text_embeds \
+  --model-cache-dir /home/jjhao/data/model \
+  --override-instruction "Position red block, green block, and blue block from left to right in the specified sequence." \
+  --context-len 128 \
+  --device cuda
+
 # Optional: set DIFFSYNTH_MODEL_BASE_PATH=/path/to/MagicBot_R0/model_cache
 # to keep Wan/T5/VAE files off the default ./checkpoints directory.
 
-CHECKPOINT_DIR=/path/to/MagicBot_R0/real_piper/checkpoints/30000/pretrained_model \
+CHECKPOINT_DIR=/home/jjhao/data/model/zaleni/6B-RankRGB-delta \
 STATS_KEY=real_piper \
-ACTION_MODE=abs \
+ACTION_MODE=delta \
 DEVICE=cuda \
 LOAD_DEVICE=cuda \
 HOST=0.0.0.0 \
-PORT=8102 \
-INFER_HORIZON=24 \
-DEFAULT_PROMPT="Sort desktop objects and place them in designated locations." \
+PORT=9103 \
+INFER_HORIZON=32 \
+DEFAULT_PROMPT="Position red block, green block, and blue block from left to right in the specified sequence." \
 RTC_ENABLED=false \
-MAGICBOT_R0_LOAD_TEXT_ENCODER=true \
+MAGICBOT_R0_LOAD_TEXT_ENCODER=false \
 MAGICBOT_R0_SKIP_DIT_LOAD_FROM_PRETRAIN=true \
 MAGICBOT_R0_CONCAT_MULTI_CAMERA=horizontal \
 MAGICBOT_R0_VIDEO_HEIGHT=224 \
@@ -88,10 +88,10 @@ conda activate deploy
 INIT_POS="-90885.0 38280.0 -47982.0 518.0 68317.0 1278.0 -2100.0"
 
 WS_HOST=10.60.45.31 \
-WS_PORT=8102 \
-TASK_PROMPT="Sort desktop objects and place them in designated locations." \
-PUBLISH_RATE=15 \
-ACTION_HORIZON=24 \
+WS_PORT=9103 \
+TASK_PROMPT="Position red block, green block, and blue block from left to right in the specified sequence." \
+PUBLISH_RATE=24 \
+ACTION_HORIZON=32 \
 IMAGE_HISTORY_INTERVAL=15 \
 MAX_STEPS=10000 \
 INIT_JOINT_POSITION="${INIT_POS}" \
@@ -103,7 +103,7 @@ JOINT_STATE_TOPIC=joint_states_single \
 JOINT_CMD_TOPIC=js_cmd \
 FIRST_INFERENCE_CHECK=false \
 START_PROMPT=true \
-JPEG_ROUNDTRIP=true \
+JPEG_ROUNDTRIP=false \
 GRIPPER_POSTPROCESS=true \
 IMAGE_COLOR_MODE=auto \
 EXPECTED_STATS_KEY=real_piper \
