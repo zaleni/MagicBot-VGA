@@ -11,21 +11,21 @@ conda activate magicbot
 python src/lerobot/scripts/magicbot_r0_precompute_text_embeds.py \
   --text-embedding-cache-dir /home/jjhao/data/text_embeds \
   --model-cache-dir /home/jjhao/data/model \
-  --override-instruction "Unzip the fabric pencil case." \
+  --override-instruction "Put the plastic bottle into the trash bin." \
   --context-len 128 \
   --device cuda
 ### Optional: set DIFFSYNTH_MODEL_BASE_PATH=/path/to/MagicBot_R0/model_cache
 ### to keep Wan/T5/VAE files off the default ./checkpoints directory.
 
-CHECKPOINT_DIR=/home/jjhao/data/model/zaleni/6B-zip-bag-abs \
+CHECKPOINT_DIR=/home/jjhao/data/model/zaleni/6B-plasticbottle-delta \
 STATS_KEY=real_lift2 \
-ACTION_MODE=abs \
+ACTION_MODE=delta \
 DEVICE=cuda \
 LOAD_DEVICE=cuda \
 HOST=0.0.0.0 \
 PORT=9102 \
 INFER_HORIZON=32 \
-DEFAULT_PROMPT="Unzip the fabric pencil case." \
+DEFAULT_PROMPT="Put the plastic bottle into the trash bin." \
 RTC_ENABLED=false \
 MAGICBOT_R0_LOAD_TEXT_ENCODER=false \
 MAGICBOT_R0_TEXT_EMBED_CACHE_DIR=/home/jjhao/data/text_embeds \
@@ -39,7 +39,7 @@ cd /home/arx/MagicBot-VGA
 
 RUN_ENV=act \
 WS_URL=ws://10.60.43.33:9102 \
-PROMPT="Unzip the fabric pencil case." \
+PROMPT="Put the plastic bottle into the trash bin." \
 FRAME_RATE=24 \
 IMAGE_HISTORY_INTERVAL=15 \
 INFERENCE_MODE=sync \
@@ -54,7 +54,7 @@ conda activate act
 
 REAL_LIFT2_RUNTIME_ROOT=/home/arx/ROS2_LIFT_Play/act \
 WS_URL=ws://10.60.43.33:9102 \
-PROMPT="Unzip the fabric pencil case." \
+PROMPT="Put the plastic bottle into the trash bin." \
 FRAME_RATE=24 \
 IMAGE_HISTORY_INTERVAL=15 \
 MAX_PUBLISH_STEP=10000 \

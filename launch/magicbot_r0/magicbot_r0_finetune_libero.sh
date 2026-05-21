@@ -17,7 +17,7 @@ export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 
-export WANDB_MODE=${WANDB_MODE:-online}
+export WANDB_MODE=${WANDB_MODE:-offline}
 export TOKENIZERS_PARALLELISM=false
 
 ###############################################################################
