@@ -48,10 +48,13 @@ MAGICBOT_R0_REDIRECT_COMMON_FILES="${MAGICBOT_R0_REDIRECT_COMMON_FILES:-true}"
 MAGICBOT_R0_ASSET_ROOT="${MAGICBOT_R0_ASSET_ROOT:-${PROJ_ROOT}/checkpoints/magicbot_r0}"
 ACTION_DIT_PRETRAINED_PATH="${ACTION_DIT_PRETRAINED_PATH:-${MAGICBOT_R0_ASSET_ROOT}/ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt}"
 FUTURE_3D_PRETRAINED_PATH="${FUTURE_3D_PRETRAINED_PATH:-${MAGICBOT_R0_ASSET_ROOT}/Future3DExpert_linear_interp_Wan22_alphascale_768hdim.pt}"
+DEFAULT_POLICY_INIT_PATH="/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/MagicBot-VGA/outputs/MagicBot_R0/MagicBot_R0-magicbot_r0-multidata-delta-pretrain-2026_05_07_15_59_20/checkpoints/300000/pretrained_model"
+POLICY_INIT_PATH="${POLICY_INIT_PATH:-${PRETRAINED_PATH:-${PRETRAINED_MODEL_DIR:-${DEFAULT_POLICY_INIT_PATH}}}}"
+SKIP_DIT_LOAD_FROM_PRETRAIN="${SKIP_DIT_LOAD_FROM_PRETRAIN:-true}"
 NATIVE_MAGICBOT_R0_CHECKPOINT_PATH="${NATIVE_MAGICBOT_R0_CHECKPOINT_PATH:-}"
 LOAD_TEXT_ENCODER="${LOAD_TEXT_ENCODER:-false}"
 
-LIBERO_ROOT="${LIBERO_ROOT:-/home/jiangjiahao/data/LIBERO/libero_v30}"
+LIBERO_ROOT="${LIBERO_ROOT:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/libero-lerobotv30}"
 if [[ "${LOAD_TEXT_ENCODER}" == "true" ]]; then
   TEXT_EMBED_CACHE_DIR="${TEXT_EMBED_CACHE_DIR:-}"
 else
@@ -65,37 +68,38 @@ USE_DIST_LOADING="${USE_DIST_LOADING:-false}"
 NUM_FRAMES="${NUM_FRAMES:-33}"
 ACTION_DIM="${ACTION_DIM:-24}"
 PROPRIO_DIM="${PROPRIO_DIM:-24}"
-ACTION_HORIZON="${ACTION_HORIZON:-32}"
-N_ACTION_STEPS="${N_ACTION_STEPS:-8}"
+ACTION_HORIZON="${ACTION_HORIZON:-10}"
+N_ACTION_STEPS="${N_ACTION_STEPS:-5}"
 NUM_INFERENCE_STEPS="${NUM_INFERENCE_STEPS:-10}"
 ACTION_VIDEO_FREQ_RATIO="${ACTION_VIDEO_FREQ_RATIO:-4}"
 VIDEO_HEIGHT="${VIDEO_HEIGHT:-224}"
 VIDEO_WIDTH="${VIDEO_WIDTH:-448}"
 CONCAT_MULTI_CAMERA="${CONCAT_MULTI_CAMERA:-horizontal}"
 STANDARDIZE_VIDEO_SIZE_BY_CAMERAS="${STANDARDIZE_VIDEO_SIZE_BY_CAMERAS:-true}"
-NORM_DEFAULT_MODE="${NORM_DEFAULT_MODE:-q01q99}"
-ENABLE_IMAGE_AUG="${ENABLE_IMAGE_AUG:-false}"
+NORM_DEFAULT_MODE="${NORM_DEFAULT_MODE:-z-score}"
+ENABLE_IMAGE_AUG="${ENABLE_IMAGE_AUG:-true}"
 IMAGE_AUG_PRESET="${IMAGE_AUG_PRESET:-pi05}"
 
 BATCH_SIZE="${BATCH_SIZE:-16}"
 GRAD_ACCUM_STEPS="${GRAD_ACCUM_STEPS:-1}"
-STEPS="${STEPS:-1}"
-NUM_EPOCHS="${NUM_EPOCHS-10}"
+STEPS="${STEPS:-100000}"
+NUM_EPOCHS="${NUM_EPOCHS:-}"
 TRAIN_MAX_STEPS="${TRAIN_MAX_STEPS:-}"
-SAVE_FREQ="${SAVE_FREQ:-2000}"
-LOG_FREQ="${LOG_FREQ:-10}"
-NUM_WORKERS="${NUM_WORKERS:-8}"
+SAVE_FREQ="${SAVE_FREQ:-20000}"
+LOG_FREQ="${LOG_FREQ:-100}"
+NUM_WORKERS="${NUM_WORKERS:-12}"
 
-LR="${LR:-1.0e-4}"
+LR="${LR:-5.0e-5}"
 WEIGHT_DECAY="${WEIGHT_DECAY:-1.0e-2}"
-WARMUP_STEPS="${WARMUP_STEPS:-}"
-DECAY_LR="${DECAY_LR:-}"
-LAMBDA_VIDEO="${LAMBDA_VIDEO:-1.0}"
+WARMUP_STEPS="${WARMUP_STEPS:-5000}"
+DECAY_LR="${DECAY_LR:-3.0e-6}"
+LAMBDA_VIDEO="${LAMBDA_VIDEO:-0.1}"
 LAMBDA_ACTION="${LAMBDA_ACTION:-1.0}"
-LAMBDA_3D="${LAMBDA_3D:-0.05}"
+LAMBDA_3D="${LAMBDA_3D:-0.1}"
+# Match the Real_Piper dual-view recipe: 2 views, 216 tokens/view, horizontal layout.
 DA3_NUM_VIEWS="${DA3_NUM_VIEWS:-2}"
 PROCESSOR_NUM_OUTPUT_CAMERAS="${PROCESSOR_NUM_OUTPUT_CAMERAS:-${DA3_NUM_VIEWS}}"
-FUTURE_3D_TOKENS_PER_VIEW="${FUTURE_3D_TOKENS_PER_VIEW:-144}"
+FUTURE_3D_TOKENS_PER_VIEW="${FUTURE_3D_TOKENS_PER_VIEW:-216}"
 FUTURE_3D_VIEW_ATTENTION_LAYOUT="${FUTURE_3D_VIEW_ATTENTION_LAYOUT:-${CONCAT_MULTI_CAMERA}}"
 FUTURE_3D_QUERY_MODE="${FUTURE_3D_QUERY_MODE:-slot_noise}"
 FUTURE_3D_QUERY_NOISE_SCALE="${FUTURE_3D_QUERY_NOISE_SCALE:-0.5}"
@@ -110,6 +114,7 @@ DA3_TEACHER_PROCESS_RES="${DA3_TEACHER_PROCESS_RES:-504}"
 FUTURE_3D_TARGET_INDEX="${FUTURE_3D_TARGET_INDEX:--1}"
 DTYPE="${DTYPE:-bfloat16}"
 MAGICBOT_R0_CHECKPOINT_MIXED_ATTN="${MAGICBOT_R0_CHECKPOINT_MIXED_ATTN:-false}"
+ACTION_MODE="${ACTION_MODE:-abs}"
 
 case "${DTYPE}" in
   bfloat16)
@@ -123,6 +128,24 @@ case "${DTYPE}" in
     ;;
   *)
     echo "Unsupported DTYPE=${DTYPE}. Expected one of: bfloat16, float16, float32"
+    exit 1
+    ;;
+esac
+
+case "${SKIP_DIT_LOAD_FROM_PRETRAIN}" in
+  true|false)
+    ;;
+  *)
+    echo "Unsupported SKIP_DIT_LOAD_FROM_PRETRAIN=${SKIP_DIT_LOAD_FROM_PRETRAIN}. Expected true or false."
+    exit 1
+    ;;
+esac
+
+case "${ACTION_MODE}" in
+  abs)
+    ;;
+  *)
+    echo "Unsupported ACTION_MODE=${ACTION_MODE}. LIBERO finetuning expects abs."
     exit 1
     ;;
 esac
@@ -156,18 +179,34 @@ if [[ ${#DATASET_REPO_IDS[@]} -eq 0 ]]; then
   exit 1
 fi
 
-if [[ ! -f "${ACTION_DIT_PRETRAINED_PATH}" ]]; then
+if [[ "${SKIP_DIT_LOAD_FROM_PRETRAIN}" != "true" && ! -f "${ACTION_DIT_PRETRAINED_PATH}" ]]; then
   echo "Missing ActionDiT backbone: ${ACTION_DIT_PRETRAINED_PATH}"
   echo "Generate MagicBot_R0 expert backbones with:"
   echo "  python src/lerobot/scripts/magicbot_r0_preprocess_expert_backbones.py --expert both --action-output \"${ACTION_DIT_PRETRAINED_PATH}\" --future-3d-output \"${FUTURE_3D_PRETRAINED_PATH}\" --action-dim ${ACTION_DIM} --da3-num-views ${DA3_NUM_VIEWS} --future-3d-tokens-per-view ${FUTURE_3D_TOKENS_PER_VIEW} --device cuda --dtype bfloat16"
   exit 1
 fi
 
-if [[ ! -f "${FUTURE_3D_PRETRAINED_PATH}" ]]; then
+if [[ "${SKIP_DIT_LOAD_FROM_PRETRAIN}" != "true" && ! -f "${FUTURE_3D_PRETRAINED_PATH}" ]]; then
   echo "Missing Future3DExpert backbone: ${FUTURE_3D_PRETRAINED_PATH}"
   echo "Generate MagicBot_R0 expert backbones with:"
   echo "  python src/lerobot/scripts/magicbot_r0_preprocess_expert_backbones.py --expert both --action-output \"${ACTION_DIT_PRETRAINED_PATH}\" --future-3d-output \"${FUTURE_3D_PRETRAINED_PATH}\" --action-dim ${ACTION_DIM} --da3-num-views ${DA3_NUM_VIEWS} --future-3d-tokens-per-view ${FUTURE_3D_TOKENS_PER_VIEW} --device cuda --dtype bfloat16"
   exit 1
+fi
+
+if [[ -n "${POLICY_INIT_PATH}" ]]; then
+  if [[ ! -d "${POLICY_INIT_PATH}" ]]; then
+    echo "POLICY_INIT_PATH does not exist or is not a directory: ${POLICY_INIT_PATH}"
+    echo "Set POLICY_INIT_PATH/PRETRAINED_PATH/PRETRAINED_MODEL_DIR to a MagicBot_R0 pretrained_model directory."
+    exit 1
+  fi
+  if [[ ! -f "${POLICY_INIT_PATH}/config.json" ]]; then
+    echo "Missing policy config: ${POLICY_INIT_PATH}/config.json"
+    exit 1
+  fi
+  if [[ ! -f "${POLICY_INIT_PATH}/model.safetensors" ]]; then
+    echo "Missing policy weights: ${POLICY_INIT_PATH}/model.safetensors"
+    exit 1
+  fi
 fi
 
 if [[ "${LOAD_TEXT_ENCODER}" != "true" && ! -d "${TEXT_EMBED_CACHE_DIR}" ]]; then
@@ -217,6 +256,9 @@ printf '%s\n' "${DATASET_REPO_IDS[@]}" > "${REPO_ID_FILE}"
 
 echo "MAGICBOT_R0_VARIANT=${MAGICBOT_R0_VARIANT}"
 echo "ACTION_DIM=${ACTION_DIM}, PROPRIO_DIM=${PROPRIO_DIM}"
+echo "POLICY_INIT_PATH=${POLICY_INIT_PATH:-<none>}"
+echo "SKIP_DIT_LOAD_FROM_PRETRAIN=${SKIP_DIT_LOAD_FROM_PRETRAIN}"
+echo "ACTION_MODE=${ACTION_MODE}"
 echo "ACTION_DIT_PRETRAINED_PATH=${ACTION_DIT_PRETRAINED_PATH}"
 echo "FUTURE_3D_PRETRAINED_PATH=${FUTURE_3D_PRETRAINED_PATH}"
 echo "NUM_FRAMES=${NUM_FRAMES}"
@@ -256,6 +298,7 @@ ARGS=(
     --policy.redirect_common_files="${MAGICBOT_R0_REDIRECT_COMMON_FILES}"
     --policy.action_dit_pretrained_path="${ACTION_DIT_PRETRAINED_PATH}"
     --policy.future_3d_pretrained_path="${FUTURE_3D_PRETRAINED_PATH}"
+    --policy.skip_dit_load_from_pretrain="${SKIP_DIT_LOAD_FROM_PRETRAIN}"
     --policy.load_text_encoder="${LOAD_TEXT_ENCODER}"
     --policy.dtype="${DTYPE}"
     --policy.mot_checkpoint_mixed_attn="${MAGICBOT_R0_CHECKPOINT_MIXED_ATTN}"
@@ -286,6 +329,7 @@ ARGS=(
     --dataset.type=${POLICY}
     --dataset.repo_id="multidata_from_file"
     --dataset.repo_id_file="${REPO_ID_FILE}"
+    --dataset.action_mode="${ACTION_MODE}"
     --dataset.num_frames="${NUM_FRAMES}"
     --dataset.action_video_freq_ratio="${ACTION_VIDEO_FREQ_RATIO}"
     --dataset.video_size="[${VIDEO_HEIGHT},${VIDEO_WIDTH}]"
@@ -311,6 +355,10 @@ ARGS=(
     --wandb.project=MagicBot_R0
     --wandb.mode=${WANDB_MODE}
 )
+
+if [[ -n "${POLICY_INIT_PATH}" ]]; then
+    ARGS+=(--policy.pretrained_path="${POLICY_INIT_PATH}")
+fi
 
 if [[ -n "${NUM_EPOCHS}" ]]; then
     ARGS+=(--policy.train_num_epochs="${NUM_EPOCHS}")
