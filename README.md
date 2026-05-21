@@ -83,7 +83,7 @@ Piper deployment is documented in
 Useful launch notes:
 
 - [CubeV2 Piper startup note](inference_magicbot_piper.md)
-- [MagicBot_R0 Piper startup reference](inference_magicbot_r0_piper.sh)
+- [MagicBot_R0 Piper startup reference](inference_magicbot_r0_piper.md)
 
 The Piper client supports sync inference, 7D `real_piper` state/action checks,
 and Enter-triggered return-to-init/restart when `INIT_JOINT_POSITION` and

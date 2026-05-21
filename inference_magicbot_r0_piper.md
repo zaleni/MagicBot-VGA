@@ -1,0 +1,148 @@
+# MagicBot_R0 Real_Piper startup note
+
+This note is the MagicBot_R0 Real_Piper deployment checklist. Steps 2-4 are
+shared with the CubeV2 Piper note and are copied here for convenience.
+
+RTC is intentionally unsupported for this path.
+
+## 1. GPU server: start MagicBot_R0 Real_Piper serve
+
+Run this on the GPU machine. The robot-side client below should connect to this
+machine's IP and port.
+
+```bash
+cd ~/research/MagicBot-VGA
+conda activate magicbot
+
+# Simple bring-up path: load the text encoder and send plain text prompts.
+# For lower memory / faster startup, precompute the exact prompt first and switch
+# MAGICBOT_R0_LOAD_TEXT_ENCODER=false with MAGICBOT_R0_TEXT_EMBED_CACHE_DIR set.
+#
+# python src/lerobot/scripts/magicbot_r0_precompute_text_embeds.py \
+#   --text-embedding-cache-dir /path/to/MagicBot_R0/text_embeds \
+#   --model-cache-dir /path/to/MagicBot_R0/model_cache \
+#   --override-instruction "Sort desktop objects and place them in designated locations." \
+#   --context-len 128 \
+#   --device cuda
+#
+# Optional: set DIFFSYNTH_MODEL_BASE_PATH=/path/to/MagicBot_R0/model_cache
+# to keep Wan/T5/VAE files off the default ./checkpoints directory.
+
+CHECKPOINT_DIR=/path/to/MagicBot_R0/real_piper/checkpoints/30000/pretrained_model \
+STATS_KEY=real_piper \
+ACTION_MODE=abs \
+DEVICE=cuda \
+LOAD_DEVICE=cuda \
+HOST=0.0.0.0 \
+PORT=8102 \
+INFER_HORIZON=24 \
+DEFAULT_PROMPT="Sort desktop objects and place them in designated locations." \
+RTC_ENABLED=false \
+MAGICBOT_R0_LOAD_TEXT_ENCODER=true \
+MAGICBOT_R0_SKIP_DIT_LOAD_FROM_PRETRAIN=true \
+MAGICBOT_R0_CONCAT_MULTI_CAMERA=horizontal \
+MAGICBOT_R0_VIDEO_HEIGHT=224 \
+MAGICBOT_R0_VIDEO_WIDTH=448 \
+bash evaluation/Real_Piper/01_serve_magicbot_r0_real_piper_sync.sh
+```
+
+## 2. Robot: start roscore
+
+```bash
+roscore
+```
+
+## 3. Robot: start Orbbec cameras
+
+```bash
+conda activate deploy
+source /home/admin1/MagicBot/Deploy/tmp/OrbbecSDK_develop/orbbec_ws/devel/setup.bash
+roslaunch orbbec_camera multi_camera.launch
+```
+
+## 4. Robot: start Piper control node
+
+Check CAN first:
+
+```bash
+cd /home/admin1/MagicBot/Deploy/Piper_ros
+bash can_activate.sh
+```
+
+Then start the Piper node in the same window:
+
+```bash
+cd /home/admin1/MagicBot/Deploy/gui_4_2
+source /home/admin1/MagicBot/Deploy/Piper_ros/devel/setup.bash
+conda activate deploy
+roslaunch piper start_single_piper.launch can_port:=can0 auto_enable:=true
+```
+
+## 5. Robot: start MagicBot_R0 Piper inference
+
+```bash
+source /home/admin1/deploy/piper_ros/devel/setup.bash
+cd /home/admin1/MagicBot-VGA
+conda activate deploy
+
+INIT_POS="-90885.0 38280.0 -47982.0 518.0 68317.0 1278.0 -2100.0"
+
+WS_HOST=10.60.45.31 \
+WS_PORT=8102 \
+TASK_PROMPT="Sort desktop objects and place them in designated locations." \
+PUBLISH_RATE=15 \
+ACTION_HORIZON=24 \
+IMAGE_HISTORY_INTERVAL=15 \
+MAX_STEPS=10000 \
+INIT_JOINT_POSITION="${INIT_POS}" \
+INIT_WAIT=true \
+MANUAL_RESET=true \
+FRONT_CAM_TOPIC=/ob_camera_02/color/image_raw \
+WRIST_CAM_TOPIC=/ob_camera_01/color/image_raw \
+JOINT_STATE_TOPIC=joint_states_single \
+JOINT_CMD_TOPIC=js_cmd \
+FIRST_INFERENCE_CHECK=false \
+START_PROMPT=true \
+JPEG_ROUNDTRIP=true \
+GRIPPER_POSTPROCESS=true \
+IMAGE_COLOR_MODE=auto \
+EXPECTED_STATS_KEY=real_piper \
+bash evaluation/Real_Piper/02_infer_magicbot_r0_real_piper_sync.sh
+```
+
+If the GPU server is not `10.60.45.31`, only change `WS_HOST`. Keep
+`WS_PORT=8102` unless the server command in step 1 uses a different `PORT`.
+
+## Useful checks
+
+```bash
+rostopic list
+rostopic echo /joint_states_single
+rostopic echo -n 1 /ob_camera_02/color/image_raw/encoding
+rostopic echo -n 1 /ob_camera_01/color/image_raw/encoding
+```
+
+Manual Piper command:
+
+```bash
+rostopic pub -1 /js_cmd sensor_msgs/JointState "{name: ['joint0','joint1','joint2','joint3','joint4','joint5','joint6'], position: [-90346,36605,-46908,831,66802,1428,100000]}"
+```
+
+## Notes
+
+- The MagicBot_R0 `real_piper` path should stay 7D; the server checks
+  `stats_key=real_piper` and the robot client expects the matching action
+  layout.
+- The model-side image convention is RGB. `IMAGE_COLOR_MODE=auto` reads the ROS
+  message encoding: `rgb8` is kept as RGB, `bgr8` is converted to RGB, and
+  unknown encodings fall back to the legacy BGR-to-RGB path. Only force
+  `IMAGE_COLOR_MODE=bgr` if the Orbbec topic encoding is wrong or missing but
+  the array is known to be BGR.
+- `INIT_POS` is the `rank_block_rgb` initial position.
+- With `MANUAL_RESET=true` and `INIT_JOINT_POSITION` set, press Enter during
+  inference to move back to `INIT_POS` and pause the current rollout. Press
+  Enter again after resetting the scene to clear stale actions and start fresh
+  inference from timestep 0.
+- The inference window sources `/home/admin1/deploy/piper_ros/devel/setup.bash`.
+  The Piper control-node window sources
+  `/home/admin1/MagicBot/Deploy/Piper_ros/devel/setup.bash`.
