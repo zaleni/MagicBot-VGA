@@ -16,6 +16,7 @@
 import logging
 import os
 import time
+import inspect
 from importlib import import_module
 from math import ceil
 from contextlib import nullcontext
@@ -40,6 +41,7 @@ from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies.factory import make_policy
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.rl.wandb_utils import WandBLogger
+from lerobot.utils.constants import SAMPLE_ACTION_LOSS_MASK
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker, format_time
 from lerobot.utils.random_utils import set_seed
@@ -123,41 +125,79 @@ def _format_policy_summary(policy: torch.nn.Module) -> str:
     )
 
 
-def _infer_batch_size(batch: Any) -> int:
-    if isinstance(batch, dict):
-        for key in ("action", "pixel_values", "proprio", "input_ids"):
-            value = batch.get(key)
-            if isinstance(value, torch.Tensor):
-                return int(value.shape[0])
-        for value in batch.values():
-            if isinstance(value, torch.Tensor):
-                return int(value.shape[0])
-            if isinstance(value, dict):
-                try:
-                    return _infer_batch_size(value)
-                except ValueError:
-                    continue
-    elif isinstance(batch, (list, tuple)) and len(batch) > 0:
-        return _infer_batch_size(batch[0])
-    raise ValueError(f"Unable to infer batch size from batch type {type(batch)}")
+def _batch_item(value: Any, index: int) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, torch.Tensor):
+        if value.ndim == 0:
+            return value
+        return value[index]
+    if isinstance(value, (list, tuple)):
+        return value[index]
+    return value
+
+
+def _action_sample_enabled(batch: dict[str, Any], index: int) -> bool:
+    sample_mask = _batch_item(batch.get(SAMPLE_ACTION_LOSS_MASK), index)
+    if sample_mask is None:
+        return True
+    if isinstance(sample_mask, torch.Tensor):
+        if sample_mask.numel() == 0:
+            return False
+        return bool(sample_mask.detach().flatten()[0].item() > 0.5)
+    return bool(float(sample_mask) > 0.5)
+
+
+def _action_eval_mask(batch: dict[str, Any], index: int, shape: torch.Size | tuple[int, int]) -> torch.Tensor:
+    horizon, action_dim = int(shape[0]), int(shape[1])
+    valid = torch.ones((horizon, action_dim), dtype=torch.bool)
+
+    action_is_pad = _batch_item(batch.get("action_is_pad"), index)
+    if action_is_pad is not None:
+        step_valid = ~torch.as_tensor(action_is_pad, dtype=torch.bool).flatten()[:horizon]
+        valid = valid & step_valid[:, None]
+
+    action_dim_is_pad = _batch_item(batch.get("action_dim_is_pad"), index)
+    if action_dim_is_pad is not None:
+        dim_valid = ~torch.as_tensor(action_dim_is_pad, dtype=torch.bool).flatten()[:action_dim]
+        valid = valid & dim_valid[None, :]
+
+    return valid
+
+
+def _action_eval_seed(batch: dict[str, Any], index: int) -> int:
+    sample_idx = _batch_item(batch.get("idx"), index)
+    if sample_idx is None:
+        return 17_123 + index
+    if isinstance(sample_idx, torch.Tensor):
+        if sample_idx.numel() == 0:
+            return 17_123 + index
+        sample_idx = int(sample_idx.detach().flatten()[0].item())
+    else:
+        sample_idx = int(sample_idx)
+    return int((17_123 + sample_idx) % (2**31 - 1))
 
 
 @torch.no_grad()
-def evaluate_offline_policy(
+def evaluate_magicbot_r0_action_policy(
     policy: torch.nn.Module,
     dataloader,
     accelerator: Accelerator,
     *,
     max_batches: int = 2,
 ) -> dict[str, float]:
-    """Run a small validation pass and average scalar losses over a few batches."""
+    """Run a small open-loop action evaluation pass with inference metrics."""
+    del accelerator
     was_training = policy.training
     policy.eval()
 
-    metric_sums: dict[str, float] = {}
-    metric_counts: dict[str, int] = {}
+    action_mse_per_sample: list[float] = []
+    action_l2_per_sample: list[float] = []
     num_batches = 0
-    num_samples = 0
+    num_valid_samples = 0
+
+    infer_action_params = inspect.signature(policy.model.infer_action).parameters
+    infer_needs_num_video_frames = "num_video_frames" in infer_action_params
 
     try:
         for batch_idx, batch in enumerate(dataloader):
@@ -166,37 +206,74 @@ def evaluate_offline_policy(
             if batch is None:
                 continue
 
-            batch = send_to_device(batch, accelerator.device, non_blocking=True)
-            batch_size = _infer_batch_size(batch)
-            loss, output_dict = policy.forward(batch, collect_metrics=True)
-
             num_batches += 1
-            num_samples += batch_size
+            action_target_batch = batch.get("action")
+            if not isinstance(action_target_batch, torch.Tensor):
+                continue
+            input_images = policy._resolve_input_image(batch)
+            batch_size = int(action_target_batch.shape[0])
+            num_video_frames = int(batch["video"].shape[2]) if isinstance(batch.get("video"), torch.Tensor) else None
 
-            def _accumulate(key: str, value: Any) -> None:
-                if not isinstance(value, (int, float, torch.Tensor)):
-                    return
-                metric_sums[key] = metric_sums.get(key, 0.0) + _metric_to_float(value) * batch_size
-                metric_counts[key] = metric_counts.get(key, 0) + batch_size
-
-            _accumulate("loss", loss)
-            for key, value in output_dict.items():
-                if key == "loss":
+            for index in range(batch_size):
+                if not _action_sample_enabled(batch, index):
                     continue
-                _accumulate(key, value)
+
+                prompt, context, context_mask = policy._resolve_context_for_inference(batch, index)
+                proprio = policy._resolve_proprio(batch, index)
+                target_action = action_target_batch[index].detach().cpu().float()
+
+                infer_kwargs = {
+                    "prompt": prompt,
+                    "input_image": input_images[index : index + 1],
+                    "action_horizon": int(target_action.shape[0]),
+                    "proprio": proprio,
+                    "context": context,
+                    "context_mask": context_mask,
+                    "num_inference_steps": int(policy.config.num_inference_steps),
+                    "seed": _action_eval_seed(batch, index),
+                }
+                if infer_needs_num_video_frames and num_video_frames is not None:
+                    infer_kwargs["num_video_frames"] = num_video_frames
+
+                output = policy.model.infer_action(**infer_kwargs)
+                pred_action = output["action"].detach().cpu().float()
+
+                horizon = min(int(pred_action.shape[0]), int(target_action.shape[0]))
+                action_dim = min(int(pred_action.shape[1]), int(target_action.shape[1]))
+                if horizon <= 0 or action_dim <= 0:
+                    continue
+
+                pred_action = pred_action[:horizon, :action_dim]
+                target_action = target_action[:horizon, :action_dim]
+                valid = _action_eval_mask(batch, index, target_action.shape)
+                if not valid.any():
+                    continue
+
+                squared_error = (pred_action - target_action).pow(2)[valid]
+                action_mse_per_sample.append(float(squared_error.mean().item()))
+                action_l2_per_sample.append(float((squared_error.sqrt() / (1 + 1e-3)).mean().item()))
+                num_valid_samples += 1
     finally:
         if was_training:
             policy.train()
         else:
             policy.eval()
 
-    eval_metrics = {
-        key: metric_sums[key] / metric_counts[key]
-        for key in metric_sums
-        if metric_counts.get(key, 0) > 0
-    }
+    eval_metrics: dict[str, float] = {}
+    if action_mse_per_sample:
+        mse_tensor = torch.tensor(action_mse_per_sample, dtype=torch.float32)
+        l2_tensor = torch.tensor(action_l2_per_sample, dtype=torch.float32)
+        eval_metrics.update(
+            {
+                "action_mse_loss": float(mse_tensor.mean().item()),
+                "action_l2_error": float(l2_tensor.mean().item()),
+                "action_mse_std": float(mse_tensor.std(unbiased=False).item()),
+                "action_l2_std": float(l2_tensor.std(unbiased=False).item()),
+            }
+        )
     eval_metrics["num_batches"] = float(num_batches)
-    eval_metrics["num_samples"] = float(num_samples)
+    eval_metrics["num_samples"] = float(num_valid_samples)
+    eval_metrics["num_inference_steps"] = float(policy.config.num_inference_steps)
     return eval_metrics
 
 
@@ -686,9 +763,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             )
             logging.info(
                 "Created MagicBot_R0 eval dataloader for periodic validation: "
-                "eval_freq=%d, eval_batches=%d, batch_size=%d",
+                "eval_freq=%d, max_batches=%d, batch_size=%d, metric=action_mse/l2",
                 cfg.eval_freq,
-                2,
+                cfg.eval_max_batches,
                 cfg.batch_size,
             )
         accelerator.wait_for_everyone()
@@ -919,8 +996,13 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             accelerator.wait_for_everyone()
             if is_main_process and eval_dataloader is not None:
                 eval_policy = accelerator.unwrap_model(policy)
-                eval_metrics = evaluate_offline_policy(eval_policy, eval_dataloader, accelerator)
-                summary_keys = ["loss", "loss_action", "loss_video", "loss_3d"]
+                eval_metrics = evaluate_magicbot_r0_action_policy(
+                    eval_policy,
+                    eval_dataloader,
+                    accelerator,
+                    max_batches=max(int(cfg.eval_max_batches), 1),
+                )
+                summary_keys = ["action_mse_loss", "action_l2_error", "action_mse_std", "action_l2_std"]
                 summary_parts = [
                     f"{key}={eval_metrics[key]:.4f}"
                     for key in summary_keys
