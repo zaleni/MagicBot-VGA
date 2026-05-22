@@ -21,7 +21,7 @@ export WANDB_MODE=${WANDB_MODE:-offline}
 export HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-1}
 export TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-1}
 export TOKENIZERS_PARALLELISM=false
-
+export LEROBOT_DDP_FIND_UNUSED_PARAMETERS=false
 ###############################################################################
 ############################## TRAINING config ################################
 
