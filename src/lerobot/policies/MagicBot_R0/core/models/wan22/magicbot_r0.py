@@ -972,6 +972,7 @@ class MagicBotR0(torch.nn.Module):
         context_mask = inputs["context_mask"]
         action = inputs["action"]
         sample_action_loss_mask = inputs.get("sample_action_loss_mask", None)
+        action_dim_is_pad = inputs.get("action_dim_is_pad", None)
         image_is_pad = inputs["image_is_pad"]
         future_3d_images = inputs["future_3d_images"]
         future_3d_img_masks = inputs["future_3d_img_masks"]
