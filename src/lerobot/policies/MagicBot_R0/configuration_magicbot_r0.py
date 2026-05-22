@@ -292,6 +292,7 @@ class MagicBotR0Config(PreTrainedConfig):
     )
     lambda_video: float = 1.0
     lambda_action: float = 1.0
+    mask_action_dim_padding_loss: bool = False
     action_norm_use_stepwise: bool = False
     action_norm_default_mode: str = "min/max"
     action_norm_exception_mode: dict[str, dict[str, str]] | None = None

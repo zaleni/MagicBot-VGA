@@ -43,6 +43,7 @@ class MagicBotR0(torch.nn.Module):
         action_num_train_timesteps: int = 1000,
         loss_lambda_video: float = 1.0,
         loss_lambda_action: float = 1.0,
+        mask_action_dim_padding_loss: bool = False,
         loss_lambda_3d: float = 0.0,
         da3_model_path_or_name: str = "depth-anything/DA3-LARGE-1.1",
         da3_code_root: str | None = None,
@@ -106,6 +107,7 @@ class MagicBotR0(torch.nn.Module):
         self.torch_dtype = torch_dtype
         self.loss_lambda_video = float(loss_lambda_video)
         self.loss_lambda_action = float(loss_lambda_action)
+        self.mask_action_dim_padding_loss = bool(mask_action_dim_padding_loss)
         self.loss_lambda_3d = float(loss_lambda_3d)
         self.da3_teacher_layers = None if da3_teacher_layers is None else tuple(int(idx) for idx in da3_teacher_layers)
         self.da3_layer_weights = tuple(float(weight) for weight in da3_layer_weights)
@@ -159,6 +161,7 @@ class MagicBotR0(torch.nn.Module):
         action_num_train_timesteps: int = 1000,
         loss_lambda_video: float = 1.0,
         loss_lambda_action: float = 1.0,
+        mask_action_dim_padding_loss: bool = False,
         loss_lambda_3d: float = 0.0,
         da3_model_path_or_name: str = "depth-anything/DA3-LARGE-1.1",
         da3_code_root: str | None = None,
@@ -244,6 +247,7 @@ class MagicBotR0(torch.nn.Module):
             action_num_train_timesteps=action_num_train_timesteps,
             loss_lambda_video=loss_lambda_video,
             loss_lambda_action=loss_lambda_action,
+            mask_action_dim_padding_loss=mask_action_dim_padding_loss,
             loss_lambda_3d=loss_lambda_3d,
             da3_model_path_or_name=da3_model_path_or_name,
             da3_code_root=da3_code_root,
@@ -1106,7 +1110,18 @@ class MagicBotR0(torch.nn.Module):
             target_action.float(),
             reduction="none",
         )
-        action_loss_token = action_loss_raw.mean(dim=2)  # [B, T]
+        action_dim_valid_mask: torch.Tensor | None = None
+        if self.mask_action_dim_padding_loss and action_dim_is_pad is not None:
+            action_dim_valid_mask = (~action_dim_is_pad).to(
+                device=action_loss_raw.device,
+                dtype=action_loss_raw.dtype,
+            )
+            valid_dim_count = action_dim_valid_mask.sum(dim=1).clamp(min=1.0)
+            action_loss_token = (
+                action_loss_raw * action_dim_valid_mask[:, None, :]
+            ).sum(dim=2) / valid_dim_count[:, None]
+        else:
+            action_loss_token = action_loss_raw.mean(dim=2)  # [B, T]
         action_loss_per_sample = action_loss_token.mean(dim=1)
 
         action_weight = self.train_action_scheduler.training_weight(timestep_action).to(
@@ -1168,8 +1183,13 @@ class MagicBotR0(torch.nn.Module):
             dim_weight = dim_weight * (
                 sample_action_loss_mask.to(device=dim_weight.device, dtype=dim_weight.dtype) > 0.5
             )[:, None].to(dtype=dim_weight.dtype)
-        dim_denom = dim_weight.sum(dim=(0, 1)).clamp(min=1.0)
-        loss_action_by_dim = (action_loss_raw * dim_weight[:, :, None]).sum(dim=(0, 1)) / dim_denom
+        if action_dim_valid_mask is not None:
+            dim_weight_3d = dim_weight[:, :, None] * action_dim_valid_mask[:, None, :]
+            dim_denom = dim_weight_3d.sum(dim=(0, 1)).clamp(min=1.0)
+            loss_action_by_dim = (action_loss_raw * dim_weight_3d).sum(dim=(0, 1)) / dim_denom
+        else:
+            dim_denom = dim_weight.sum(dim=(0, 1)).clamp(min=1.0)
+            loss_action_by_dim = (action_loss_raw * dim_weight[:, :, None]).sum(dim=(0, 1)) / dim_denom
         for dim_idx, dim_loss in enumerate(loss_action_by_dim.detach().float().cpu().tolist()):
             loss_dict[f"loss_action_dim{dim_idx}"] = float(dim_loss)
         if future_3d_query_sigma is not None:
