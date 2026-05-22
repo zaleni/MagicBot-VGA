@@ -56,7 +56,7 @@ SKIP_DIT_LOAD_FROM_PRETRAIN="${SKIP_DIT_LOAD_FROM_PRETRAIN:-true}"
 NATIVE_MAGICBOT_R0_CHECKPOINT_PATH="${NATIVE_MAGICBOT_R0_CHECKPOINT_PATH:-}"
 LOAD_TEXT_ENCODER="${LOAD_TEXT_ENCODER:-false}"
 
-DATASET_DIR="${DATASET_DIR:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/zhenji/lerobot_v30/table_bussing_50_lerobot_v30}"
+DATASET_DIR="${DATASET_DIR:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/zhenji/lerobot_v30/Rank_Block_RGB_lerobot_v30}"
 DATASET_NAME="${DATASET_NAME:-$(basename "${DATASET_DIR}")}"
 DATASET_REPO_ID="${DATASET_REPO_ID:-${DATASET_DIR}}"
 VALIDATE_DATASETS="${VALIDATE_DATASETS:-true}"
