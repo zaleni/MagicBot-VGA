@@ -175,11 +175,14 @@ bash evaluation/Libero/01_serve_magicbot_libero.sh
 
 The server auto-detects `cubev2` vs `MagicBot_R0` checkpoints. For `MagicBot_R0`, keep `CHECKPOINT_DIR` pointed at the checkpoint step dir or its `pretrained_model` dir; if the normalization stats are stored elsewhere, pass `STATS_PATH`.
 
+`MagicBot_R0` serving uses cached LIBERO text embeddings by default from `outputs/MagicBot_R0/text_embeds/libero`, matching the finetuning path with `LOAD_TEXT_ENCODER=false`. Override with `TEXT_EMBED_CACHE_DIR=/path/to/cache` if needed. For debugging or unusual prompts, set `LOAD_TEXT_ENCODER=true` to load the text encoder/tokenizer and encode prompts on the fly.
+
 For `MagicBot_R0`, the shortest path is:
 
 ```bash
 conda activate magicbot
 CHECKPOINT_DIR=/path/to/MagicBot_R0/checkpoints/200000/pretrained_model \
+TEXT_EMBED_CACHE_DIR=$PWD/outputs/MagicBot_R0/text_embeds/libero \
 bash evaluation/Libero/01_serve_magicbot_libero.sh
 
 conda activate libero

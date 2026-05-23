@@ -34,7 +34,7 @@ from lerobot.datasets.utils import load_json
 from lerobot.policies.MagicBot_R0.dataset_magicbot_r0 import resolve_magicbot_r0_video_size
 from lerobot.policies.MagicBot_R0.modeling_magicbot_r0 import MagicBotR0Policy
 from lerobot.policies.MagicBot_R0.stats_adapter import ensure_magicbot_r0_stats_format
-from lerobot.policies.MagicBot_R0.text_cache import build_magicbot_r0_prompt
+from lerobot.policies.MagicBot_R0.text_cache import build_magicbot_r0_prompt, build_text_embedding_cache_path
 from lerobot.policies.MagicBot_R0.core.data.lerobot.utils.normalizer import (
     SingleFieldLinearNormalizer,
     load_dataset_stats_from_json,
@@ -82,6 +82,9 @@ class ServeArgs:
     da3_model_path_or_name: str | None = None
     da3_code_root: str | None = None
     action_mode: str | None = None
+    load_text_encoder: bool = False
+    text_embed_cache_dir: str | None = None
+    text_embed_context_len: int = 128
     rtc_enabled: bool = False
     rtc_execution_horizon: int = 10
     rtc_max_guidance_weight: float = 10.0
@@ -91,6 +94,29 @@ class ServeArgs:
 
 def _env_fallback(value: str | None, env_name: str) -> str | None:
     return value if value is not None else os.environ.get(env_name)
+
+
+def _env_bool_fallback(value: bool | None, env_name: str, default: bool) -> bool:
+    if value is not None:
+        return bool(value)
+    raw_value = os.environ.get(env_name)
+    if raw_value is None:
+        return default
+    normalized = raw_value.strip().lower()
+    if normalized in {"1", "true", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "n", "off"}:
+        return False
+    raise ValueError(f"Invalid boolean env {env_name}={raw_value!r}")
+
+
+def _env_int_fallback(value: int | None, env_name: str, default: int) -> int:
+    if value is not None:
+        return int(value)
+    raw_value = os.environ.get(env_name)
+    if raw_value is None or not str(raw_value).strip():
+        return default
+    return int(raw_value)
 
 
 def parse_args() -> ServeArgs:
@@ -119,6 +145,15 @@ def parse_args() -> ServeArgs:
     parser.add_argument("--da3_model_path_or_name", default=None)
     parser.add_argument("--da3_code_root", default=None)
     parser.add_argument("--action_mode", choices=["abs", "delta"], default=None)
+    parser.add_argument(
+        "--load_text_encoder",
+        "--load-text-encoder",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Load the Wan text encoder/tokenizer and encode prompts on the fly instead of using cached text embeddings.",
+    )
+    parser.add_argument("--text_embed_cache_dir", default=None)
+    parser.add_argument("--text_embed_context_len", type=int, default=None)
     parser.add_argument(
         "--rtc_enabled",
         "--rtc-enabled",
@@ -152,6 +187,13 @@ def parse_args() -> ServeArgs:
     parsed.da3_model_path_or_name = _env_fallback(parsed.da3_model_path_or_name, "DA3_MODEL_PATH_OR_NAME")
     parsed.da3_code_root = _env_fallback(parsed.da3_code_root, "DA3_CODE_ROOT")
     parsed.action_mode = _env_fallback(parsed.action_mode, "ACTION_MODE")
+    parsed.load_text_encoder = _env_bool_fallback(parsed.load_text_encoder, "LOAD_TEXT_ENCODER", default=False)
+    parsed.text_embed_cache_dir = _env_fallback(parsed.text_embed_cache_dir, "TEXT_EMBED_CACHE_DIR")
+    parsed.text_embed_context_len = _env_int_fallback(
+        parsed.text_embed_context_len,
+        "TEXT_EMBED_CONTEXT_LEN",
+        default=128,
+    )
     return parsed
 
 
@@ -597,6 +639,8 @@ class MagicBotR0LiberoPolicy:
         if config.type != "MagicBot_R0":
             raise ValueError(f"Expected a MagicBot_R0 checkpoint, got config.type={config.type!r}")
         apply_runtime_config_overrides(config, args)
+        self.load_text_encoder = bool(args.load_text_encoder)
+        config.load_text_encoder = self.load_text_encoder
         self.config = config
 
         self.device = resolve_device(args.device)
@@ -623,6 +667,9 @@ class MagicBotR0LiberoPolicy:
 
         self.action_dim = int(getattr(config, "action_dim", 24))
         self.target_proprio_dim = int(getattr(config, "proprio_dim", 24))
+        self.text_embed_cache_dir = self._resolve_text_embed_cache_dir()
+        self.text_embed_context_len = int(args.text_embed_context_len)
+        self._cached_text_contexts: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
         self.input_height, self.input_width = resolve_magicbot_r0_video_size(
             2,
             (args.request_image_height, args.request_image_width),
@@ -641,6 +688,9 @@ class MagicBotR0LiberoPolicy:
             "dtype": str(self.runtime_dtype),
             "infer_horizon": self.infer_horizon,
             "default_prompt": args.default_prompt,
+            "load_text_encoder": self.load_text_encoder,
+            "text_embed_cache_dir": str(self.text_embed_cache_dir),
+            "text_embed_context_len": self.text_embed_context_len,
         }
 
     @property
@@ -676,6 +726,11 @@ class MagicBotR0LiberoPolicy:
             if alias in images:
                 return images[alias]
         raise KeyError(f"Request is missing `{label}` image. Tried aliases: {aliases}")
+
+    def _resolve_text_embed_cache_dir(self) -> Path:
+        if self.args.text_embed_cache_dir is not None and str(self.args.text_embed_cache_dir).strip():
+            return Path(self.args.text_embed_cache_dir).expanduser()
+        return REPO_ROOT / "outputs" / "MagicBot_R0" / "text_embeds" / "libero"
 
     def _build_state_normalizer(self) -> tuple[SingleFieldLinearNormalizer, str]:
         stats_candidates: list[Path] = []
@@ -733,6 +788,49 @@ class MagicBotR0LiberoPolicy:
             f"Tried: {', '.join(errors) if errors else '(none)'}"
         )
 
+    def _load_cached_text_context(self, prompt: str) -> tuple[torch.Tensor, torch.Tensor]:
+        cache_key = prompt
+        cached = self._cached_text_contexts.get(cache_key)
+        if cached is not None:
+            return cached
+
+        cache_path = build_text_embedding_cache_path(self.text_embed_cache_dir, prompt, self.text_embed_context_len)
+        if not cache_path.is_file():
+            raise FileNotFoundError(
+                "Missing MagicBot_R0 cached text embedding for prompt. "
+                f"Expected {cache_path}. "
+                "Either precompute the cache under `outputs/MagicBot_R0/text_embeds/libero`, "
+                "or set LOAD_TEXT_ENCODER=true to encode prompts on the fly."
+            )
+
+        payload = torch.load(cache_path, map_location="cpu")
+        context = payload.get("context")
+        if context is None:
+            raise KeyError(f"Cached text embedding is missing `context`: {cache_path}")
+        mask = payload.get("mask")
+        if mask is None:
+            mask = payload.get("context_mask")
+        if mask is None:
+            raise KeyError(f"Cached text embedding is missing `mask`/`context_mask`: {cache_path}")
+
+        context = torch.as_tensor(context, dtype=torch.float32)
+        mask = torch.as_tensor(mask, dtype=torch.bool)
+        if context.ndim != 2:
+            raise ValueError(f"Cached `context` must be 2D [L, D], got shape {tuple(context.shape)} in {cache_path}")
+        if mask.ndim != 1:
+            raise ValueError(f"Cached `mask` must be 1D [L], got shape {tuple(mask.shape)} in {cache_path}")
+        if context.shape[0] != self.text_embed_context_len or mask.shape[0] != self.text_embed_context_len:
+            raise ValueError(
+                "Cached text embedding length mismatch: "
+                f"expected {self.text_embed_context_len}, got context={context.shape[0]} and mask={mask.shape[0]} "
+                f"in {cache_path}"
+            )
+
+        context = context.unsqueeze(0).contiguous()
+        mask = mask.unsqueeze(0).contiguous()
+        self._cached_text_contexts[cache_key] = (context, mask)
+        return context, mask
+
     def _normalize_proprio(self, state: np.ndarray) -> torch.Tensor:
         proprio = np.asarray(state, dtype=np.float32).reshape(-1)
         proprio_tensor = torch.from_numpy(proprio)
@@ -783,11 +881,16 @@ class MagicBotR0LiberoPolicy:
         proprio = self._normalize_proprio(state)
         prompt = self._resolve_prompt(obs)
 
-        batch = {
+        batch: dict[str, Any] = {
             "input_image": input_image,
             "proprio": proprio,
-            "prompt": [prompt],
         }
+        if self.load_text_encoder:
+            batch["prompt"] = [prompt]
+        else:
+            context, context_mask = self._load_cached_text_context(prompt)
+            batch["context"] = context
+            batch["context_mask"] = context_mask
         with torch.no_grad():
             action_pred = self.policy.predict_action_chunk(batch)
 

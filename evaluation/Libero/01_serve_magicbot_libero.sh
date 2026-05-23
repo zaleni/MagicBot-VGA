@@ -22,6 +22,9 @@ REQUEST_IMAGE_WIDTH="${REQUEST_IMAGE_WIDTH:-256}"
 DEFAULT_PROMPT="${DEFAULT_PROMPT:-Execute the LIBERO task.}"
 STATS_KEY="${STATS_KEY:-franka}"
 ACTION_MODE="${ACTION_MODE:-abs}"
+LOAD_TEXT_ENCODER="${LOAD_TEXT_ENCODER:-false}"
+TEXT_EMBED_CACHE_DIR="${TEXT_EMBED_CACHE_DIR:-${PROJ_ROOT}/outputs/MagicBot_R0/text_embeds/libero}"
+TEXT_EMBED_CONTEXT_LEN="${TEXT_EMBED_CONTEXT_LEN:-128}"
 DISABLE_3D_TEACHER_FOR_EVAL="${DISABLE_3D_TEACHER_FOR_EVAL:-true}"
 
 if [[ -z "${CHECKPOINT_DIR}" ]]; then
@@ -43,7 +46,23 @@ ARGS=(
   --default_prompt="${DEFAULT_PROMPT}"
   --stats_key="${STATS_KEY}"
   --action_mode="${ACTION_MODE}"
+  --text_embed_cache_dir="${TEXT_EMBED_CACHE_DIR}"
+  --text_embed_context_len="${TEXT_EMBED_CONTEXT_LEN}"
 )
+
+case "${LOAD_TEXT_ENCODER,,}" in
+  true|1|yes|y|on)
+    ARGS+=(--load_text_encoder)
+    ;;
+  false|0|no|n|off)
+    ARGS+=(--no-load_text_encoder)
+    ;;
+  *)
+    echo "Invalid LOAD_TEXT_ENCODER=${LOAD_TEXT_ENCODER}"
+    echo "Expected one of: true/false, 1/0, yes/no, on/off"
+    exit 1
+    ;;
+esac
 
 case "${DISABLE_3D_TEACHER_FOR_EVAL,,}" in
   true|1|yes|y|on)
