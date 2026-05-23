@@ -25,7 +25,7 @@ ACTION_MODE="${ACTION_MODE:-abs}"
 DISABLE_3D_TEACHER_FOR_EVAL="${DISABLE_3D_TEACHER_FOR_EVAL:-true}"
 
 if [[ -z "${CHECKPOINT_DIR}" ]]; then
-  echo "Please set CHECKPOINT_DIR to a MagicBot checkpoint step dir or pretrained_model dir."
+  echo "Please set CHECKPOINT_DIR to a CubeV2 or MagicBot_R0 checkpoint step dir or pretrained_model dir."
   exit 1
 fi
 

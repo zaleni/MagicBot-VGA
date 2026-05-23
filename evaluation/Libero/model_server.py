@@ -25,11 +25,20 @@ os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.configs.types import RTCAttentionSchedule
 from lerobot.datasets.utils import load_json
+from lerobot.policies.MagicBot_R0.dataset_magicbot_r0 import resolve_magicbot_r0_video_size
+from lerobot.policies.MagicBot_R0.modeling_magicbot_r0 import MagicBotR0Policy
+from lerobot.policies.MagicBot_R0.stats_adapter import ensure_magicbot_r0_stats_format
+from lerobot.policies.MagicBot_R0.text_cache import build_magicbot_r0_prompt
+from lerobot.policies.MagicBot_R0.core.data.lerobot.utils.normalizer import (
+    SingleFieldLinearNormalizer,
+    load_dataset_stats_from_json,
+)
 from lerobot.policies.cubev2.modeling_cubev2_rtc import CubeV2RTCPolicy
 from lerobot.policies.cubev2.transform_cubev2 import Qwen3_VLProcessorTransformFn
 from lerobot.policies.factory import get_policy_class
@@ -261,6 +270,20 @@ def coerce_history(image_value: Any) -> np.ndarray:
     if len(frames) == 1:
         return np.stack([frames[0], frames[0]], axis=0)
     return np.stack([frames[0], frames[-1]], axis=0)
+
+
+def select_magicbot_r0_stats_payload(stats_payload: dict[str, Any], stats_key: str | None) -> dict[str, Any]:
+    if "magicbot_r0" in stats_payload and isinstance(stats_payload["magicbot_r0"], dict):
+        return stats_payload["magicbot_r0"]
+    if stats_key is not None and stats_key in stats_payload and isinstance(stats_payload[stats_key], dict):
+        return stats_payload[stats_key]
+    return stats_payload
+
+
+def resolve_optional_path(path_value: str | None) -> Path | None:
+    if path_value is None or not str(path_value).strip():
+        return None
+    return Path(path_value).expanduser()
 
 
 class MagicBotLiberoPolicy:
@@ -564,9 +587,233 @@ class MagicBotLiberoPolicy:
         }
 
 
+class MagicBotR0LiberoPolicy:
+    def __init__(self, args: ServeArgs):
+        self.args = args
+        self.ckpt_dir = resolve_ckpt_dir(args.ckpt_path)
+        self.train_cfg = load_train_config_or_none(self.ckpt_dir)
+
+        config = PreTrainedConfig.from_pretrained(self.ckpt_dir)
+        if config.type != "MagicBot_R0":
+            raise ValueError(f"Expected a MagicBot_R0 checkpoint, got config.type={config.type!r}")
+        apply_runtime_config_overrides(config, args)
+        self.config = config
+
+        self.device = resolve_device(args.device)
+        self.load_device = (
+            resolve_device(args.load_device)
+            if args.load_device
+            else ("cpu" if self.device != "cpu" else "cpu")
+        )
+        self.runtime_dtype = resolve_runtime_dtype(args.dtype, self.device)
+        config.device = self.load_device
+
+        self.policy = MagicBotR0Policy.from_pretrained(
+            config=config,
+            pretrained_name_or_path=self.ckpt_dir,
+        )
+        self.policy.config.device = self.device
+        self.config.device = self.device
+        self.policy.to(device=self.device, dtype=self.runtime_dtype).eval()
+
+        train_action_mode = None if self.train_cfg is None else getattr(self.train_cfg.dataset, "action_mode", None)
+        self.action_mode = args.action_mode or train_action_mode or "abs"
+        if self.action_mode != "abs":
+            raise NotImplementedError("MagicBot_R0 LIBERO serving currently expects abs action mode.")
+
+        self.action_dim = int(getattr(config, "action_dim", 24))
+        self.target_proprio_dim = int(getattr(config, "proprio_dim", 24))
+        self.input_height, self.input_width = resolve_magicbot_r0_video_size(
+            2,
+            (args.request_image_height, args.request_image_width),
+            True,
+        )
+        self.tile_width = self.input_width // 2
+        self.state_normalizer, self.state_stats_key = self._build_state_normalizer()
+
+        self._metadata = {
+            "model_type": "MagicBot_R0",
+            "deployment": "libero_eval",
+            "checkpoint_dir": str(self.ckpt_dir),
+            "stats_key": self.state_stats_key,
+            "action_mode": self.action_mode,
+            "device": self.device,
+            "dtype": str(self.runtime_dtype),
+            "infer_horizon": self.infer_horizon,
+            "default_prompt": args.default_prompt,
+        }
+
+    @property
+    def infer_horizon(self) -> int:
+        return int(self.args.infer_horizon or getattr(self.config, "n_action_steps", getattr(self.config, "action_horizon", 1)))
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        return self._metadata
+
+    @staticmethod
+    def _latest_frame(image_value: Any) -> np.ndarray:
+        return coerce_history(image_value)[-1]
+
+    @staticmethod
+    def _image_to_chw_float(image_value: Any) -> torch.Tensor:
+        frame = MagicBotR0LiberoPolicy._latest_frame(image_value)
+        tensor = torch.from_numpy(frame).permute(2, 0, 1).contiguous()
+        return tensor.to(torch.float32) / 255.0
+
+    @staticmethod
+    def _resize_view(image: torch.Tensor, size: tuple[int, int]) -> torch.Tensor:
+        image = image.unsqueeze(0)
+        try:
+            image = F.interpolate(image, size=size, mode="bilinear", align_corners=False, antialias=True)
+        except TypeError:
+            image = F.interpolate(image, size=size, mode="bilinear", align_corners=False)
+        return image.squeeze(0)
+
+    @staticmethod
+    def _resolve_camera(images: dict[str, Any], aliases: tuple[str, ...], *, label: str) -> Any:
+        for alias in aliases:
+            if alias in images:
+                return images[alias]
+        raise KeyError(f"Request is missing `{label}` image. Tried aliases: {aliases}")
+
+    def _build_state_normalizer(self) -> tuple[SingleFieldLinearNormalizer, str]:
+        stats_candidates: list[Path] = []
+        explicit_stats_path = resolve_optional_path(self.args.stats_path)
+        if explicit_stats_path is not None:
+            stats_candidates.append(explicit_stats_path)
+        stats_candidates.append(self.ckpt_dir / "stats.json")
+        if self.train_cfg is not None:
+            dataset_cfg = getattr(self.train_cfg, "dataset", None)
+            if dataset_cfg is not None and getattr(dataset_cfg, "normalization_stats_path", None):
+                stats_candidates.append(Path(dataset_cfg.normalization_stats_path).expanduser())
+
+        shape_meta = {
+            "action": [{"key": "default", "raw_shape": self.action_dim, "shape": self.action_dim}],
+            "state": [{"key": "default", "raw_shape": self.target_proprio_dim, "shape": self.target_proprio_dim}],
+        }
+
+        errors: list[str] = []
+        for stats_path in stats_candidates:
+            if not stats_path.is_file():
+                errors.append(f"Missing MagicBot_R0 stats file: {stats_path}")
+                continue
+            try:
+                raw_payload = load_dataset_stats_from_json(str(stats_path))
+                selected_payload = select_magicbot_r0_stats_payload(raw_payload, self.args.stats_key)
+                converted_payload = ensure_magicbot_r0_stats_format(
+                    selected_payload,
+                    shape_meta=shape_meta,
+                    require_state=True,
+                )
+                state_stats = converted_payload["state"]
+                if "default" in state_stats:
+                    state_key = "default"
+                elif self.args.stats_key is not None and self.args.stats_key in state_stats:
+                    state_key = self.args.stats_key
+                elif len(state_stats) == 1:
+                    state_key = next(iter(state_stats))
+                else:
+                    state_key = next(iter(state_stats))
+                selected_state_stats = state_stats[state_key]
+                selected_stats = {
+                    key.removeprefix("global_"): value
+                    for key, value in selected_state_stats.items()
+                    if key.startswith("global_")
+                }
+                mode = str(getattr(self.config, "action_norm_default_mode", "z-score"))
+                exception_mode = getattr(self.config, "action_norm_exception_mode", None) or {}
+                mode = exception_mode.get("state", {}).get(state_key, mode)
+                return SingleFieldLinearNormalizer(stats=selected_stats, mode=mode), state_key
+            except Exception as exc:
+                errors.append(f"{stats_path}: {exc}")
+
+        raise FileNotFoundError(
+            "Could not load MagicBot_R0 normalization stats. "
+            f"Tried: {', '.join(errors) if errors else '(none)'}"
+        )
+
+    def _normalize_proprio(self, state: np.ndarray) -> torch.Tensor:
+        proprio = np.asarray(state, dtype=np.float32).reshape(-1)
+        proprio_tensor = torch.from_numpy(proprio)
+        proprio_tensor = self.state_normalizer.forward(proprio_tensor)
+        if proprio_tensor.numel() < self.target_proprio_dim:
+            proprio_tensor = F.pad(proprio_tensor, (0, self.target_proprio_dim - proprio_tensor.numel()))
+        elif proprio_tensor.numel() > self.target_proprio_dim:
+            proprio_tensor = proprio_tensor[: self.target_proprio_dim]
+        return proprio_tensor.unsqueeze(0)
+
+    def _build_input_image(self, images: dict[str, Any]) -> torch.Tensor:
+        head_value = self._resolve_camera(images, ("head", "cam_high", "image0"), label="head")
+        wrist_value = self._resolve_camera(images, ("left_wrist", "cam_left_wrist", "left", "image1"), label="left_wrist")
+
+        head = self._resize_view(self._image_to_chw_float(head_value), (self.input_height, self.tile_width))
+        wrist = self._resize_view(self._image_to_chw_float(wrist_value), (self.input_height, self.tile_width))
+        input_image = torch.cat([head, wrist], dim=-1)
+        return (input_image - 0.5) / 0.5
+
+    def _resolve_prompt(self, obs: dict[str, Any]) -> str:
+        prompt = obs.get("prompt") or obs.get("task") or self.args.default_prompt
+        if not isinstance(prompt, str) or not prompt.strip():
+            prompt = self.args.default_prompt
+        prefix = "A video recorded from a robot's point of view executing the following instruction:"
+        if prompt.startswith(prefix):
+            return prompt
+        return build_magicbot_r0_prompt(prompt)
+
+    def _resolve_state(self, obs: dict[str, Any]) -> np.ndarray:
+        state = obs.get("state")
+        if state is None:
+            state = obs.get("qpos")
+        if state is None:
+            raise KeyError("Request is missing `state` (or `qpos`).")
+        state = np.asarray(state, dtype=np.float32).reshape(-1)
+        return np.ascontiguousarray(state)
+
+    def infer(self, obs: dict[str, Any]) -> dict[str, Any]:
+        if obs.get("reset") or obs.get("timestep") == 0:
+            self.policy.reset()
+
+        images = obs.get("images")
+        if not isinstance(images, dict):
+            raise KeyError("Request is missing `images` dictionary.")
+
+        input_image = self._build_input_image(images)
+        state = self._resolve_state(obs)
+        proprio = self._normalize_proprio(state)
+        prompt = self._resolve_prompt(obs)
+
+        batch = {
+            "input_image": input_image,
+            "proprio": proprio,
+            "prompt": [prompt],
+        }
+        with torch.no_grad():
+            action_pred = self.policy.predict_action_chunk(batch)
+
+        if action_pred.ndim != 3:
+            raise RuntimeError(f"Unexpected MagicBot_R0 action prediction shape: {tuple(action_pred.shape)}")
+        model_action_pred = action_pred[0, : self.infer_horizon, : self.action_dim]
+        action_np = model_action_pred.detach().cpu().numpy().astype(np.float32)
+
+        return {
+            "actions": action_np,
+            "action": action_np[0],
+            "model_actions": action_np,
+            "model_action": action_np[0],
+        }
+
+
 def main(args: ServeArgs) -> None:
     logging.info("Serve args:\n%s", json.dumps(asdict(args), indent=2, ensure_ascii=False))
-    policy = MagicBotLiberoPolicy(args)
+    ckpt_dir = resolve_ckpt_dir(args.ckpt_path)
+    config = PreTrainedConfig.from_pretrained(ckpt_dir)
+    if config.type == "cubev2":
+        policy = MagicBotLiberoPolicy(args)
+    elif config.type == "MagicBot_R0":
+        policy = MagicBotR0LiberoPolicy(args)
+    else:
+        raise ValueError(f"Unsupported LIBERO checkpoint type: {config.type!r}")
 
     hostname = socket.gethostname()
     try:

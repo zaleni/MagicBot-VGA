@@ -173,6 +173,22 @@ INFER_HORIZON=10 \
 bash evaluation/Libero/01_serve_magicbot_libero.sh
 ```
 
+The server auto-detects `cubev2` vs `MagicBot_R0` checkpoints. For `MagicBot_R0`, keep `CHECKPOINT_DIR` pointed at the checkpoint step dir or its `pretrained_model` dir; if the normalization stats are stored elsewhere, pass `STATS_PATH`.
+
+For `MagicBot_R0`, the shortest path is:
+
+```bash
+conda activate magicbot
+CHECKPOINT_DIR=/path/to/MagicBot_R0/checkpoints/200000/pretrained_model \
+bash evaluation/Libero/01_serve_magicbot_libero.sh
+
+conda activate libero
+WS_URL=ws://127.0.0.1:8000 \
+TASK_SUITE_NAME=libero_goal \
+INFER_HORIZON=5 \
+bash evaluation/Libero/eval.sh
+```
+
 2. Start the LIBERO benchmark in the `libero` environment:
 
 ```bash
