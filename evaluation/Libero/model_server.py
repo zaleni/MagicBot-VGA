@@ -659,6 +659,8 @@ class MagicBotR0LiberoPolicy:
         self.policy.config.device = self.device
         self.config.device = self.device
         self.policy.to(device=self.device, dtype=self.runtime_dtype).eval()
+        self.policy.model.device = self.device
+        self.policy.model.torch_dtype = self.runtime_dtype
 
         train_action_mode = None if self.train_cfg is None else getattr(self.train_cfg.dataset, "action_mode", None)
         self.action_mode = args.action_mode or train_action_mode or "abs"
@@ -668,7 +670,14 @@ class MagicBotR0LiberoPolicy:
         self.action_dim = int(getattr(config, "action_dim", 24))
         self.target_proprio_dim = int(getattr(config, "proprio_dim", 24))
         self.text_embed_cache_dir = self._resolve_text_embed_cache_dir()
-        self.text_embed_context_len = int(args.text_embed_context_len)
+        self.text_embed_context_len = int(args.text_embed_context_len or 128)
+        if not self.load_text_encoder and not self.text_embed_cache_dir.is_dir():
+            raise FileNotFoundError(
+                "MagicBot_R0 serving defaults to cached LIBERO text embeddings, but "
+                f"TEXT_EMBED_CACHE_DIR does not exist: {self.text_embed_cache_dir}. "
+                "Precompute the cache there, set TEXT_EMBED_CACHE_DIR to the correct directory, "
+                "or set LOAD_TEXT_ENCODER=true to encode prompts on the fly."
+            )
         self._cached_text_contexts: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
         self.input_height, self.input_width = resolve_magicbot_r0_video_size(
             2,
@@ -841,6 +850,9 @@ class MagicBotR0LiberoPolicy:
             proprio_tensor = proprio_tensor[: self.target_proprio_dim]
         return proprio_tensor.unsqueeze(0)
 
+    def _to_runtime_tensor(self, tensor: torch.Tensor, *, dtype: torch.dtype | None = None) -> torch.Tensor:
+        return tensor.to(device=self.device, dtype=dtype, non_blocking=True)
+
     def _build_input_image(self, images: dict[str, Any]) -> torch.Tensor:
         head_value = self._resolve_camera(images, ("head", "cam_high", "image0"), label="head")
         wrist_value = self._resolve_camera(images, ("left_wrist", "cam_left_wrist", "left", "image1"), label="left_wrist")
@@ -882,15 +894,15 @@ class MagicBotR0LiberoPolicy:
         prompt = self._resolve_prompt(obs)
 
         batch: dict[str, Any] = {
-            "input_image": input_image,
-            "proprio": proprio,
+            "input_image": self._to_runtime_tensor(input_image, dtype=self.runtime_dtype),
+            "proprio": self._to_runtime_tensor(proprio, dtype=self.runtime_dtype),
         }
         if self.load_text_encoder:
             batch["prompt"] = [prompt]
         else:
             context, context_mask = self._load_cached_text_context(prompt)
-            batch["context"] = context
-            batch["context_mask"] = context_mask
+            batch["context"] = self._to_runtime_tensor(context, dtype=self.runtime_dtype)
+            batch["context_mask"] = self._to_runtime_tensor(context_mask, dtype=torch.bool)
         with torch.no_grad():
             action_pred = self.policy.predict_action_chunk(batch)
 
