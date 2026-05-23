@@ -171,6 +171,8 @@ class CubeV2Config(PreTrainedConfig):
 
     max_state_dim: int = 32
     max_action_dim: int = 32
+    mask_action_dim_padding_loss: bool = False
+    action_loss_valid_dim: int | None = None
 
     num_inference_steps: int = 10
     time_sampling_beta_alpha: float = 1.5
@@ -261,6 +263,17 @@ class CubeV2Config(PreTrainedConfig):
             raise ValueError(
                 f"n_action_steps ({self.n_action_steps}) cannot be greater than chunk_size ({self.chunk_size})"
             )
+        if self.action_loss_valid_dim is not None:
+            self.action_loss_valid_dim = int(self.action_loss_valid_dim)
+            if self.action_loss_valid_dim <= 0:
+                raise ValueError("action_loss_valid_dim must be positive when set")
+            if self.action_loss_valid_dim > self.max_action_dim:
+                raise ValueError(
+                    f"action_loss_valid_dim ({self.action_loss_valid_dim}) cannot exceed "
+                    f"max_action_dim ({self.max_action_dim})"
+                )
+        if self.mask_action_dim_padding_loss and self.action_loss_valid_dim is None:
+            raise ValueError("action_loss_valid_dim must be set when mask_action_dim_padding_loss=true")
 
         if self.dtype not in ["bfloat16", "float32"]:
             raise ValueError(f"Invalid dtype: {self.dtype}")

@@ -2616,9 +2616,17 @@ class CubeV2Policy(PreTrainedPolicy):
             action_loss_mask = action_loss_mask > 0.5
 
         if action_loss_mask.any():
-            masked_losses_action = losses_action[action_loss_mask]
-            loss_action = masked_losses_action.mean()
-            loss_action_by_dim = masked_losses_action.mean(dim=[0, 1]).detach().cpu().numpy().tolist()
+            sample_losses_action = losses_action[action_loss_mask]
+            if self.config.mask_action_dim_padding_loss:
+                valid_action_dim = min(int(self.config.action_loss_valid_dim), original_action_dim)
+                valid_losses_action = sample_losses_action[:, :, :valid_action_dim]
+                loss_action = valid_losses_action.mean()
+                loss_action_by_dim_tensor = sample_losses_action.new_zeros(original_action_dim)
+                loss_action_by_dim_tensor[:valid_action_dim] = valid_losses_action.mean(dim=[0, 1])
+                loss_action_by_dim = loss_action_by_dim_tensor.detach().cpu().numpy().tolist()
+            else:
+                loss_action = sample_losses_action.mean()
+                loss_action_by_dim = sample_losses_action.mean(dim=[0, 1]).detach().cpu().numpy().tolist()
         else:
             loss_action = losses_action.new_zeros(())
             loss_action_by_dim = [0.0] * original_action_dim

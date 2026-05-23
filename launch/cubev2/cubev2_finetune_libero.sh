@@ -59,6 +59,8 @@ VIDEO_BACKEND="${VIDEO_BACKEND:-pyav}"
 ACTION_TYPE="${ACTION_TYPE:-abs}"
 CHUNK_SIZE="${CHUNK_SIZE:-10}"
 N_ACTION_STEPS="${N_ACTION_STEPS:-${CHUNK_SIZE}}"
+MASK_ACTION_DIM_PADDING_LOSS="${MASK_ACTION_DIM_PADDING_LOSS:-true}"
+ACTION_LOSS_VALID_DIM="${ACTION_LOSS_VALID_DIM:-7}"
 
 ENABLE_3D_QUERIES="${ENABLE_3D_QUERIES:-true}"
 LAMBDA_3D="${LAMBDA_3D:-0.01}"
@@ -272,6 +274,8 @@ else
         --policy.action_expert_variant=qwen3_28l
         --policy.chunk_size="${CHUNK_SIZE}"
         --policy.n_action_steps="${N_ACTION_STEPS}"
+        --policy.mask_action_dim_padding_loss="${MASK_ACTION_DIM_PADDING_LOSS}"
+        --policy.action_loss_valid_dim="${ACTION_LOSS_VALID_DIM}"
         --policy.attention_mask_mode="${CUBEV2_ATTENTION_MASK_MODE}"
         --policy.enable_3d_queries="${ENABLE_3D_QUERIES}"
         --policy.num_3d_query_tokens="${NUM_3D_QUERY_TOKENS}"
