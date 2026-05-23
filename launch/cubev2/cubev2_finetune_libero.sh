@@ -51,7 +51,7 @@ DA3_CODE_ROOT="${DA3_CODE_ROOT:-}"
 LIBERO_ROOT="${LIBERO_ROOT:-/home/jiangjiahao/data/LIBERO/libero_v30}"
 USE_DIST_LOADING="${USE_DIST_LOADING:-false}"
 VALIDATE_DATASETS="${VALIDATE_DATASETS:-true}"
-VIDEO_BACKEND="${VIDEO_BACKEND:-}"
+VIDEO_BACKEND="${VIDEO_BACKEND:-pyav}"
 
 # LIBERO actions are consumed downstream as end-effector deltas in the StarVLA
 # evaluation pipeline, so keep the stored action as-is unless the caller
@@ -64,7 +64,7 @@ ENABLE_3D_QUERIES="${ENABLE_3D_QUERIES:-true}"
 LAMBDA_3D="${LAMBDA_3D:-0.01}"
 GEN_LAMBDA="${GEN_LAMBDA:-0.002}"
 NUM_3D_QUERY_TOKENS="${NUM_3D_QUERY_TOKENS:-432}"
-CUBEV2_ATTENTION_MASK_MODE="${CUBEV2_ATTENTION_MASK_MODE:-default}"
+CUBEV2_ATTENTION_MASK_MODE="${CUBEV2_ATTENTION_MASK_MODE:-causal}"
 
 USE_EXTERNAL_STATS="${USE_EXTERNAL_STATS:-true}"
 DATASET_EXTERNAL_STATS_PATH="${DATASET_EXTERNAL_STATS_PATH:-/home/jiangjiahao/research/MagicBot-VGA/outputs/norm_stats/libero_all_chunk10/franka/abs/stats.json}"
@@ -76,6 +76,8 @@ STEPS="${STEPS:-60000}"
 SAVE_FREQ="${SAVE_FREQ:-10000}"
 LOG_FREQ="${LOG_FREQ:-25}"
 NUM_WORKERS="${NUM_WORKERS:-12}"
+ENABLE_IMAGE_AUG="${ENABLE_IMAGE_AUG:-false}"
+IMAGE_AUG_PRESET="${IMAGE_AUG_PRESET:-pi05}"
 
 if [[ "${RESUME}" != "true" && "${RESUME}" != "false" ]]; then
   echo "RESUME must be true or false, got ${RESUME}"
@@ -205,7 +207,11 @@ if resolved != "libero_franka":
   echo "Discovered ${#DATASET_REPO_IDS[@]} LIBERO datasets under ${LIBERO_ROOT}"
   printf '  %s\n' "${DATASET_REPO_IDS[@]}"
 
-  JOB_NAME="${POLICY}-libero4-${ACTION_TYPE}-chunk${CHUNK_SIZE}-finetune-$(date +'%Y_%m_%d_%H_%M_%S')"
+  IMAGE_AUG_JOB_TAG=""
+  if [[ "${ENABLE_IMAGE_AUG}" == "true" ]]; then
+    IMAGE_AUG_JOB_TAG="-imgaug-${IMAGE_AUG_PRESET}"
+  fi
+  JOB_NAME="${POLICY}-libero4-${ACTION_TYPE}-chunk${CHUNK_SIZE}${IMAGE_AUG_JOB_TAG}-finetune-$(date +'%Y_%m_%d_%H_%M_%S')"
   OUTPUT_DIR="${BASE_OUTPUT_DIR}/${JOB_NAME}"
   REPO_ID_FILE_DIR="${BASE_OUTPUT_DIR}/_repo_id_files"
   mkdir -p "${REPO_ID_FILE_DIR}"
@@ -220,6 +226,8 @@ if resolved != "libero_franka":
   echo "CUBEV2_ATTENTION_MASK_MODE=${CUBEV2_ATTENTION_MASK_MODE}"
   echo "GEN_LAMBDA=${GEN_LAMBDA}"
   echo "LAMBDA_3D=${LAMBDA_3D}"
+  echo "ENABLE_IMAGE_AUG=${ENABLE_IMAGE_AUG}"
+  echo "IMAGE_AUG_PRESET=${IMAGE_AUG_PRESET}"
   echo "OUTPUT_DIR=${OUTPUT_DIR}"
 fi
 
@@ -251,12 +259,12 @@ else
         --policy.qwen3_vl_pretrained_path="${QWEN3_VL_PRETRAINED_PATH}"
         --policy.cosmos_tokenizer_path_or_name="${COSMOS_TOKENIZER_PATH_OR_NAME}"
         --policy.push_to_hub=false
-        --policy.gradient_checkpointing=false
+        --policy.gradient_checkpointing=true
         --policy.dtype=bfloat16
-        --policy.optimizer_lr=5.0e-5
-        --policy.scheduler_warmup_steps=2000
+        --policy.optimizer_lr=7.5e-5
+        --policy.scheduler_warmup_steps=1000
         --policy.scheduler_decay_steps="${STEPS}"
-        --policy.scheduler_decay_lr=5.0e-6
+        --policy.scheduler_decay_lr=7.5e-6
         --policy.freeze_vision_encoder=false
         --policy.train_expert_only=false
         --policy.train_vlm_only=false
@@ -311,6 +319,13 @@ else
 
     if [[ "${USE_DIST_LOADING}" == "true" ]]; then
         ARGS+=(--dataset.dist_loading=true)
+    fi
+
+    if [[ "${ENABLE_IMAGE_AUG}" == "true" ]]; then
+        ARGS+=(
+            --dataset.image_transforms.enable=true
+            --dataset.image_transforms.preset="${IMAGE_AUG_PRESET}"
+        )
     fi
 fi
 
