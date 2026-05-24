@@ -6,7 +6,7 @@ set -euo pipefail
 ################################# ENV config ##################################
 
 export MASTER_ADDR="${MASTER_ADDR:-127.0.0.1}"
-export MASTER_PORT="${MASTER_PORT:-4560}"
+export MASTER_PORT="${MASTER_PORT:-4360}"
 echo "MASTER_ADDR=${MASTER_ADDR}, MASTER_PORT=${MASTER_PORT}"
 
 export NCCL_P2P_DISABLE="${NCCL_P2P_DISABLE:-1}"
@@ -34,7 +34,7 @@ echo "PROJ_ROOT  = ${PROJ_ROOT}"
 cd "${PROJ_ROOT}"
 export PYTHONPATH="${PROJ_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}"
 
-PRETRAINED_CKPT="${PRETRAINED_CKPT:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/MagicBot-VGA/outputs/MagicBot_R0/MagicBot_R0-magicbot_r0-multidata-delta-pretrain-2026_05_07_15_59_20/checkpoints/160000/pretrained_model}"
+PRETRAINED_CKPT="${PRETRAINED_CKPT:-/inspire/qb-ilm/project/embodied-basic-model/zhangjianing-253108140206/outputs/MagicBot_R0/magicbot_r0-robotwin-3d-delta-pretrained300k-finetune-2026_05_19_12_20_23/checkpoints/120000/pretrained_model}"
 if (( $# > 1 )); then
     echo "Usage:"
     echo "  PRETRAINED_CKPT=/path/to/checkpoints/200000/pretrained_model bash evaluation/RoboTwin/${SCRIPT_NAME}"
@@ -71,14 +71,14 @@ WAN_MODEL_ID="${WAN_MODEL_ID:-}"
 WAN_TOKENIZER_MODEL_ID="${WAN_TOKENIZER_MODEL_ID:-}"
 ACTION_DIT_PRETRAINED_PATH="${ACTION_DIT_PRETRAINED_PATH:-}"
 FUTURE_3D_PRETRAINED_PATH="${FUTURE_3D_PRETRAINED_PATH:-}"
-MAGICBOT_R0_STATS_PATH="${MAGICBOT_R0_STATS_PATH:-}"
+MAGICBOT_R0_STATS_PATH="${MAGICBOT_R0_STATS_PATH:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/MagicBot-VGA/norm_stats_32/aloha/delta/stats.json}"
 export WAN_MODEL_ID WAN_TOKENIZER_MODEL_ID ACTION_DIT_PRETRAINED_PATH FUTURE_3D_PRETRAINED_PATH MAGICBOT_R0_STATS_PATH
 
 DA3_MODEL_PATH_OR_NAME="${DA3_MODEL_PATH_OR_NAME:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/model/DA3-LARGE-1-1}"
 DA3_CODE_ROOT="${DA3_CODE_ROOT:-}"
 DISABLE_DA3_TEACHER_FOR_EVAL="${DISABLE_DA3_TEACHER_FOR_EVAL:-true}"
 
-BASE_OUTPUT_PATH="${BASE_OUTPUT_PATH:-${PROJ_ROOT}/evaluation/RoboTwin/output_magicbot_50_pretraining}"
+BASE_OUTPUT_PATH="${BASE_OUTPUT_PATH:-${PROJ_ROOT}/evaluation/RoboTwin/output_6B_pretrained_hard}"
 TASK_CONFIG="${TASK_CONFIG:-demo_randomized}"
 START_TASK_IDX="${START_TASK_IDX:-0}"
 TASK_COUNT="${TASK_COUNT:-50}"
@@ -89,12 +89,14 @@ MAX_JOBS_PER_GPU="${MAX_JOBS_PER_GPU:-1}"
 POLL_INTERVAL_SECONDS="${POLL_INTERVAL_SECONDS:-35}"
 
 ACTION_MODE="${ACTION_MODE:-delta}"
+BINARIZE_GRIPPER="${BINARIZE_GRIPPER:-false}"
+SKIP_GET_OBS_WITHIN_REPLAN="${SKIP_GET_OBS_WITHIN_REPLAN:-true}"
 TEST_NUM="${TEST_NUM:-100}"
-SEED="${SEED:-42}"
+SEED="${SEED:-0}"
 STATS_KEY="${STATS_KEY:-aloha}"
 DTYPE="${DTYPE:-bfloat16}"
 IMAGE_HISTORY_INTERVAL="${IMAGE_HISTORY_INTERVAL:-15}"
-INFER_HORIZON="${INFER_HORIZON:-24}"
+INFER_HORIZON="${INFER_HORIZON:-16}"
 ACTION_HORIZON_SIZE="${ACTION_HORIZON_SIZE:-32}"
 NUM_INFERENCE_STEPS="${NUM_INFERENCE_STEPS:-10}"
 INSTRUCTION_TYPE="${INSTRUCTION_TYPE:-unseen}"
@@ -106,8 +108,9 @@ VIDEO_WIDTH="${VIDEO_WIDTH:-320}"
 CONCAT_MULTI_CAMERA="${CONCAT_MULTI_CAMERA:-robotwin}"
 STANDARDIZE_VIDEO_SIZE_BY_CAMERAS="${STANDARDIZE_VIDEO_SIZE_BY_CAMERAS:-true}"
 export STANDARDIZE_VIDEO_SIZE_BY_CAMERAS
+export BINARIZE_GRIPPER SKIP_GET_OBS_WITHIN_REPLAN
 
-CKPT_TAG="${CKPT_TAG:-magicbot-r0-pretraining-160k-${ACTION_MODE}-s${SEED}h${INFER_HORIZON}}"
+CKPT_TAG="${CKPT_TAG:-6B-pretrained-120k-${ACTION_MODE}-s${SEED}h${INFER_HORIZON}}"
 RUN_NAME="${RUN_NAME:-${CKPT_TAG}-$(date +%Y_%m_%d_%H_%M_%S)}"
 RUN_OUTPUT_PATH="${BASE_OUTPUT_PATH}/${RUN_NAME}"
 
@@ -184,6 +187,8 @@ done
     echo "total_parallel_jobs: ${TOTAL_SLOTS}"
     echo "policy_type: ${POLICY_TYPE}"
     echo "action_mode: ${ACTION_MODE}"
+    echo "binarize_gripper: ${BINARIZE_GRIPPER}"
+    echo "skip_get_obs_within_replan: ${SKIP_GET_OBS_WITHIN_REPLAN}"
     echo "test_num: ${TEST_NUM}"
     echo "seed: ${SEED}"
     echo "dtype: ${DTYPE}"
@@ -276,6 +281,8 @@ write_task_command_file() {
         printf 'MAGICBOT_R0_LOAD_TEXT_ENCODER=%q ' "${MAGICBOT_R0_LOAD_TEXT_ENCODER}"
         printf 'MAGICBOT_R0_REDIRECT_COMMON_FILES=%q ' "${MAGICBOT_R0_REDIRECT_COMMON_FILES}"
         printf 'MAGICBOT_R0_SKIP_DIT_LOAD_FROM_PRETRAIN=%q ' "${MAGICBOT_R0_SKIP_DIT_LOAD_FROM_PRETRAIN}"
+        printf 'BINARIZE_GRIPPER=%q ' "${BINARIZE_GRIPPER}"
+        printf 'SKIP_GET_OBS_WITHIN_REPLAN=%q ' "${SKIP_GET_OBS_WITHIN_REPLAN}"
         printf 'CUDA_VISIBLE_DEVICES=%q ' "${gpu_id}"
         printf '%q ' "${CMD[@]}"
         printf '\n'
