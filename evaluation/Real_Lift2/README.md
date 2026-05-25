@@ -1,221 +1,87 @@
 # Real_Lift2 Deployment
 
-This directory contains a standalone MagicBot real-robot deployment path.
-It does not depend on `openpi` or on the original PI deployment script.
+MagicBot_R0 deployment for the Lift2 real-robot setup. The flow is split across two machines:
 
-## Files
+- `serve`: loads the checkpoint and answers websocket requests
+- `run`: reads ROS observations and executes returned action chunks
 
-### Entrypoints
+## Entry Points
 
-- `model_server.py`
-  Starts the MagicBot websocket inference server on the GPU machine.
-- `01_serve_magicbot_real_lift2.sh`
-  Shell wrapper for starting the server.
-- `main.py`
-  Thin real-robot deployment entrypoint for MagicBot inference orchestration.
-- `run_real_lift2_inference.sh`
-  Shell wrapper for the real-robot deployment loop.
-- `02_inference_lift2.sh`
-  Convenience launcher that starts the full robot-side stack and the Real_Lift2 inference window.
+- `01_serve_magicbot_r0_real_lift2.sh`: MagicBot_R0 server with Lift2 defaults
+- `01_serve_magicbot_real_lift2.sh`: lower-level server wrapper for custom setups
+- `run_real_lift2_inference.sh`: start the robot-side loop
+- `02_inference_lift2.sh`: one-shot launcher for the full stack
+- `test_remote_server.py`: connectivity smoke test
+- `remote_client.py`: lightweight client wrapper for custom loops
 
-### Robot-Side Runtime
+## Runtime
 
-- `inference.py`
-  Robot-side inference session logic: sync/async/RTC loops, manual-home interaction, and first-chunk safety confirmation.
-- `runtime.py`
-  Robot-runtime helpers extracted from the entrypoint: ROS setup, shared memory, safe-stop, and low-level action publish logic.
-- `remote_client.py`
-  Lightweight client helper for calling the websocket server from your own robot loop.
-- `test_remote_server.py`
-  Lightweight connectivity checker for validating that the robot-side machine can reach a remote MagicBot websocket server.
+- state and action are 14D
+- request images are `cam_high`, `cam_left_wrist`, and `cam_right_wrist`
+- the first successful inference waits for manual safety confirmation
+- `DISABLE_3D_TEACHER_FOR_EVAL=true` is the default
+- `STATS_PATH` is optional; if omitted, the server uses `CHECKPOINT_DIR/stats.json`
 
-### Transport Helpers
+## Quick Start
 
-- `request_builder.py`
-  Builds `images + qpos + history` request payloads.
-- `websocket_server.py`
-  Local websocket server implementation.
-- `websocket_client.py`
-  Local websocket client implementation.
-- `msgpack_numpy.py`
-  NumPy-aware msgpack serialization helpers.
-
-## Recommended Environments
-
-We recommend using two separate environments.
-
-- `serve` environment
-  Use the same environment that can already run MagicBot training or offline evaluation.
-- `run` environment
-  Use the same robot runtime environment that already works with your robot-side ROS control stack.
-
-This split is the safest setup because the two sides depend on different stacks:
-
-- `serve` side
-  Mainly needs model-serving dependencies such as `torch`, `transformers`, `numpy`, `msgpack`, `websockets`, `pyyaml`, and the local `lerobot/MagicBot` code.
-- `run` side
-  Mainly needs robot-runtime dependencies such as `rclpy`, `utils.ros_operator`, `utils.setup_loader`, `numpy`, `msgpack`, `websockets`, and `pyyaml`.
-
-If you really want to run both on one machine, you can still keep two conda environments and launch the two scripts separately.
-
-## DA3 Note For The Serve Side
-
-By default, `01_serve_magicbot_real_lift2.sh` keeps:
-
-```bash
-DISABLE_3D_TEACHER_FOR_EVAL=true
-```
-
-In that default mode, the server sets `lambda_3d=0` at runtime, so MagicBot will not instantiate the DA3 teacher during model startup.
-That means the `serve` environment does not need a separate DA3 runtime by default.
-
-You only need DA3-related setup on the `serve` side if you explicitly want to enable 3D-teacher evaluation, for example by disabling that flag and keeping DA3 active.
-In that case, the server must be able to import `depth_anything_3`, either by:
-
-- installing the `depth_anything_3` package into the `serve` environment, or
-- passing `DA3_CODE_ROOT=/path/to/standalone/DA3/repo`
-
-## Serve-Side Extra Pip Packages
-
-If your MagicBot training/eval environment is already working, the main deep-learning stack should already be present.
-The most common extra runtime packages needed by the websocket `serve` side are:
-
-```bash
-pip install tyro matplotlib mediapy "websockets>=14" msgpack pyyaml draccus huggingface_hub datasets pandas pyarrow pillow packaging einops
-```
-
-In most setups you should not reinstall `torch`, `torchvision`, or `transformers` here unless your existing MagicBot environment is missing them.
-
-## Start The Server
+Serve:
 
 ```bash
 CHECKPOINT_DIR=/path/to/outputs_real/.../checkpoints/060000 \
-STATS_KEY=real_lift2 \
 ACTION_MODE=abs \
 INFER_HORIZON=50 \
-bash evaluation/Real_Lift2/01_serve_magicbot_real_lift2.sh
+bash evaluation/Real_Lift2/01_serve_magicbot_r0_real_lift2.sh
 ```
 
-For a delta-action checkpoint, set `ACTION_MODE=delta` instead. The server will
-also compare this with `train_config.dataset.action_mode` when available, so a
-mismatched checkpoint/action-mode pair fails before robot execution.
+`CHECKPOINT_DIR` can point to a checkpoint step dir or directly to `pretrained_model/`.
+`ACTION_MODE=delta` is also supported when it matches the checkpoint.
+`01_serve_magicbot_r0_real_lift2.sh` defaults `STATS_KEY=real_lift2` and the standard MagicBot_R0 asset paths.
 
-If `CHECKPOINT_DIR` points to:
-
-- `.../checkpoints/060000`
-  the script will automatically resolve `pretrained_model/`
-- `.../checkpoints/060000/pretrained_model`
-  that also works directly
-
-Typical `serve`-machine checklist:
-
-- GPU machine with the MagicBot training/eval environment
-- access to the checkpoint directory
-- access to Qwen3-VL / Cosmos resources referenced by the checkpoint or overridden by env vars
-- no ROS runtime needed
-- DA3 runtime not needed in the default `DISABLE_3D_TEACHER_FOR_EVAL=true` mode
-
-## Start The Real-Robot Loop
+Run:
 
 ```bash
 WS_URL=ws://127.0.0.1:8000 \
 PROMPT="Clear the junk and items off the desktop." \
-FRAME_RATE=24 \
+FRAME_RATE=60 \
 IMAGE_HISTORY_INTERVAL=15 \
 INFERENCE_MODE=sync \
 bash evaluation/Real_Lift2/run_real_lift2_inference.sh
 ```
 
-By default this sends the original robot camera resolution to the server and lets the server-side preprocessing match the training pipeline. Only set `SEND_IMAGE_HEIGHT` and `SEND_IMAGE_WIDTH` deliberately if you want a robot-side bandwidth/latency tradeoff.
+Only set `SEND_IMAGE_HEIGHT` and `SEND_IMAGE_WIDTH` if you want a bandwidth/latency tradeoff.
 
-`main.py` + `inference.py` + `runtime.py` follow the same broad structure as the existing robot deployment loop:
+## Key Env Vars
 
-- a ROS/shared-memory process reads robot observations
-- an inference process sends camera/state data to the MagicBot websocket server
-- returned action chunks are executed step by step
-- the first successful inference pauses for manual safety confirmation
+Serve:
 
-Typical `run`-machine checklist:
+- `CHECKPOINT_DIR`
+- `STATS_KEY`
+- `STATS_PATH`
+- `ACTION_MODE`
+- `INFER_HORIZON`
+- `NUM_INFERENCE_STEPS`
+- `QWEN3_VL_PRETRAINED_PATH`
+- `COSMOS_TOKENIZER_PATH_OR_NAME`
+- `DA3_MODEL_PATH_OR_NAME`
+- `DA3_CODE_ROOT`
 
-- the same runtime that already works for your robot deployment stack
-- ROS and `rclpy`
-- `utils.ros_operator`, `utils.setup_loader`, and related robot-side helpers
-- network access to the websocket server
-- no MagicBot checkpoint loading needed on this side
-- sync the robot-side module set together: `main.py`, `inference.py`, `runtime.py`, `remote_client.py`, `request_builder.py`, `websocket_client.py`, and `msgpack_numpy.py`
+Run:
 
-## Test Remote Server Connectivity
+- `WS_URL`
+- `PROMPT`
+- `FRAME_RATE`
+- `IMAGE_HISTORY_INTERVAL`
+- `SEND_IMAGE_HEIGHT`
+- `SEND_IMAGE_WIDTH`
+- `INFERENCE_MODE`
 
-Before launching the real robot loop, you can verify that the robot-side machine can reach a remote GPU server:
+## Smoke Test
 
 ```bash
-python evaluation/Real_Lift2/test_remote_server.py \
-  --ws_url ws://10.60.43.33:8101
+python evaluation/Real_Lift2/test_remote_server.py --ws_url ws://10.60.43.33:8101
+python evaluation/Real_Lift2/test_remote_server.py --ws_url ws://10.60.43.33:8101 --smoke_infer
 ```
 
-If you also want to send a dummy all-zero observation and validate the returned action chunk shape:
+## Notes
 
-```bash
-python evaluation/Real_Lift2/test_remote_server.py \
-  --ws_url ws://10.60.43.33:8101 \
-  --smoke_infer
-```
-
-## Minimal Client Usage
-
-```python
-from evaluation.Real_Lift2.remote_client import RealLift2RemoteClient
-
-client = RealLift2RemoteClient(
-    host="ws://127.0.0.1:8000",
-    prompt="Clear the junk and items off the desktop.",
-    image_history_interval=15,
-)
-
-client.reset()
-
-response = client.infer_step(
-    images={
-        "head": head_img,
-        "left_wrist": left_wrist_img,
-        "right_wrist": right_wrist_img,
-    },
-    qpos=qpos_14d,
-    timestep=timestep,
-)
-
-actions = response["actions"]  # shape: [T, 14]
-```
-
-## Request Format
-
-The server accepts:
-
-```python
-{
-    "images": {
-        "cam_high": np.ndarray,
-        "cam_left_wrist": np.ndarray,
-        "cam_right_wrist": np.ndarray,
-    },
-    "state": np.ndarray,   # 14-dim qpos
-    "prompt": str,
-    "timestep": int,
-    "reset": bool,
-}
-```
-
-Images may be:
-
-- a single frame in `HWC` or `CHW`
-- a two-frame history in `THWC` or `TCHW`
-
-The server returns:
-
-```python
-{
-    "actions": np.ndarray,   # [infer_horizon, action_dim]
-    "action": np.ndarray,    # first action
-    "server_timing": {...},
-}
-```
+- If you enable the 3D teacher, make sure the serve env can import `depth_anything_3`
