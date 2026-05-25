@@ -30,7 +30,7 @@ class MagicBotR0Policy(PreTrainedPolicy):
     _save_prefixes = ("model.mot.", "model.proprio_encoder.")
     _stats_filename = "stats.json"
 
-    def __init__(self, config: MagicBotR0Config):
+    def __init__(self, config: MagicBotR0Config, *, _defer_config_action_stats: bool = False):
         super().__init__(config)
         config.validate_features()
         self.config = config
@@ -43,7 +43,8 @@ class MagicBotR0Policy(PreTrainedPolicy):
         if config.native_checkpoint_path:
             logging.info("Loading MagicBot_R0 native checkpoint from %s", config.native_checkpoint_path)
             self.model.load_checkpoint(config.native_checkpoint_path)
-        self._maybe_load_action_postprocess_from_config()
+        if not _defer_config_action_stats:
+            self._maybe_load_action_postprocess_from_config(strict=True)
         self.reset()
 
     @staticmethod
@@ -214,6 +215,21 @@ class MagicBotR0Policy(PreTrainedPolicy):
         strict: bool = False,
         **kwargs,
     ):
+        init_kwargs = {"_defer_config_action_stats": True}
+        if config is None:
+            config = MagicBotR0Config.from_pretrained(
+                pretrained_name_or_path=pretrained_name_or_path,
+                force_download=force_download,
+                resume_download=resume_download,
+                proxies=proxies,
+                token=token,
+                cache_dir=cache_dir,
+                local_files_only=local_files_only,
+                revision=revision,
+                **kwargs,
+            )
+        else:
+            init_kwargs.update(kwargs)
         policy = super().from_pretrained(
             pretrained_name_or_path=pretrained_name_or_path,
             config=config,
@@ -225,7 +241,7 @@ class MagicBotR0Policy(PreTrainedPolicy):
             local_files_only=local_files_only,
             revision=revision,
             strict=strict,
-            **kwargs,
+            **init_kwargs,
         )
         policy._maybe_load_action_postprocess_from_pretrained(
             pretrained_name_or_path=pretrained_name_or_path,
@@ -237,6 +253,12 @@ class MagicBotR0Policy(PreTrainedPolicy):
             local_files_only=local_files_only,
             revision=revision,
         )
+        if not policy._action_denorm_specs:
+            local_dir = Path(pretrained_name_or_path).expanduser()
+            policy._maybe_load_action_postprocess_from_config(
+                base_dir=local_dir if local_dir.is_dir() else None,
+                strict=False,
+            )
         return policy
 
     @staticmethod
@@ -369,13 +391,63 @@ class MagicBotR0Policy(PreTrainedPolicy):
             return None
         return Path(stats_file)
 
-    def _maybe_load_action_postprocess_from_config(self) -> None:
+    @staticmethod
+    def _candidate_config_stats_paths(stats_path: str | Path, base_dir: str | Path | None = None) -> list[Path]:
+        raw_path = Path(stats_path).expanduser()
+        if raw_path.is_absolute():
+            return [raw_path]
+
+        candidates = [raw_path]
+        if base_dir is not None:
+            base_path = Path(base_dir).expanduser()
+            candidates.append(base_path / raw_path)
+            candidates.extend(parent / raw_path for parent in list(base_path.parents)[:5])
+
+        deduped: list[Path] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            key = str(candidate)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(candidate)
+        return deduped
+
+    def _maybe_load_action_postprocess_from_config(
+        self,
+        *,
+        base_dir: str | Path | None = None,
+        strict: bool = True,
+    ) -> None:
         if self._action_denorm_specs:
             return
         stats_path = getattr(self.config, "action_stats_path", None)
         if stats_path is None:
             return
-        self._load_action_postprocess_from_stats_path(stats_path)
+
+        candidates = self._candidate_config_stats_paths(stats_path, base_dir=base_dir)
+        errors: list[str] = []
+        for candidate in candidates:
+            if not candidate.is_file():
+                continue
+            try:
+                self._load_action_postprocess_from_stats_path(candidate)
+                return
+            except Exception as exc:
+                if strict:
+                    raise
+                errors.append(f"{candidate}: {exc}")
+
+        if errors:
+            message = f"MagicBot_R0 config action_stats_path is not usable. Last error: {errors[-1]}"
+        else:
+            message = (
+                "MagicBot_R0 config action_stats_path was not found. Tried: "
+                + ", ".join(str(candidate) for candidate in candidates)
+            )
+        if strict:
+            raise FileNotFoundError(message)
+        logging.warning("%s; skipping config action stats fallback.", message)
 
     def _maybe_load_action_postprocess_from_pretrained(
         self,
