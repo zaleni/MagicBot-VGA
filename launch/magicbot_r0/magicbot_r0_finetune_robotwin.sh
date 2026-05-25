@@ -50,11 +50,15 @@ MAGICBOT_R0_REDIRECT_COMMON_FILES="${MAGICBOT_R0_REDIRECT_COMMON_FILES:-true}"
 MAGICBOT_R0_ASSET_ROOT="${MAGICBOT_R0_ASSET_ROOT:-${PROJ_ROOT}/checkpoints/magicbot_r0}"
 ACTION_DIT_PRETRAINED_PATH="${ACTION_DIT_PRETRAINED_PATH:-${MAGICBOT_R0_ASSET_ROOT}/ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt}"
 FUTURE_3D_PRETRAINED_PATH="${FUTURE_3D_PRETRAINED_PATH:-${MAGICBOT_R0_ASSET_ROOT}/Future3DExpert_linear_interp_Wan22_alphascale_768hdim.pt}"
-DEFAULT_POLICY_INIT_PATH="/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/MagicBot-VGA/outputs/MagicBot_R0/MagicBot_R0-magicbot_r0-multidata-delta-pretrain-2026_05_07_15_59_20/checkpoints/300000/pretrained_model"
+DEFAULT_POLICY_INIT_PATH="/inspire/qb-ilm/project/embodied-basic-model/zhangjianing-253108140206/outputs/MagicBot_R0/magicbot_r0-robotwin-3d-delta-pretrained300k-finetune-2026_05_19_12_20_23/checkpoints/140000/pretrained_model"
 POLICY_INIT_PATH="${POLICY_INIT_PATH:-${PRETRAINED_PATH:-${PRETRAINED_MODEL_DIR:-${DEFAULT_POLICY_INIT_PATH}}}}"
 SKIP_DIT_LOAD_FROM_PRETRAIN="${SKIP_DIT_LOAD_FROM_PRETRAIN:-true}"
 NATIVE_MAGICBOT_R0_CHECKPOINT_PATH="${NATIVE_MAGICBOT_R0_CHECKPOINT_PATH:-}"
 LOAD_TEXT_ENCODER="${LOAD_TEXT_ENCODER:-false}"
+RESUME="${RESUME:-false}"
+RESUME_CHECKPOINT_DIR="${RESUME_CHECKPOINT_DIR:-}"
+RESUME_CONFIG_PATH="${RESUME_CONFIG_PATH:-}"
+RESUME_OUTPUT_DIR="${RESUME_OUTPUT_DIR:-}"
 
 ROBOTWIN_ROOT="${ROBOTWIN_ROOT:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/RoboTwin-LeRobot-v30}"
 ROBOTWIN_REQUIRE_THREE_CAMERAS="${ROBOTWIN_REQUIRE_THREE_CAMERAS:-true}"
@@ -88,21 +92,22 @@ NORM_DEFAULT_MODE="${NORM_DEFAULT_MODE:-z-score}"
 ENABLE_IMAGE_AUG="${ENABLE_IMAGE_AUG:-false}"
 IMAGE_AUG_PRESET="${IMAGE_AUG_PRESET:-pi05}"
 
-BATCH_SIZE="${BATCH_SIZE:-10}"
+BATCH_SIZE="${BATCH_SIZE:-12}"
 GRAD_ACCUM_STEPS="${GRAD_ACCUM_STEPS:-1}"
 STEPS="${STEPS:-220000}"
 NUM_EPOCHS="${NUM_EPOCHS:-}"
-TRAIN_MAX_STEPS="${TRAIN_MAX_STEPS-220000}"
-SAVE_FREQ="${SAVE_FREQ:-20000}"
+TRAIN_MAX_STEPS="${TRAIN_MAX_STEPS:-220000}"
+SAVE_FREQ="${SAVE_FREQ:-10000}"
 LOG_FREQ="${LOG_FREQ:-50}"
-NUM_WORKERS="${NUM_WORKERS:-16}"
+NUM_WORKERS="${NUM_WORKERS:-12}"
 
 LR="${LR:-5.0e-5}"
 WEIGHT_DECAY="${WEIGHT_DECAY:-1.0e-2}"
-WARMUP_STEPS="${WARMUP_STEPS:-2000}"
+WARMUP_STEPS="${WARMUP_STEPS:-1000}"
 DECAY_LR="${DECAY_LR:-1.0e-6}"
-LAMBDA_VIDEO="${LAMBDA_VIDEO:-1.0}"
+LAMBDA_VIDEO="${LAMBDA_VIDEO:-0.1}"
 LAMBDA_ACTION="${LAMBDA_ACTION:-1.0}"
+MASK_ACTION_DIM_PADDING_LOSS="${MASK_ACTION_DIM_PADDING_LOSS:-true}"
 LAMBDA_3D="${LAMBDA_3D:-0.1}"
 if [[ -z "${LEROBOT_DDP_FIND_UNUSED_PARAMETERS:-}" ]]; then
   if python -c 'import sys; raise SystemExit(0 if float(sys.argv[1]) > 0 else 1)' "${LAMBDA_3D}"; then
@@ -262,18 +267,72 @@ if [[ "${SKIP_DIT_LOAD_FROM_PRETRAIN}" != "true" && ! -f "${FUTURE_3D_PRETRAINED
 fi
 
 if [[ -n "${POLICY_INIT_PATH}" ]]; then
-  if [[ ! -d "${POLICY_INIT_PATH}" ]]; then
-    echo "POLICY_INIT_PATH does not exist or is not a directory: ${POLICY_INIT_PATH}"
-    echo "Set POLICY_INIT_PATH/PRETRAINED_PATH/PRETRAINED_MODEL_DIR to a MagicBot_R0 pretrained_model directory."
+  if [[ "${RESUME}" == "true" && -n "${RESUME_CHECKPOINT_DIR}" ]]; then
+    :
+  else
+    if [[ ! -d "${POLICY_INIT_PATH}" ]]; then
+      echo "POLICY_INIT_PATH does not exist or is not a directory: ${POLICY_INIT_PATH}"
+      echo "Set POLICY_INIT_PATH/PRETRAINED_PATH/PRETRAINED_MODEL_DIR to a MagicBot_R0 pretrained_model directory."
+      exit 1
+    fi
+    if [[ ! -f "${POLICY_INIT_PATH}/config.json" ]]; then
+      echo "Missing policy config: ${POLICY_INIT_PATH}/config.json"
+      exit 1
+    fi
+    if [[ ! -f "${POLICY_INIT_PATH}/model.safetensors" ]]; then
+      echo "Missing policy weights: ${POLICY_INIT_PATH}/model.safetensors"
+      exit 1
+    fi
+  fi
+fi
+
+RESUME_CONFIG_JOB_NAME="${RESUME_CONFIG_JOB_NAME:-}"
+RESUME_CONFIG_OUTPUT_DIR="${RESUME_CONFIG_OUTPUT_DIR:-}"
+if [[ "${RESUME}" == "true" ]]; then
+  if [[ -z "${RESUME_CHECKPOINT_DIR}" ]]; then
+    if [[ -z "${POLICY_INIT_PATH}" ]]; then
+      echo "RESUME=true requires RESUME_CHECKPOINT_DIR or POLICY_INIT_PATH."
+      exit 1
+    fi
+    if [[ "$(basename "${POLICY_INIT_PATH%/}")" != "pretrained_model" ]]; then
+      echo "RESUME=true expects POLICY_INIT_PATH to point to a pretrained_model directory:"
+      echo "  ${POLICY_INIT_PATH}"
+      exit 1
+    fi
+    RESUME_CHECKPOINT_DIR="$(dirname "${POLICY_INIT_PATH%/}")"
+  fi
+
+  if [[ -z "${RESUME_CONFIG_PATH}" ]]; then
+    RESUME_CONFIG_PATH="${RESUME_CHECKPOINT_DIR%/}/pretrained_model/train_config.json"
+  fi
+
+  if [[ ! -f "${RESUME_CONFIG_PATH}" ]]; then
+    echo "Resume config not found: ${RESUME_CONFIG_PATH}"
     exit 1
   fi
-  if [[ ! -f "${POLICY_INIT_PATH}/config.json" ]]; then
-    echo "Missing policy config: ${POLICY_INIT_PATH}/config.json"
+
+  if [[ ! -d "${RESUME_CHECKPOINT_DIR%/}/training_state" ]]; then
+    echo "Missing training_state under checkpoint: ${RESUME_CHECKPOINT_DIR}"
+    echo "For true resume, use the whole checkpoints/<step> directory, not only pretrained_model."
     exit 1
   fi
-  if [[ ! -f "${POLICY_INIT_PATH}/model.safetensors" ]]; then
-    echo "Missing policy weights: ${POLICY_INIT_PATH}/model.safetensors"
-    exit 1
+
+  if [[ -z "${RESUME_OUTPUT_DIR}" ]]; then
+    RESUME_OUTPUT_DIR="$(dirname "$(dirname "${RESUME_CHECKPOINT_DIR%/}")")"
+  fi
+
+  RESUME_CONFIG_JOB_NAME="$(
+    python -c 'import json, sys; cfg=json.load(open(sys.argv[1], encoding="utf-8")); print(cfg.get("job_name") or "")' \
+      "${RESUME_CONFIG_PATH}"
+  )"
+  RESUME_CONFIG_OUTPUT_DIR="$(
+    python -c 'import json, sys; cfg=json.load(open(sys.argv[1], encoding="utf-8")); print(cfg.get("output_dir") or "")' \
+      "${RESUME_CONFIG_PATH}"
+  )"
+
+  if [[ -n "${RESUME_CONFIG_OUTPUT_DIR}" && "${RESUME_CONFIG_OUTPUT_DIR}" != "${RESUME_OUTPUT_DIR}" ]]; then
+    echo "[warn] RESUME_OUTPUT_DIR=${RESUME_OUTPUT_DIR}"
+    echo "[warn] config output_dir=${RESUME_CONFIG_OUTPUT_DIR}"
   fi
 fi
 
@@ -322,13 +381,25 @@ printf '  %s\n' "${DATASET_REPO_IDS[@]}"
 
 BASE_OUTPUT_DIR="${BASE_OUTPUT_DIR:-/inspire/qb-ilm/project/embodied-basic-model/zhangjianing-253108140206/outputs/${POLICY}}"
 BOOTSTRAP_TAG="${BOOTSTRAP_TAG:-pretrained300k}"
-JOB_NAME="${JOB_NAME:-${MAGICBOT_R0_VARIANT}-robotwin-3d-${ACTION_TYPE}-${BOOTSTRAP_TAG}-finetune-$(date +'%Y_%m_%d_%H_%M_%S')}"
-OUTPUT_DIR="${BASE_OUTPUT_DIR}/${JOB_NAME}"
-REPO_ID_FILE_DIR="${BASE_OUTPUT_DIR}/_repo_id_files"
+if [[ "${RESUME}" == "true" ]]; then
+  JOB_NAME="${JOB_NAME:-${RESUME_CONFIG_JOB_NAME:-${MAGICBOT_R0_VARIANT}-robotwin-3d-${ACTION_TYPE}-${BOOTSTRAP_TAG}-resume}}"
+  OUTPUT_DIR="${RESUME_OUTPUT_DIR}"
+  REPO_ID_FILE_DIR="${OUTPUT_DIR}/_repo_id_files"
+else
+  JOB_NAME="${JOB_NAME:-${MAGICBOT_R0_VARIANT}-robotwin-3d-${ACTION_TYPE}-${BOOTSTRAP_TAG}-finetune-$(date +'%Y_%m_%d_%H_%M_%S')}"
+  OUTPUT_DIR="${BASE_OUTPUT_DIR}/${JOB_NAME}"
+  REPO_ID_FILE_DIR="${BASE_OUTPUT_DIR}/_repo_id_files"
+fi
 mkdir -p "${REPO_ID_FILE_DIR}"
 REPO_ID_FILE="${REPO_ID_FILE_DIR}/${JOB_NAME}.txt"
 printf '%s\n' "${DATASET_REPO_IDS[@]}" > "${REPO_ID_FILE}"
 
+echo "RESUME=${RESUME}"
+if [[ "${RESUME}" == "true" ]]; then
+  echo "RESUME_CHECKPOINT_DIR=${RESUME_CHECKPOINT_DIR}"
+  echo "RESUME_CONFIG_PATH=${RESUME_CONFIG_PATH}"
+  echo "RESUME_OUTPUT_DIR=${RESUME_OUTPUT_DIR}"
+fi
 echo "MAGICBOT_R0_VARIANT=${MAGICBOT_R0_VARIANT}"
 echo "ACTION_TYPE=${ACTION_TYPE}"
 echo "ACTION_DIM=${ACTION_DIM}, PROPRIO_DIM=${PROPRIO_DIM}"
@@ -337,6 +408,7 @@ echo "USE_EXTERNAL_STATS=${USE_EXTERNAL_STATS}"
 echo "NORMALIZATION_STATS_PATH=${NORMALIZATION_STATS_PATH:-<auto-compute>}"
 echo "ACTION_STATS_PATH=${ACTION_STATS_PATH:-<none>}"
 echo "ENABLE_IMAGE_AUG=${ENABLE_IMAGE_AUG}, IMAGE_AUG_PRESET=${IMAGE_AUG_PRESET}"
+echo "MASK_ACTION_DIM_PADDING_LOSS=${MASK_ACTION_DIM_PADDING_LOSS}"
 echo "POLICY_INIT_PATH=${POLICY_INIT_PATH}"
 echo "SKIP_DIT_LOAD_FROM_PRETRAIN=${SKIP_DIT_LOAD_FROM_PRETRAIN}"
 echo "ACTION_DIT_PRETRAINED_PATH=${ACTION_DIT_PRETRAINED_PATH}"
@@ -385,6 +457,7 @@ ARGS=(
     --policy.num_inference_steps="${NUM_INFERENCE_STEPS}"
     --policy.lambda_video="${LAMBDA_VIDEO}"
     --policy.lambda_action="${LAMBDA_ACTION}"
+    --policy.mask_action_dim_padding_loss="${MASK_ACTION_DIM_PADDING_LOSS}"
     --policy.lambda_3d="${LAMBDA_3D}"
     --policy.da3_num_views="${DA3_NUM_VIEWS}"
     --policy.future_3d_tokens_per_view="${FUTURE_3D_TOKENS_PER_VIEW}"
@@ -444,6 +517,10 @@ ARGS=(
     --wandb.project=MagicBot_R0
     --wandb.mode=${WANDB_MODE}
 )
+
+if [[ "${RESUME}" == "true" ]]; then
+    ARGS+=(--resume=true --config_path="${RESUME_CONFIG_PATH}")
+fi
 
 if [[ -n "${TEXT_EMBED_CACHE_DIR}" ]]; then
     ARGS+=(--dataset.text_embedding_cache_dir="${TEXT_EMBED_CACHE_DIR}")
