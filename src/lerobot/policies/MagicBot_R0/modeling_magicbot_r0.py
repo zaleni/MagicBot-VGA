@@ -152,6 +152,7 @@ class MagicBotR0Policy(PreTrainedPolicy):
             )
 
         missing_keys, unexpected_keys = model.load_state_dict(filtered_state_dict, strict=strict)
+        missing_keys = [key for key in missing_keys if key not in skipped_shape_keys]
         missing_keys, unexpected_keys, expected_missing_keys = model.classify_model_loading_keys(
             list(missing_keys),
             list(unexpected_keys),
@@ -559,6 +560,7 @@ class MagicBotR0Policy(PreTrainedPolicy):
             if (
                 "Cannot adapt framework stats" not in message
                 and "MagicBot_R0 stats payload must contain an `action` section" not in message
+                and "MagicBot_R0 action stats dim mismatch" not in message
             ):
                 raise
             logging.warning(
