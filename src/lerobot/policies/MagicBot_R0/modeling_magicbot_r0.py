@@ -8,10 +8,12 @@ from typing import Any
 import torch
 from huggingface_hub import hf_hub_download
 from huggingface_hub.errors import HfHubHTTPError
+from safetensors.torch import load_file as load_safetensor_file
 from torch import Tensor
 
 from lerobot.datasets.utils import serialize_dict, write_json
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.utils import log_model_loading_keys
 from lerobot.utils.utils import format_big_number
 
 from .configuration_magicbot_r0 import MagicBotR0Config
@@ -29,6 +31,12 @@ class MagicBotR0Policy(PreTrainedPolicy):
     name = "MagicBot_R0"
     _save_prefixes = ("model.mot.", "model.proprio_encoder.")
     _stats_filename = "stats.json"
+    _allowed_shape_mismatch_keys = {
+        "model.mot.mixtures.action.action_encoder.weight",
+        "model.mot.mixtures.action.head.weight",
+        "model.mot.mixtures.action.head.bias",
+        "model.proprio_encoder.weight",
+    }
 
     def __init__(self, config: MagicBotR0Config, *, _defer_config_action_stats: bool = False):
         super().__init__(config)
@@ -99,6 +107,69 @@ class MagicBotR0Policy(PreTrainedPolicy):
             for key, value in state_dict.items()
             if key.startswith(self._save_prefixes)
         }
+
+    @classmethod
+    def _load_as_safetensor(
+        cls,
+        model: "MagicBotR0Policy",
+        model_file: str,
+        map_location: str,
+        strict: bool,
+    ) -> "MagicBotR0Policy":
+        state_dict = load_safetensor_file(model_file, device="cpu")
+        model_state = model.state_dict()
+        filtered_state_dict: dict[str, Tensor] = {}
+        skipped_shape_keys: list[str] = []
+        unexpected_shape_keys: list[str] = []
+
+        for key, value in state_dict.items():
+            target = model_state.get(key)
+            if target is not None and tuple(value.shape) != tuple(target.shape):
+                if key in cls._allowed_shape_mismatch_keys:
+                    skipped_shape_keys.append(key)
+                    continue
+                unexpected_shape_keys.append(key)
+                continue
+            filtered_state_dict[key] = value
+
+        if unexpected_shape_keys:
+            preview = ", ".join(unexpected_shape_keys[:8])
+            remaining = len(unexpected_shape_keys) - 8
+            suffix = f", ... (+{remaining} more)" if remaining > 0 else ""
+            raise RuntimeError(
+                "Unexpected shape mismatch while loading MagicBot_R0 pretrained weights: "
+                f"{preview}{suffix}"
+            )
+
+        if skipped_shape_keys:
+            preview = ", ".join(skipped_shape_keys[:8])
+            remaining = len(skipped_shape_keys) - 8
+            suffix = f", ... (+{remaining} more)" if remaining > 0 else ""
+            logging.info(
+                "Skipping MagicBot_R0 shape-mismatched pretrained key(s): %s%s",
+                preview,
+                suffix,
+            )
+
+        missing_keys, unexpected_keys = model.load_state_dict(filtered_state_dict, strict=strict)
+        missing_keys, unexpected_keys, expected_missing_keys = model.classify_model_loading_keys(
+            list(missing_keys),
+            list(unexpected_keys),
+        )
+        if expected_missing_keys:
+            preview = expected_missing_keys[:8]
+            preview_str = ", ".join(preview)
+            remaining = len(expected_missing_keys) - len(preview)
+            suffix = f", ... (+{remaining} more)" if remaining > 0 else ""
+            logging.info(
+                "Expected missing key(s) when loading model (new modules initialized separately): "
+                f"{preview_str}{suffix}"
+            )
+        log_model_loading_keys(missing_keys, unexpected_keys)
+
+        if map_location != "cpu":
+            model.to(map_location)
+        return model
 
     def classify_model_loading_keys(
         self, missing_keys: list[str], unexpected_keys: list[str]
