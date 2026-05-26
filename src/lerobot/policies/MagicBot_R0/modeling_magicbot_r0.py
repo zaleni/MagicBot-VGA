@@ -315,22 +315,30 @@ class MagicBotR0Policy(PreTrainedPolicy):
             strict=strict,
             **init_kwargs,
         )
-        policy._maybe_load_action_postprocess_from_pretrained(
-            pretrained_name_or_path=pretrained_name_or_path,
-            force_download=force_download,
-            resume_download=resume_download,
-            proxies=proxies,
-            token=token,
-            cache_dir=cache_dir,
-            local_files_only=local_files_only,
-            revision=revision,
-        )
-        if not policy._action_denorm_specs:
-            local_dir = Path(pretrained_name_or_path).expanduser()
+        local_dir = Path(pretrained_name_or_path).expanduser()
+        # Fine-tuning should honor task-specific action stats from config; inference clears this field
+        # before calling from_pretrained so saved checkpoint stats still take precedence there.
+        if getattr(config, "action_stats_path", None):
             policy._maybe_load_action_postprocess_from_config(
                 base_dir=local_dir if local_dir.is_dir() else None,
-                strict=False,
+                strict=True,
             )
+        else:
+            policy._maybe_load_action_postprocess_from_pretrained(
+                pretrained_name_or_path=pretrained_name_or_path,
+                force_download=force_download,
+                resume_download=resume_download,
+                proxies=proxies,
+                token=token,
+                cache_dir=cache_dir,
+                local_files_only=local_files_only,
+                revision=revision,
+            )
+            if not policy._action_denorm_specs:
+                policy._maybe_load_action_postprocess_from_config(
+                    base_dir=local_dir if local_dir.is_dir() else None,
+                    strict=False,
+                )
         return policy
 
     @staticmethod

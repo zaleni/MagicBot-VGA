@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import copy
 import sys
 import os
 import json
@@ -405,21 +406,19 @@ def _iter_magicbot_r0_stats_candidates(
 
     dataset_config = None if train_config is None else getattr(train_config, "dataset", None)
     external_stats_root = None if dataset_config is None else getattr(dataset_config, "external_stats_root", None)
-    if external_stats_root is None or not str(external_stats_root).strip():
-        return
+    if external_stats_root is not None and str(external_stats_root).strip():
+        action_modes: list[str] = []
+        for action_mode in (args.action_mode, getattr(dataset_config, "action_mode", None)):
+            if action_mode is not None and str(action_mode) not in action_modes:
+                action_modes.append(str(action_mode))
 
-    action_modes: list[str] = []
-    for action_mode in (args.action_mode, getattr(dataset_config, "action_mode", None)):
-        if action_mode is not None and str(action_mode) not in action_modes:
-            action_modes.append(str(action_mode))
-
-    candidate_files: list[Path] = []
-    for stats_root in _candidate_relative_roots(external_stats_root, ckpt_dir):
-        for action_mode in action_modes:
-            candidate_files.append(stats_root / args.stats_key / action_mode / "stats.json")
-    for candidate_file in _dedupe_paths(candidate_files):
-        if candidate_file.is_file():
-            yield candidate_file, "external per-embodiment stats", False
+        candidate_files: list[Path] = []
+        for stats_root in _candidate_relative_roots(external_stats_root, ckpt_dir):
+            for action_mode in action_modes:
+                candidate_files.append(stats_root / args.stats_key / action_mode / "stats.json")
+        for candidate_file in _dedupe_paths(candidate_files):
+            if candidate_file.is_file():
+                yield candidate_file, "external per-embodiment stats", False
 
 
 def load_magicbot_r0_runtime_stats(
@@ -675,7 +674,12 @@ def build_policy_and_transforms(args: "InferenceArgs", dtype: torch.dtype):
 
     policy_cls, processor_transform_cls = resolve_policy_components(config)
     train_config = load_train_config_or_none(ckpt_dir) if config.type == "MagicBot_R0" else None
-    policy = policy_cls.from_pretrained(config=config, pretrained_name_or_path=ckpt_dir)
+    policy_config = config
+    if config.type == "MagicBot_R0" and hasattr(config, "action_stats_path"):
+        # Keep checkpoint stats portable across machines by not letting the saved config override them.
+        policy_config = copy.deepcopy(config)
+        policy_config.action_stats_path = None
+    policy = policy_cls.from_pretrained(config=policy_config, pretrained_name_or_path=ckpt_dir)
     if config.type == "cubev2" and hasattr(policy, "model"):
         setattr(
             policy.model,
