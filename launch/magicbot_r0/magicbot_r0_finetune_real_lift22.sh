@@ -63,6 +63,7 @@ DATASET_REPO_ID="${DATASET_REPO_ID:-${DATASET_DIR}}"
 VALIDATE_DATASETS="${VALIDATE_DATASETS:-true}"
 VIDEO_BACKEND="${VIDEO_BACKEND:-}"
 USE_DIST_LOADING="${USE_DIST_LOADING:-false}"
+CACHE_IN_MEMORY="${CACHE_IN_MEMORY:-true}"
 
 ACTION_TYPE="${ACTION_TYPE:-abs}"
 ACTION_DIM="${ACTION_DIM:-14}"
@@ -100,7 +101,15 @@ NUM_EPOCHS="${NUM_EPOCHS:-}"
 TRAIN_MAX_STEPS="${TRAIN_MAX_STEPS:-${STEPS}}"
 SAVE_FREQ="${SAVE_FREQ:-10000}"
 LOG_FREQ="${LOG_FREQ:-100}"
-NUM_WORKERS="${NUM_WORKERS:-10}"
+EVAL_FREQ="${EVAL_FREQ:-5000}"
+EVAL_MAX_BATCHES="${EVAL_MAX_BATCHES:-2}"
+if [[ -z "${NUM_WORKERS+x}" ]]; then
+  if [[ "${CACHE_IN_MEMORY}" == "true" ]]; then
+    NUM_WORKERS=0
+  else
+    NUM_WORKERS=10
+  fi
+fi
 
 LR="${LR:-7.5e-5}"
 WEIGHT_DECAY="${WEIGHT_DECAY:-1.0e-2}"
@@ -154,6 +163,15 @@ case "${USE_EXTERNAL_STATS}" in
     ;;
   *)
     echo "Unsupported USE_EXTERNAL_STATS=${USE_EXTERNAL_STATS}. Expected true or false."
+    exit 1
+    ;;
+esac
+
+case "${CACHE_IN_MEMORY}" in
+  true|false)
+    ;;
+  *)
+    echo "Unsupported CACHE_IN_MEMORY=${CACHE_IN_MEMORY}. Expected true or false."
     exit 1
     ;;
 esac
@@ -300,6 +318,8 @@ echo "NORMALIZATION_STATS_PATH=${NORMALIZATION_STATS_PATH:-<metadata-or-auto>}"
 echo "TEXT_EMBED_CACHE_DIR=${TEXT_EMBED_CACHE_DIR:-<text-encoder-runtime>}"
 echo "POLICY_INIT_PATH=${POLICY_INIT_PATH:-<none>}"
 echo "SKIP_DIT_LOAD_FROM_PRETRAIN=${SKIP_DIT_LOAD_FROM_PRETRAIN}"
+echo "CACHE_IN_MEMORY=${CACHE_IN_MEMORY}, USE_DIST_LOADING=${USE_DIST_LOADING}, NUM_WORKERS=${NUM_WORKERS}"
+echo "EVAL_FREQ=${EVAL_FREQ}, EVAL_MAX_BATCHES=${EVAL_MAX_BATCHES}"
 echo "VIDEO_SIZE=[${VIDEO_HEIGHT},${VIDEO_WIDTH}], CONCAT_MULTI_CAMERA=${CONCAT_MULTI_CAMERA}"
 echo "ENABLE_IMAGE_AUG=${ENABLE_IMAGE_AUG}, IMAGE_AUG_PRESET=${IMAGE_AUG_PRESET}"
 echo "MASK_ACTION_DIM_PADDING_LOSS=${MASK_ACTION_DIM_PADDING_LOSS}"
@@ -388,6 +408,7 @@ ARGS=(
     --dataset.processor_proprio_output_dim="${PROPRIO_DIM}"
     --dataset.processor_delta_action_dim_mask="${PROCESSOR_DELTA_ACTION_DIM_MASK}"
     --dataset.future_3d_target_index="${FUTURE_3D_TARGET_INDEX}"
+    --dataset.cache_in_memory="${CACHE_IN_MEMORY}"
 
     --seed=42
     --batch_size="${BATCH_SIZE}"
@@ -395,6 +416,8 @@ ARGS=(
     --steps="${STEPS}"
     --save_freq="${SAVE_FREQ}"
     --log_freq="${LOG_FREQ}"
+    --eval_freq="${EVAL_FREQ}"
+    --eval_max_batches="${EVAL_MAX_BATCHES}"
 
     --wandb.enable=true
     --wandb.project=MagicBot_R0_RealLift2

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 import traceback
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -1227,6 +1228,7 @@ class MagicBotR0RobotVideoDatasetV3(Dataset):
         camera_key: str | None = None,
         processor: BaseProcessor | None = None,
         text_embedding_cache_dir: str | None = None,
+        cache_in_memory: bool = False,
         context_len: int = 128,
         normalization_stats_path: str | None = None,
         use_lerobot_meta_stats: bool = False,
@@ -1287,6 +1289,7 @@ class MagicBotR0RobotVideoDatasetV3(Dataset):
         self.video_size = tuple(int(value) for value in video_size)
         self.standardize_video_size_by_cameras = standardize_video_size_by_cameras
         self.text_embedding_cache_dir = text_embedding_cache_dir
+        self._memory_cache: list[dict[str, Any]] | None = None
         self.context_len = context_len
         self.skip_padding_as_possible = skip_padding_as_possible
         self.max_padding_retry = max_padding_retry
@@ -1331,6 +1334,13 @@ class MagicBotR0RobotVideoDatasetV3(Dataset):
             processor.set_normalizer_from_stats(dataset_stats)
             self.dataset_stats = _to_plain_dict(dataset_stats)
             self.lerobot_dataset.set_processor(processor)
+
+        if cache_in_memory:
+            if image_transforms is not None:
+                logger.warning(
+                    "MagicBot_R0 cache_in_memory=True freezes image augmentation at preload time."
+                )
+            self.preload_in_memory()
 
     @property
     def num_episodes(self) -> int:
@@ -1564,7 +1574,74 @@ class MagicBotR0RobotVideoDatasetV3(Dataset):
             )
         return context, context_mask
 
-    def __getitem__(self, idx: int):
+    @staticmethod
+    def _prepare_value_for_memory_cache(value: Any) -> Any:
+        if isinstance(value, torch.Tensor):
+            tensor = value.detach().cpu()
+            return tensor if tensor.is_contiguous() else tensor.contiguous()
+        if isinstance(value, dict):
+            return {
+                key: MagicBotR0RobotVideoDatasetV3._prepare_value_for_memory_cache(child)
+                for key, child in value.items()
+            }
+        if isinstance(value, list):
+            return [
+                MagicBotR0RobotVideoDatasetV3._prepare_value_for_memory_cache(child)
+                for child in value
+            ]
+        if isinstance(value, tuple):
+            return tuple(
+                MagicBotR0RobotVideoDatasetV3._prepare_value_for_memory_cache(child)
+                for child in value
+            )
+        return value
+
+    @staticmethod
+    def _cached_value_nbytes(value: Any) -> int:
+        if isinstance(value, torch.Tensor):
+            return int(value.numel() * value.element_size())
+        if isinstance(value, dict):
+            return sum(MagicBotR0RobotVideoDatasetV3._cached_value_nbytes(child) for child in value.values())
+        if isinstance(value, (list, tuple)):
+            return sum(MagicBotR0RobotVideoDatasetV3._cached_value_nbytes(child) for child in value)
+        if isinstance(value, str):
+            return len(value.encode("utf-8"))
+        return 0
+
+    def preload_in_memory(self) -> None:
+        if self._memory_cache is not None:
+            return
+
+        num_samples = len(self)
+        progress_interval = _env_int("LEROBOT_MAGICBOT_R0_CACHE_LOG_INTERVAL", 100)
+        start_time = time.perf_counter()
+        cached_samples: list[dict[str, Any]] = []
+        cached_bytes = 0
+
+        logger.info("MagicBot_R0 cache_in_memory=True: preloading %d samples into CPU memory.", num_samples)
+        for idx in range(num_samples):
+            sample = self._get(idx)
+            sample = self._prepare_value_for_memory_cache(sample)
+            cached_samples.append(sample)
+            cached_bytes += self._cached_value_nbytes(sample)
+            if progress_interval > 0 and ((idx + 1) % progress_interval == 0 or idx + 1 == num_samples):
+                logger.info(
+                    "MagicBot_R0 memory cache progress: %d/%d samples, %.1f MiB cached.",
+                    idx + 1,
+                    num_samples,
+                    cached_bytes / (1024**2),
+                )
+
+        self._memory_cache = cached_samples
+        elapsed = time.perf_counter() - start_time
+        logger.info(
+            "MagicBot_R0 memory cache ready: %d samples, %.1f MiB tensors, %.1f s.",
+            len(cached_samples),
+            cached_bytes / (1024**2),
+            elapsed,
+        )
+
+    def _load_uncached(self, idx: int):
         try:
             data = self._get(idx)
         except Exception as exc:
@@ -1573,6 +1650,11 @@ class MagicBotR0RobotVideoDatasetV3(Dataset):
             random_idx = np.random.randint(len(self))
             data = self._get(random_idx)
         return data
+
+    def __getitem__(self, idx: int):
+        if self._memory_cache is not None:
+            return self._memory_cache[idx]
+        return self._load_uncached(idx)
 
 
 def build_magicbot_r0_processor(
@@ -1656,6 +1738,7 @@ def build_magicbot_r0_dataset(
         camera_key=cfg.camera_key,
         processor=processor,
         text_embedding_cache_dir=cfg.text_embedding_cache_dir,
+        cache_in_memory=cfg.cache_in_memory,
         context_len=cfg.context_len,
         normalization_stats_path=normalization_stats_path,
         use_lerobot_meta_stats=use_lerobot_meta_stats,

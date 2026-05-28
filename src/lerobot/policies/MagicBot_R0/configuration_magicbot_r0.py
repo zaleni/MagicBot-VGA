@@ -159,6 +159,7 @@ class MagicBotR0DatasetConfig(DatasetConfig):
     pretrain_multi_embodiment: bool = False
 
     text_embedding_cache_dir: str | None = None
+    cache_in_memory: bool = False
     context_len: int = 128
     normalization_stats_path: str | None = None
     dataset_sampling_weights: list[float] = field(default_factory=list)
