@@ -59,11 +59,14 @@ LOAD_TEXT_ENCODER="${LOAD_TEXT_ENCODER:-false}"
 
 DATASET_DIR="${DATASET_DIR:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/zhenji/lerobot_v30/plasticbottle_v30}"
 DATASET_NAME="${DATASET_NAME:-$(basename "${DATASET_DIR}")}"
-DATASET_REPO_ID="${DATASET_REPO_ID:-${DATASET_DIR}}"
+DATASET_REPO_ID="${DATASET_REPO_ID:-}"
 VALIDATE_DATASETS="${VALIDATE_DATASETS:-true}"
 VIDEO_BACKEND="${VIDEO_BACKEND:-}"
 USE_DIST_LOADING="${USE_DIST_LOADING:-false}"
-CACHE_IN_MEMORY="${CACHE_IN_MEMORY:-true}"
+USE_RAMDISK_DATASET="${USE_RAMDISK_DATASET:-true}"
+RAMDISK_ROOT="${RAMDISK_ROOT:-/dev/shm/${USER:-$(id -un)}/magicbot_r0_datasets}"
+RAMDISK_REQUIRED_PERCENT="${RAMDISK_REQUIRED_PERCENT:-120}"
+CACHE_IN_MEMORY="${CACHE_IN_MEMORY:-false}"
 
 ACTION_TYPE="${ACTION_TYPE:-abs}"
 ACTION_DIM="${ACTION_DIM:-14}"
@@ -176,6 +179,15 @@ case "${CACHE_IN_MEMORY}" in
     ;;
 esac
 
+case "${USE_RAMDISK_DATASET}" in
+  true|false)
+    ;;
+  *)
+    echo "Unsupported USE_RAMDISK_DATASET=${USE_RAMDISK_DATASET}. Expected true or false."
+    exit 1
+    ;;
+esac
+
 case "${SKIP_DIT_LOAD_FROM_PRETRAIN}" in
   true|false)
     ;;
@@ -217,6 +229,45 @@ fi
 if [[ ! -f "${DATASET_DIR}/meta/info.json" ]]; then
   echo "meta/info.json not found under DATASET_DIR: ${DATASET_DIR}"
   exit 1
+fi
+
+SOURCE_DATASET_DIR="${DATASET_DIR}"
+SOURCE_DATASET_REPO_ID="${DATASET_REPO_ID}"
+if [[ "${USE_RAMDISK_DATASET}" == "true" ]]; then
+  RAMDISK_DATASET_DIR="${RAMDISK_DATASET_DIR:-${RAMDISK_ROOT}/${DATASET_NAME}}"
+  if [[ "${DATASET_DIR}" != "${RAMDISK_DATASET_DIR}" ]]; then
+    mkdir -p "${RAMDISK_ROOT}"
+    if [[ ! -w "${RAMDISK_ROOT}" ]]; then
+      echo "RAMDISK_ROOT is not writable: ${RAMDISK_ROOT}"
+      echo "If running in Docker, use --shm-size or set RAMDISK_ROOT to a writable tmpfs mount."
+      exit 1
+    fi
+    source_kb="$(du -sk "${SOURCE_DATASET_DIR}" | awk '{print $1}')"
+    existing_kb=0
+    if [[ -d "${RAMDISK_DATASET_DIR}" ]]; then
+      existing_kb="$(du -sk "${RAMDISK_DATASET_DIR}" | awk '{print $1}')"
+    fi
+    available_kb="$(df -Pk "${RAMDISK_ROOT}" | awk 'NR==2 {print $4}')"
+    effective_available_kb=$((available_kb + existing_kb))
+    required_kb=$(((source_kb * RAMDISK_REQUIRED_PERCENT + 99) / 100))
+    echo "RAM disk check: root=${RAMDISK_ROOT}, dataset=${source_kb} KiB, available=${available_kb} KiB, existing_target=${existing_kb} KiB, required=${required_kb} KiB"
+    if (( effective_available_kb < required_kb )); then
+      echo "Not enough RAM disk space for dataset copy."
+      echo "In Docker, start with e.g. --shm-size=64g or --ipc=host, or set USE_RAMDISK_DATASET=false/RAMDISK_ROOT=<large tmpfs>."
+      exit 1
+    fi
+    echo "Copying dataset to RAM disk: ${SOURCE_DATASET_DIR} -> ${RAMDISK_DATASET_DIR}"
+    mkdir -p "${RAMDISK_DATASET_DIR}"
+    if command -v rsync >/dev/null 2>&1; then
+      rsync -a --delete "${SOURCE_DATASET_DIR}/" "${RAMDISK_DATASET_DIR}/"
+    else
+      cp -a "${SOURCE_DATASET_DIR}/." "${RAMDISK_DATASET_DIR}/"
+    fi
+    DATASET_DIR="${RAMDISK_DATASET_DIR}"
+  fi
+fi
+if [[ -z "${SOURCE_DATASET_REPO_ID}" || "${SOURCE_DATASET_REPO_ID}" == "${SOURCE_DATASET_DIR}" ]]; then
+  DATASET_REPO_ID="${DATASET_DIR}"
 fi
 
 robot_type="$(
@@ -307,6 +358,9 @@ fi
 
 echo "MAGICBOT_R0_VARIANT=${MAGICBOT_R0_VARIANT}"
 echo "DATASET_DIR=${DATASET_DIR}"
+echo "SOURCE_DATASET_DIR=${SOURCE_DATASET_DIR}"
+echo "DATASET_REPO_ID=${DATASET_REPO_ID}"
+echo "USE_RAMDISK_DATASET=${USE_RAMDISK_DATASET}"
 echo "DATASET_NAME=${DATASET_NAME}"
 echo "robot_type=${robot_type}"
 echo "ACTION_TYPE=${ACTION_TYPE}"

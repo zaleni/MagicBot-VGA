@@ -1289,6 +1289,7 @@ class MagicBotR0RobotVideoDatasetV3(Dataset):
         self.video_size = tuple(int(value) for value in video_size)
         self.standardize_video_size_by_cameras = standardize_video_size_by_cameras
         self.text_embedding_cache_dir = text_embedding_cache_dir
+        self._cached_text_contexts: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
         self._memory_cache: list[dict[str, Any]] | None = None
         self.context_len = context_len
         self.skip_padding_as_possible = skip_padding_as_possible
@@ -1541,7 +1542,6 @@ class MagicBotR0RobotVideoDatasetV3(Dataset):
 
         if self.text_embedding_cache_dir is not None:
             context, context_mask = self._get_cached_text_context(instruction)
-            context[~context_mask] = 0.0
             data["context"] = context
             data["context_mask"] = context_mask
         return data
@@ -1549,6 +1549,8 @@ class MagicBotR0RobotVideoDatasetV3(Dataset):
     def _get_cached_text_context(self, prompt: str):
         if self.text_embedding_cache_dir is None:
             raise ValueError("text_embedding_cache_dir is not set.")
+        if prompt in self._cached_text_contexts:
+            return self._cached_text_contexts[prompt]
         os.makedirs(self.text_embedding_cache_dir, exist_ok=True)
         cache_path = build_text_embedding_cache_path(
             self.text_embedding_cache_dir,
@@ -1572,6 +1574,14 @@ class MagicBotR0RobotVideoDatasetV3(Dataset):
             raise ValueError(
                 f"Cached context len mismatch: expected {self.context_len}, got {context.shape[0]} and {context_mask.shape[0]} in {cache_path}"
             )
+        context = context.detach().cpu()
+        context_mask = context_mask.detach().cpu()
+        context[~context_mask] = 0.0
+        if not context.is_contiguous():
+            context = context.contiguous()
+        if not context_mask.is_contiguous():
+            context_mask = context_mask.contiguous()
+        self._cached_text_contexts[prompt] = (context, context_mask)
         return context, context_mask
 
     @staticmethod
