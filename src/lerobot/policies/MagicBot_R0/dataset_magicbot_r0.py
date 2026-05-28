@@ -146,7 +146,7 @@ def _normalize_with_stats(x: torch.Tensor, stats: dict[str, Any], mode: str) -> 
 
     y = (x - low) / (high - low + eps)
     y = y * 2.0 - 1.0
-    return torch.clamp(y, -5.0, 5.0)
+    return y
 
 
 class MaskedDeltaActionTransform:

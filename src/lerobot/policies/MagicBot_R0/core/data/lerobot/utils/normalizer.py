@@ -139,7 +139,6 @@ class SingleFieldLinearNormalizer:
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x * self.scale + self.offset
-        x = torch.clamp(x, -5.0, 5.0)
         return x
     def backward(self, x: torch.Tensor) -> torch.Tensor:
         x = (x - self.offset) / self.scale
