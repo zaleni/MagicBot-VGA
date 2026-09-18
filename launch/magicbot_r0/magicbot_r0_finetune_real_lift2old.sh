@@ -57,16 +57,12 @@ SKIP_DIT_LOAD_FROM_PRETRAIN="${SKIP_DIT_LOAD_FROM_PRETRAIN:-true}"
 NATIVE_MAGICBOT_R0_CHECKPOINT_PATH="${NATIVE_MAGICBOT_R0_CHECKPOINT_PATH:-}"
 LOAD_TEXT_ENCODER="${LOAD_TEXT_ENCODER:-false}"
 
-DATASET_DIR="${DATASET_DIR:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/zhenji/lerobot_v30/stationery_v30}"
+DATASET_DIR="${DATASET_DIR:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/zhenji/lerobot_v30/zip_bag_30_lerobot30}"
 DATASET_NAME="${DATASET_NAME:-$(basename "${DATASET_DIR}")}"
-DATASET_REPO_ID="${DATASET_REPO_ID:-}"
+DATASET_REPO_ID="${DATASET_REPO_ID:-${DATASET_DIR}}"
 VALIDATE_DATASETS="${VALIDATE_DATASETS:-true}"
-VIDEO_BACKEND="${VIDEO_BACKEND:-pyav}"
+VIDEO_BACKEND="${VIDEO_BACKEND:-}"
 USE_DIST_LOADING="${USE_DIST_LOADING:-false}"
-USE_RAMDISK_DATASET="${USE_RAMDISK_DATASET:-false}"
-RAMDISK_ROOT="${RAMDISK_ROOT:-/dev/shm/${USER:-$(id -un)}/magicbot_r0_datasets}"
-RAMDISK_REQUIRED_PERCENT="${RAMDISK_REQUIRED_PERCENT:-120}"
-CACHE_IN_MEMORY="${CACHE_IN_MEMORY:-false}"
 
 ACTION_TYPE="${ACTION_TYPE:-delta}"
 ACTION_DIM="${ACTION_DIM:-24}"
@@ -94,31 +90,23 @@ if [[ -z "${USE_EXTERNAL_STATS+x}" ]]; then
   fi
 fi
 NORMALIZATION_STATS_PATH="${NORMALIZATION_STATS_PATH:-}"
-DATASET_EXTERNAL_STATS_PATH="${DATASET_EXTERNAL_STATS_PATH:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/zhenji/norm_stats_48/delta/stationery_v30/stats.json}"
-NORM_STATS_ROOT="${NORM_STATS_ROOT:-}"
+DATASET_EXTERNAL_STATS_PATH="${DATASET_EXTERNAL_STATS_PATH:-}"
+NORM_STATS_ROOT="${NORM_STATS_ROOT:-/inspire/ssd/project/embodied-basic-model/zhangjianing-253108140206/DATASET/zhenji/norm_stats_48}"
 
-BATCH_SIZE="${BATCH_SIZE:-12}"
+BATCH_SIZE="${BATCH_SIZE:-8}"
 GRAD_ACCUM_STEPS="${GRAD_ACCUM_STEPS:-1}"
-STEPS="${STEPS:-52000}"
+STEPS="${STEPS:-51000}"
 NUM_EPOCHS="${NUM_EPOCHS:-}"
 TRAIN_MAX_STEPS="${TRAIN_MAX_STEPS:-${STEPS}}"
 SAVE_FREQ="${SAVE_FREQ:-10000}"
-LOG_FREQ="${LOG_FREQ:-50}"
-EVAL_FREQ="${EVAL_FREQ:-5000}"
-EVAL_MAX_BATCHES="${EVAL_MAX_BATCHES:-2}"
-if [[ -z "${NUM_WORKERS+x}" ]]; then
-  if [[ "${CACHE_IN_MEMORY}" == "true" ]]; then
-    NUM_WORKERS=0
-  else
-    NUM_WORKERS=12
-  fi
-fi
+LOG_FREQ="${LOG_FREQ:-100}"
+NUM_WORKERS="${NUM_WORKERS:-12}"
 
-LR="${LR:-7.0e-5}"
+LR="${LR:-6.0e-5}"
 WEIGHT_DECAY="${WEIGHT_DECAY:-1.0e-2}"
-WARMUP_STEPS="${WARMUP_STEPS:-500}"
-DECAY_LR="${DECAY_LR:-1.0e-5}"
-LAMBDA_VIDEO="${LAMBDA_VIDEO:-1.0}"
+WARMUP_STEPS="${WARMUP_STEPS:-600}"
+DECAY_LR="${DECAY_LR:-2.0e-5}"
+LAMBDA_VIDEO="${LAMBDA_VIDEO:-0.1}"
 LAMBDA_ACTION="${LAMBDA_ACTION:-1.0}"
 MASK_ACTION_DIM_PADDING_LOSS="${MASK_ACTION_DIM_PADDING_LOSS:-true}"
 LAMBDA_3D="${LAMBDA_3D:-0.1}"
@@ -170,24 +158,6 @@ case "${USE_EXTERNAL_STATS}" in
     ;;
 esac
 
-case "${CACHE_IN_MEMORY}" in
-  true|false)
-    ;;
-  *)
-    echo "Unsupported CACHE_IN_MEMORY=${CACHE_IN_MEMORY}. Expected true or false."
-    exit 1
-    ;;
-esac
-
-case "${USE_RAMDISK_DATASET}" in
-  true|false)
-    ;;
-  *)
-    echo "Unsupported USE_RAMDISK_DATASET=${USE_RAMDISK_DATASET}. Expected true or false."
-    exit 1
-    ;;
-esac
-
 case "${SKIP_DIT_LOAD_FROM_PRETRAIN}" in
   true|false)
     ;;
@@ -229,45 +199,6 @@ fi
 if [[ ! -f "${DATASET_DIR}/meta/info.json" ]]; then
   echo "meta/info.json not found under DATASET_DIR: ${DATASET_DIR}"
   exit 1
-fi
-
-SOURCE_DATASET_DIR="${DATASET_DIR}"
-SOURCE_DATASET_REPO_ID="${DATASET_REPO_ID}"
-if [[ "${USE_RAMDISK_DATASET}" == "true" ]]; then
-  RAMDISK_DATASET_DIR="${RAMDISK_DATASET_DIR:-${RAMDISK_ROOT}/${DATASET_NAME}}"
-  if [[ "${DATASET_DIR}" != "${RAMDISK_DATASET_DIR}" ]]; then
-    mkdir -p "${RAMDISK_ROOT}"
-    if [[ ! -w "${RAMDISK_ROOT}" ]]; then
-      echo "RAMDISK_ROOT is not writable: ${RAMDISK_ROOT}"
-      echo "If running in Docker, use --shm-size or set RAMDISK_ROOT to a writable tmpfs mount."
-      exit 1
-    fi
-    source_kb="$(du -sk "${SOURCE_DATASET_DIR}" | awk '{print $1}')"
-    existing_kb=0
-    if [[ -d "${RAMDISK_DATASET_DIR}" ]]; then
-      existing_kb="$(du -sk "${RAMDISK_DATASET_DIR}" | awk '{print $1}')"
-    fi
-    available_kb="$(df -Pk "${RAMDISK_ROOT}" | awk 'NR==2 {print $4}')"
-    effective_available_kb=$((available_kb + existing_kb))
-    required_kb=$(((source_kb * RAMDISK_REQUIRED_PERCENT + 99) / 100))
-    echo "RAM disk check: root=${RAMDISK_ROOT}, dataset=${source_kb} KiB, available=${available_kb} KiB, existing_target=${existing_kb} KiB, required=${required_kb} KiB"
-    if (( effective_available_kb < required_kb )); then
-      echo "Not enough RAM disk space for dataset copy."
-      echo "In Docker, start with e.g. --shm-size=64g or --ipc=host, or set USE_RAMDISK_DATASET=false/RAMDISK_ROOT=<large tmpfs>."
-      exit 1
-    fi
-    echo "Copying dataset to RAM disk: ${SOURCE_DATASET_DIR} -> ${RAMDISK_DATASET_DIR}"
-    mkdir -p "${RAMDISK_DATASET_DIR}"
-    if command -v rsync >/dev/null 2>&1; then
-      rsync -a --delete "${SOURCE_DATASET_DIR}/" "${RAMDISK_DATASET_DIR}/"
-    else
-      cp -a "${SOURCE_DATASET_DIR}/." "${RAMDISK_DATASET_DIR}/"
-    fi
-    DATASET_DIR="${RAMDISK_DATASET_DIR}"
-  fi
-fi
-if [[ -z "${SOURCE_DATASET_REPO_ID}" || "${SOURCE_DATASET_REPO_ID}" == "${SOURCE_DATASET_DIR}" ]]; then
-  DATASET_REPO_ID="${DATASET_DIR}"
 fi
 
 robot_type="$(
@@ -333,7 +264,7 @@ else
   echo "Skipping per-dataset validation (VALIDATE_DATASETS=${VALIDATE_DATASETS})."
 fi
 
-BASE_OUTPUT_DIR="${BASE_OUTPUT_DIR:-/inspire/qb-ilm/project/embodied-basic-model/zhangjianing-253108140206/outputs_real/${POLICY}}"
+BASE_OUTPUT_DIR="${BASE_OUTPUT_DIR:-/inspire/qb-ilm/project/embodied-basic-model/zhangjianing-253108140206/outputs/${POLICY}}"
 BOOTSTRAP_TAG="${BOOTSTRAP_TAG:-pretrained300k}"
 JOB_NAME="${JOB_NAME:-${MAGICBOT_R0_VARIANT}-real_lift2-${DATASET_NAME}-${ACTION_TYPE}-${BOOTSTRAP_TAG}-finetune-$(date +'%Y_%m_%d_%H_%M_%S')}"
 OUTPUT_DIR="${BASE_OUTPUT_DIR}/${JOB_NAME}"
@@ -358,9 +289,6 @@ fi
 
 echo "MAGICBOT_R0_VARIANT=${MAGICBOT_R0_VARIANT}"
 echo "DATASET_DIR=${DATASET_DIR}"
-echo "SOURCE_DATASET_DIR=${SOURCE_DATASET_DIR}"
-echo "DATASET_REPO_ID=${DATASET_REPO_ID}"
-echo "USE_RAMDISK_DATASET=${USE_RAMDISK_DATASET}"
 echo "DATASET_NAME=${DATASET_NAME}"
 echo "robot_type=${robot_type}"
 echo "ACTION_TYPE=${ACTION_TYPE}"
@@ -372,8 +300,6 @@ echo "NORMALIZATION_STATS_PATH=${NORMALIZATION_STATS_PATH:-<metadata-or-auto>}"
 echo "TEXT_EMBED_CACHE_DIR=${TEXT_EMBED_CACHE_DIR:-<text-encoder-runtime>}"
 echo "POLICY_INIT_PATH=${POLICY_INIT_PATH:-<none>}"
 echo "SKIP_DIT_LOAD_FROM_PRETRAIN=${SKIP_DIT_LOAD_FROM_PRETRAIN}"
-echo "CACHE_IN_MEMORY=${CACHE_IN_MEMORY}, USE_DIST_LOADING=${USE_DIST_LOADING}, NUM_WORKERS=${NUM_WORKERS}"
-echo "EVAL_FREQ=${EVAL_FREQ}, EVAL_MAX_BATCHES=${EVAL_MAX_BATCHES}"
 echo "VIDEO_SIZE=[${VIDEO_HEIGHT},${VIDEO_WIDTH}], CONCAT_MULTI_CAMERA=${CONCAT_MULTI_CAMERA}"
 echo "ENABLE_IMAGE_AUG=${ENABLE_IMAGE_AUG}, IMAGE_AUG_PRESET=${IMAGE_AUG_PRESET}"
 echo "MASK_ACTION_DIM_PADDING_LOSS=${MASK_ACTION_DIM_PADDING_LOSS}"
@@ -462,7 +388,6 @@ ARGS=(
     --dataset.processor_proprio_output_dim="${PROPRIO_DIM}"
     --dataset.processor_delta_action_dim_mask="${PROCESSOR_DELTA_ACTION_DIM_MASK}"
     --dataset.future_3d_target_index="${FUTURE_3D_TARGET_INDEX}"
-    --dataset.cache_in_memory="${CACHE_IN_MEMORY}"
 
     --seed=42
     --batch_size="${BATCH_SIZE}"
@@ -470,8 +395,6 @@ ARGS=(
     --steps="${STEPS}"
     --save_freq="${SAVE_FREQ}"
     --log_freq="${LOG_FREQ}"
-    --eval_freq="${EVAL_FREQ}"
-    --eval_max_batches="${EVAL_MAX_BATCHES}"
 
     --wandb.enable=true
     --wandb.project=MagicBot_R0_RealLift2
